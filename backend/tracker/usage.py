@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from accounts.models import Profile, get_profile
 
+from . import ai
 from .models import AnalysisRun, JobStatus, PrepPlan, RoundAnalysis
 
 WINDOW = timedelta(hours=24)
@@ -37,7 +38,12 @@ _WORDING = {
 
 
 def plan_limit(plan, kind=ANALYSIS):
-    """Jobs of this kind allowed per 24 hours on this plan, or None for unlimited."""
+    """
+    Jobs of this kind allowed per 24 hours on this plan, or None for unlimited.
+    The limits are cost control, so with no API key (free rule-based jobs) nothing is limited.
+    """
+    if not ai.ai_enabled():
+        return None
     limits = settings.PLAN_ANALYSES_PER_24H if kind == ANALYSIS else settings.PLAN_PREP_PLANS_PER_24H
     return limits.get(plan)
 
@@ -50,7 +56,7 @@ def _current_plan(user):
 
 def _window_stats(user, kind, now):
     return AnalysisRun.objects.filter(
-        user=user, kind=kind, refunded=False, created_at__gt=now - WINDOW
+        user=user, kind=kind, refunded=False, free=False, created_at__gt=now - WINDOW
     ).aggregate(used=Count("id"), oldest=Min("created_at"))
 
 
@@ -92,7 +98,12 @@ def refund_run(run_id, *, billed):
     succeed; billed ones are capped per user per 24 hours, across both kinds of job.
     Returns True if the run was refunded.
     """
+    user_id = AnalysisRun.objects.filter(id=run_id).values_list("user_id", flat=True).first()
+    if user_id is None:
+        return False
     with transaction.atomic():
+        # Same lock as _reserve: two failures finishing together can't both pass the cap.
+        Profile.objects.select_for_update().filter(user_id=user_id).first()
         run = AnalysisRun.objects.select_for_update().filter(id=run_id, refunded=False).first()
         if run is None:
             return False
@@ -143,7 +154,7 @@ def _reserve(user, kind, lock_job, start_job, run_fields):
         if limit is not None and _window_stats(user, kind, now)["used"] >= limit:
             return LIMITED, None
 
-        run = AnalysisRun.objects.create(user=user, kind=kind, **run_fields)
+        run = AnalysisRun.objects.create(user=user, kind=kind, free=not ai.ai_enabled(), **run_fields)
         start_job(run)
         return QUEUED, run
 

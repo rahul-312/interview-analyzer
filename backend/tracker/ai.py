@@ -245,8 +245,16 @@ class NotCharged(Exception):
     """Every attempt failed before a billed response came back (network error, 4xx/429/5xx, overloaded)."""
 
 
-class Refused(Exception):
-    """The model declined the content. Caused by what the user wrote, so it counts."""
+class UserCaused(Exception):
+    """A billed failure the user's own text can cause, so it counts against their limit."""
+
+
+class Refused(UserCaused):
+    """The model declined the content."""
+
+
+class CutOff(UserCaused):
+    """The reply hit max_tokens. Long or open-ended debrief text can cause this on purpose."""
 
 
 class Billing:
@@ -258,9 +266,6 @@ class Billing:
     def __init__(self):
         self.api_called = False
 
-
-# Failures where the API sent nothing billable back. Retried here, never after a timeout.
-RETRY_DELAYS = (1, 3)
 
 
 def get_client():
@@ -275,7 +280,9 @@ def call_claude(system, prompt, schema, billing=None):
 
     billing = billing or Billing()
     client = get_client()
-    for attempt in range(len(RETRY_DELAYS) + 1):
+    # Unbilled failures are retried after these delays (none without a broker); never after a timeout.
+    delays = settings.AI_RETRY_DELAYS
+    for attempt in range(len(delays) + 1):
         billing.api_called = True  # from here on, an unexpected failure may have been billed
         try:
             response = client.beta.messages.create(
@@ -294,15 +301,15 @@ def call_claude(system, prompt, schema, billing=None):
         except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
             # Network failure, or the API rejected/failed the request (4xx, 429, 5xx, overloaded): nothing billed.
             retryable = isinstance(exc, anthropic.APIConnectionError) or exc.status_code == 429 or exc.status_code >= 500
-            if retryable and attempt < len(RETRY_DELAYS):
-                time.sleep(RETRY_DELAYS[attempt])
+            if retryable and attempt < len(delays):
+                time.sleep(delays[attempt])
                 continue
             raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
 
     if response.stop_reason == "refusal":
         raise Refused("The AI declined to analyse this content.")
     if response.stop_reason == "max_tokens":
-        raise RuntimeError("The AI response was cut off. Try again.")
+        raise CutOff("The AI response was too long and got cut off. Try shortening your debrief.")
     text = next(b.text for b in response.content if b.type == "text")
     return json.loads(text)
 

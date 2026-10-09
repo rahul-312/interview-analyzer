@@ -16,7 +16,7 @@ import { useRefreshUsageWhenDone, useUsage } from '@/hooks/useUsage';
 import { roundService } from '@/services/RoundService';
 import { isAnalysing } from '@/utils/analysis';
 import { errorText } from '@/utils/errorText';
-import { formatDateTime } from '@/utils/format';
+import { formatDateTime, planLabel } from '@/utils/format';
 
 interface RoundAnalysisProps {
   id: string;
@@ -88,7 +88,7 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
               variant="secondary"
               onClick={handleAnalyse}
               disabled={analysing || outOfAnalyses}
-              title={outOfAnalyses ? 'No analyses left today on the free plan' : undefined}
+              title={outOfAnalyses ? `No analyses left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined}
             >
               Re-analyse
             </Button>

@@ -11,7 +11,7 @@ import { applicationService } from '@/services/ApplicationService';
 import { prepPlanService } from '@/services/PrepPlanService';
 import { roundService } from '@/services/RoundService';
 import { errorText } from '@/utils/errorText';
-import { formatDateTime, isPast, today } from '@/utils/format';
+import { formatDateTime, isPast, planLabel, today } from '@/utils/format';
 
 interface NewPlanFormProps {
   initialApplication: number | '';
@@ -106,7 +106,7 @@ const NewPlanForm: React.FC<NewPlanFormProps> = ({ initialApplication, initialRo
         </p>
         {outOfPlans && (
           <p className="rounded-lg bg-amber-light px-2xl py-lg text-sm text-amber-dark">
-            You&apos;ve used all {quota?.limit} prep plans allowed in 24 hours on the free plan.
+            You&apos;ve used all {quota?.limit} prep plans allowed in 24 hours on the {planLabel(usage?.plan)} plan.
             {quota?.next_available_at && <> The next one frees up at {formatDateTime(quota.next_available_at)}.</>}
           </p>
         )}

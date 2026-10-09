@@ -4,7 +4,7 @@ import React from 'react';
 import Button from '../../ui/Button';
 import Card from '../../ui/Card';
 import type { Usage } from '@/models/Auth';
-import { formatDateTime } from '@/utils/format';
+import { formatDateTime, planLabel } from '@/utils/format';
 
 interface NotAnalysedProps {
   usage: Usage | null;
@@ -17,7 +17,7 @@ interface NotAnalysedProps {
 const NotAnalysed: React.FC<NotAnalysedProps> = ({ usage, stale = false, onAnalyse }) => {
   const quota = usage?.analyses;
   const outOfAnalyses = quota?.remaining === 0;
-  const planName = usage?.plan === 'pro' ? 'Pro' : 'Free';
+  const planName = planLabel(usage?.plan);
 
   return (
     <Card className="flex flex-col items-start gap-lg border-amber-light text-sm">

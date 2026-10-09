@@ -104,8 +104,8 @@ def build_plan_context(plan):
 
 def _refund_kind(exc, billing):
     """None (counts), "free" or "billed": which refund, if any, a failed job gets."""
-    if isinstance(exc, ai.Refused):
-        return None  # the AI declined what the user wrote: it counts
+    if isinstance(exc, ai.UserCaused):
+        return None  # refused or cut off: the user's text can cause these on purpose, so they count
     if isinstance(exc, ai.NotCharged) or not billing.api_called:
         return "free"  # nothing reached the paid API (or the free rule-based fallback failed)
     return "billed"  # our side failed after a paid call: give it back, within the cap

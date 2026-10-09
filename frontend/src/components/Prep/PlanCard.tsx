@@ -9,7 +9,7 @@ import { useUsage } from '@/hooks/useUsage';
 import type { PrepPlan, PrepTask } from '@/models/PrepPlan';
 import { prepPlanService } from '@/services/PrepPlanService';
 import { errorText } from '@/utils/errorText';
-import { daysUntil, formatDate } from '@/utils/format';
+import { daysUntil, formatDate, planLabel } from '@/utils/format';
 
 interface PlanCardProps {
   plan: PrepPlan;
@@ -137,7 +137,7 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
           variant="secondary"
           onClick={handleRegenerate}
           disabled={generating || outOfPlans}
-          title={outOfPlans ? 'No prep plans left in the last 24 hours on the free plan' : undefined}
+          title={outOfPlans ? `No prep plans left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined}
         >
           Regenerate
         </Button>

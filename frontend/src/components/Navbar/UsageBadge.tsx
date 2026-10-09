@@ -2,8 +2,12 @@
 
 import { Sparkles } from "lucide-react";
 import { useUsage } from "@/hooks/useUsage";
+import type { Quota } from "@/models/Auth";
+import { planLabel } from "@/utils/format";
 
-/** "Free · 1/2 analyses · 2/2 plans left", or "Pro · Unlimited". */
+const left = (q: Quota, noun: string) => (q.limit === null ? `unlimited ${noun}` : `${q.remaining}/${q.limit} ${noun}`);
+
+/** "Free · 1/2 analyses · 2/2 plans left", or "Pro · Unlimited". Each quota can be unlimited on its own. */
 export default function UsageBadge() {
   const { usage } = useUsage();
   if (!usage) return null;
@@ -17,16 +21,14 @@ export default function UsageBadge() {
       title={
         unlimited
           ? undefined
-          : `Per 24 hours: ${analyses.limit} round analyses and ${plans.limit} prep plans. Each frees up 24 hours after it runs.`
+          : `Per 24 hours: ${left(analyses, "round analyses")} and ${left(plans, "prep plans")} left. Each frees up 24 hours after it runs.`
       }
       className={`inline-flex items-center gap-sm whitespace-nowrap rounded-full px-xl py-sm text-xs font-medium ${
         empty ? "bg-amber-light text-amber-dark" : "bg-primary-light text-primary-dark"
       }`}
     >
       <Sparkles size={14} />
-      {unlimited
-        ? "Pro · Unlimited"
-        : `Free · ${analyses.remaining}/${analyses.limit} analyses · ${plans.remaining}/${plans.limit} plans left`}
+      {planLabel(usage.plan)} · {unlimited ? "Unlimited" : `${left(analyses, "analyses")} · ${left(plans, "plans")} left`}
     </span>
   );
 }

@@ -142,6 +142,8 @@ class AnalysisRun(models.Model):
     refunded = models.BooleanField(default=False)
     # The refunded attempt had reached the paid API, so it cost us (these refunds are capped).
     billed = models.BooleanField(default=False)
+    # Ran with no API key (free rule-based analyzer/planner), so it never counts against a limit.
+    free = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-created_at"]

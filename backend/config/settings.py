@@ -103,6 +103,9 @@ CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "")
 CELERY_TASK_ALWAYS_EAGER = not CELERY_BROKER_URL
 CELERY_TASK_EAGER_PROPAGATES = False
+# Seconds to wait before retrying an AI call that failed without being billed. Without a broker,
+# jobs run inside the web request, so don't sleep there: fail fast and let the user retry.
+AI_RETRY_DELAYS = (1, 3) if CELERY_BROKER_URL else ()
 
 # Round analyses allowed in any rolling 24 hours, by plan (None = unlimited).
 PLAN_ANALYSES_PER_24H = {

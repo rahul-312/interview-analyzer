@@ -16,6 +16,32 @@ from tracker.tasks import analyze_round_task, generate_plan_task
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def fake_ai(settings):
+    """
+    Limits are cost control and only apply with an API key, so these tests run "with AI":
+    a fake client returns a valid analysis or plan, depending on the schema asked for.
+    Tests that need a specific reply or error patch get_client themselves.
+    """
+    settings.ANTHROPIC_API_KEY = "sk-ant-test"
+
+    def create(**kwargs):
+        schema = kwargs["output_config"]["format"]["schema"]
+        if "tasks" in schema["properties"]:
+            body = {"summary": "plan", "tasks": [
+                {"day": 1, "topic": "sql", "title": "Practise joins", "detail": "...", "minutes": 30},
+            ]}
+        else:
+            body = {"summary": "ok", "score": 60, "strengths": [], "answer_reviews": [], "weaknesses": [
+                {"topic": "system design", "severity": "high", "evidence": "...", "advice": "..."},
+            ]}
+        return _reply(text=json.dumps(body))
+
+    client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(create=create)))
+    with mock.patch.object(ai, "get_client", return_value=client):
+        yield
+
+
 def counted_runs():
     """Runs that count against the limit; refunded ones stay in the table for the record."""
     return AnalysisRun.objects.filter(refunded=False).count()
@@ -116,6 +142,7 @@ def test_new_users_start_on_free_plan(user):
 # ---------------------------------------------------------------------------
 
 _REQ = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+_real_get_client = ai.get_client  # before the fake_ai fixture replaces it
 
 
 def _reply(stop_reason="end_turn", text=None):
@@ -147,11 +174,20 @@ def test_refusal_counts(api, application, run_jobs, with_ai):
     assert counted_runs() == 1
 
 
+@pytest.mark.parametrize("stop_reason", ["refusal", "max_tokens"], ids=["refusal", "cut-off"])
+def test_failures_the_user_can_cause_count(api, application, run_jobs, with_ai, stop_reason):
+    # A refusal, or a reply cut off at max_tokens (e.g. "write 20,000 words about..."), counts.
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_reply(stop_reason=stop_reason))):
+        res = log_round(api, application, run_jobs)
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert analysis.status == JobStatus.FAILED and analysis.refunded is False
+    assert counted_runs() == 1
+
+
 @pytest.mark.parametrize("outcome", [
-    _reply(stop_reason="max_tokens"),
     _reply(text="not json"),
     anthropic.APITimeoutError(request=_REQ),
-], ids=["cut-off", "bad-json", "timeout"])
+], ids=["bad-json", "timeout"])
 def test_our_side_failures_after_a_paid_call_are_given_back(api, application, run_jobs, with_ai, outcome):
     with mock.patch.object(ai, "get_client", return_value=_fake_client(outcome)):
         res = log_round(api, application, run_jobs)
@@ -163,8 +199,8 @@ def test_our_side_failures_after_a_paid_call_are_given_back(api, application, ru
 
 def test_billed_refunds_are_capped(api, application, run_jobs, with_ai, settings):
     settings.BILLED_REFUNDS_PER_24H = 1
-    cut_off = _reply(stop_reason="max_tokens")
-    with mock.patch.object(ai, "get_client", return_value=_fake_client(cut_off)):
+    unreadable = _reply(text="not json")
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(unreadable)):
         first = log_round(api, application, run_jobs, "Q1")
         second = log_round(api, application, run_jobs, "Q2")
     assert RoundAnalysis.objects.get(round_id=first.data["id"]).refunded is True
@@ -392,7 +428,8 @@ def test_failure_in_task_after_api_call_is_given_back(api, application, run_jobs
     assert AnalysisRun.objects.get().billed is True
 
 
-def test_unbilled_errors_are_retried_then_succeed(api, application, run_jobs, with_ai):
+def test_unbilled_errors_are_retried_then_succeed(api, application, run_jobs, with_ai, settings):
+    settings.AI_RETRY_DELAYS = (1, 3)  # as with a broker
     client, calls = _sequence_client(_overloaded(), _reply())
     with mock.patch.object(ai, "get_client", return_value=client):
         res = log_round(api, application, run_jobs)
@@ -401,7 +438,8 @@ def test_unbilled_errors_are_retried_then_succeed(api, application, run_jobs, wi
     assert counted_runs() == 1
 
 
-def test_unbilled_errors_on_every_attempt_are_refunded(api, application, run_jobs, with_ai):
+def test_unbilled_errors_on_every_attempt_are_refunded(api, application, run_jobs, with_ai, settings):
+    settings.AI_RETRY_DELAYS = (1, 3)
     client, calls = _sequence_client(_overloaded(), _overloaded(), _overloaded())
     with mock.patch.object(ai, "get_client", return_value=client):
         log_round(api, application, run_jobs)
@@ -421,7 +459,7 @@ def test_timeout_is_not_retried_and_is_a_billed_refund(api, application, run_job
 
 
 def test_client_has_sdk_retries_disabled(with_ai):
-    assert ai.get_client().max_retries == 0
+    assert _real_get_client().max_retries == 0
 
 
 def test_job_queued_by_older_deploy_still_runs(api, application):
@@ -515,3 +553,44 @@ def test_plan_job_queued_by_older_deploy_still_runs(api, application):
     PrepPlan.objects.filter(id=plan_id).update(run=None)
     generate_plan_task(plan_id)
     assert PrepPlan.objects.get(id=plan_id).status == JobStatus.DONE
+
+
+def test_no_retry_sleeps_inside_the_web_request(api, application, run_jobs, with_ai, settings):
+    # No broker: the job runs inside the request, so it fails fast instead of sleeping there.
+    settings.AI_RETRY_DELAYS = ()
+    client, calls = _sequence_client(_overloaded(), _reply())
+    with mock.patch.object(ai, "get_client", return_value=client), mock.patch.object(ai.time, "sleep") as sleep:
+        log_round(api, application, run_jobs)
+    assert len(calls) == 1
+    sleep.assert_not_called()
+    assert counted_runs() == 0  # unbilled: given back
+
+
+# ---------------------------------------------------------------------------
+# No API key: the free rule-based jobs aren't limited
+# ---------------------------------------------------------------------------
+
+def test_no_api_key_means_no_limits(api, application, run_jobs, settings):
+    settings.ANTHROPIC_API_KEY = ""
+    for i in range(3):
+        assert not log_round(api, application, run_jobs, f"Q{i}").data["analysis_limited"]
+    for _ in range(3):
+        assert make_plan(api, application, run_jobs).status_code == 201
+
+    usage = api.get("/api/auth/me/").data["usage"]
+    assert usage["analyses"]["limit"] is None and usage["prep_plans"]["limit"] is None
+    assert AnalysisRun.objects.filter(free=False).count() == 0  # recorded, but never counted
+
+
+def test_free_runs_dont_count_once_a_key_is_added(api, application, run_jobs, settings):
+    settings.ANTHROPIC_API_KEY = ""
+    log_round(api, application, run_jobs, "Q1")
+    log_round(api, application, run_jobs, "Q2")
+    settings.ANTHROPIC_API_KEY = "sk-ant-test"
+    assert api.get("/api/auth/me/").data["usage"]["analyses"]["remaining"] == 2
+
+
+def test_no_api_key_still_blocks_double_starts(api, application, settings):
+    settings.ANTHROPIC_API_KEY = ""
+    round_id = _round_with_queued_analysis(api, application)
+    assert api.post(f"/api/rounds/{round_id}/analyze/").status_code == 409
