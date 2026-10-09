@@ -114,6 +114,20 @@ class RoundAnalysis(models.Model):
         return f"Analysis for {self.round}"
 
 
+class AnalysisRun(models.Model):
+    """One analysis started for a user. Counted against their plan's daily limit."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="analysis_runs")
+    # Kept when the round is deleted, so deleting a round doesn't give the analysis back.
+    round = models.ForeignKey(InterviewRound, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Analysis run by {self.user} at {self.created_at:%Y-%m-%d %H:%M}"
+
+
 class PrepPlan(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="prep_plans")
     application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name="prep_plans")

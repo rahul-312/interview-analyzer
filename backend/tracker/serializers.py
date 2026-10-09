@@ -76,6 +76,10 @@ class InterviewRoundSerializer(serializers.ModelSerializer):
     def _save_debrief(self, rnd, debrief_data):
         if debrief_data is None:
             return
+        existing = Debrief.objects.filter(round=rnd).first()
+        # Only a changed debrief needs a new analysis (the edit form re-sends it on every save).
+        if existing and all(getattr(existing, field) == value for field, value in debrief_data.items()):
+            return
         Debrief.objects.update_or_create(round=rnd, defaults=debrief_data)
         self.debrief_saved = True
 

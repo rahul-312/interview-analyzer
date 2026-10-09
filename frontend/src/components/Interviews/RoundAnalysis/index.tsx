@@ -5,12 +5,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import AnalysisResult from './AnalysisResult';
 import DebriefSummary from './DebriefSummary';
+import NotAnalysed from './NotAnalysed';
 import { OutcomeBadge } from '../../Badges';
 import Button from '../../ui/Button';
 import Card from '../../ui/Card';
 import { ErrorMessage, Loading, Working } from '../../ui/Feedback';
 import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
+import { useUsage } from '@/hooks/useUsage';
 import { roundService } from '@/services/RoundService';
 import { isAnalysing } from '@/utils/analysis';
 import { errorText } from '@/utils/errorText';
@@ -26,12 +28,14 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
   const [error, setError] = useState('');
   // Poll until the analysis is done
   const { data: round, error: loadError, reload } = useApi(`round-${id}`, () => roundService.get(id), isAnalysing);
+  const { usage } = useUsage();
+  const outOfAnalyses = usage?.remaining === 0;
 
-  const handleReanalyse = async () => {
+  const handleAnalyse = async () => {
     setError('');
     try {
       await roundService.analyze(id);
-      reload();
+      bump(); // reloads this round and the usage count
     } catch (err) {
       setError(errorText(err));
     }
@@ -75,8 +79,13 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
           </p>
         </div>
         <div className="flex flex-wrap gap-lg">
-          {round.debrief && (
-            <Button variant="secondary" onClick={handleReanalyse} disabled={analysing}>
+          {round.debrief && analysis && (
+            <Button
+              variant="secondary"
+              onClick={handleAnalyse}
+              disabled={analysing || outOfAnalyses}
+              title={outOfAnalyses ? 'No analyses left today on the free plan' : undefined}
+            >
               Re-analyse
             </Button>
           )}
@@ -94,15 +103,17 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
       {/* Analysis */}
       {!round.debrief ? (
         <Card className="text-sm text-medium-gray">No debrief yet. Write one to get an analysis of this round.</Card>
-      ) : !analysis || analysing ? (
+      ) : !analysis ? (
+        <NotAnalysed usage={usage} onAnalyse={handleAnalyse} />
+      ) : analysing ? (
         <Card>
-          <Working text={analysis?.status === 'running' ? 'Analysing your debrief…' : 'Queued for analysis…'} />
+          <Working text={analysis.status === 'running' ? 'Analysing your debrief…' : 'Queued for analysis…'} />
         </Card>
       ) : analysis.status === 'failed' ? (
         <Card className="flex flex-col items-start gap-lg text-sm">
           <p className="font-medium text-rose-dark">The analysis failed.</p>
           <p className="text-dark-gray">{analysis.error}</p>
-          <Button variant="primary" onClick={handleReanalyse}>
+          <Button variant="primary" onClick={handleAnalyse} disabled={outOfAnalyses}>
             Try again
           </Button>
         </Card>

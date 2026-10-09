@@ -104,6 +104,12 @@ CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "")
 CELERY_TASK_ALWAYS_EAGER = not CELERY_BROKER_URL
 CELERY_TASK_EAGER_PROPAGATES = False
 
+# Round analyses allowed per rolling 24 hours, by plan (None = unlimited).
+PLAN_DAILY_ANALYSES = {
+    "free": int(os.environ.get("FREE_DAILY_ANALYSES", "2")),
+    "pro": None,
+}
+
 # AI: without a key, the rule-based analyzer is used.
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")

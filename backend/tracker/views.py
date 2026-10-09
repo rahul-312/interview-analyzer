@@ -14,14 +14,22 @@ from .serializers import (
     PrepTaskSerializer,
 )
 from .tasks import analyze_round_task, generate_plan_task, queue
+from .usage import limit_message, start_analysis
 
 
-def queue_analysis(rnd):
-    """Mark the round's analysis as pending and run it after the transaction commits."""
+def queue_analysis(rnd, user):
+    """
+    Mark the round's analysis as pending and run it after the transaction commits.
+    Returns False (and queues nothing) when the user has no analyses left today.
+    """
+    run = start_analysis(user, rnd)
+    if run is None:
+        return False
     RoundAnalysis.objects.update_or_create(
         round=rnd, defaults={"status": JobStatus.PENDING, "error": ""}
     )
-    queue(analyze_round_task, rnd.id)
+    queue(analyze_round_task, rnd.id, run.id)
+    return True
 
 
 def queue_plan(plan):
@@ -80,7 +88,28 @@ class RoundQuerysetMixin:
         )
 
 
-class RoundListCreateView(RoundQuerysetMixin, generics.ListCreateAPIView):
+class AnalysisLimitMixin:
+    """
+    Queues an analysis after a debrief is saved, within the user's daily limit.
+    At the limit the round and debrief are still saved; the response says
+    `analysis_limited: true` with a message, and the analysis can be run later.
+    """
+    analysis_limited = False
+
+    def queue_if_debrief_saved(self, serializer, rnd):
+        if serializer.debrief_saved:
+            self.analysis_limited = not queue_analysis(rnd, self.request.user)
+            # Re-read so the response shows the new analysis status, not a cached one.
+            serializer.instance = self.get_queryset().get(pk=rnd.pk)
+
+    def add_limit_info(self, response):
+        response.data["analysis_limited"] = self.analysis_limited
+        if self.analysis_limited:
+            response.data["analysis_limit_message"] = limit_message(self.request.user)
+        return response
+
+
+class RoundListCreateView(RoundQuerysetMixin, AnalysisLimitMixin, generics.ListCreateAPIView):
     """
     GET: list the user's rounds (supports ?application=).
     POST: log a round. Send `debrief` to save one and queue an analysis.
@@ -97,30 +126,35 @@ class RoundListCreateView(RoundQuerysetMixin, generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         rnd = serializer.save()
-        if serializer.debrief_saved:
-            queue_analysis(rnd)
+        self.queue_if_debrief_saved(serializer, rnd)
+
+    def create(self, request, *args, **kwargs):
+        return self.add_limit_info(super().create(request, *args, **kwargs))
 
 
-class RoundDetailView(RoundQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
-    """GET, PUT, PATCH and DELETE a single round. Saving a debrief re-queues the analysis."""
+class RoundDetailView(RoundQuerysetMixin, AnalysisLimitMixin, generics.RetrieveUpdateDestroyAPIView):
+    """GET, PUT, PATCH and DELETE a single round. A changed debrief re-queues the analysis."""
     serializer_class = InterviewRoundSerializer
     permission_classes = [IsAuthenticated]
 
     def perform_update(self, serializer):
         rnd = serializer.save()
-        if serializer.debrief_saved:
-            queue_analysis(rnd)
+        self.queue_if_debrief_saved(serializer, rnd)
+
+    def update(self, request, *args, **kwargs):
+        return self.add_limit_info(super().update(request, *args, **kwargs))
 
 
 class RoundAnalyzeView(APIView):
-    """Re-runs the analysis for a round that has a debrief."""
+    """Runs (or re-runs) the analysis for a round that has a debrief. Counts against the daily limit."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         rnd = get_object_or_404(InterviewRound, pk=pk, application__user=request.user)
         if not hasattr(rnd, "debrief"):
             return Response({"detail": "Write a debrief first."}, status=status.HTTP_400_BAD_REQUEST)
-        queue_analysis(rnd)
+        if not queue_analysis(rnd, request.user):
+            return Response({"detail": limit_message(request.user)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
 
 

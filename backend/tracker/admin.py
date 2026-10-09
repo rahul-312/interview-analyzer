@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Application, Debrief, InterviewRound, PrepPlan, PrepTask, RoundAnalysis
+from .models import AnalysisRun, Application, Debrief, InterviewRound, PrepPlan, PrepTask, RoundAnalysis
 
 
 @admin.register(Application)
@@ -30,6 +30,12 @@ class PrepTaskInline(admin.TabularInline):
 class PrepPlanAdmin(admin.ModelAdmin):
     list_display = ["application", "interview_date", "status", "source"]
     inlines = [PrepTaskInline]
+
+
+@admin.register(AnalysisRun)
+class AnalysisRunAdmin(admin.ModelAdmin):
+    list_display = ["user", "round", "created_at"]
+    list_filter = ["user"]
 
 
 admin.site.register(Debrief)

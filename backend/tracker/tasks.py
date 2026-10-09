@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from . import ai
 from .insights import weak_spots
-from .models import InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
+from .models import AnalysisRun, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
 
 MAX_PLAN_DAYS = 14
 
@@ -38,7 +38,7 @@ def build_analysis_context(rnd):
 
 
 @shared_task
-def analyze_round_task(round_id):
+def analyze_round_task(round_id, run_id=None):
     rnd = InterviewRound.objects.select_related("application", "debrief").get(id=round_id)
     analysis, _ = RoundAnalysis.objects.get_or_create(round=rnd)
     analysis.status = JobStatus.RUNNING
@@ -56,6 +56,9 @@ def analyze_round_task(round_id):
     except Exception as exc:  # store any failure so the UI can show it
         analysis.status = JobStatus.FAILED
         analysis.error = str(exc)[:1000]
+        # A failed analysis doesn't count against the daily limit.
+        if run_id:
+            AnalysisRun.objects.filter(id=run_id).delete()
     analysis.save()
 
 

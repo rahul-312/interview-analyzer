@@ -5,6 +5,7 @@ import NavLinks from "./NavLinks";
 import NavButton from "./NavButton";
 import UserMenu from "./UserMenu";
 import HamburgerMenu from "./HamburgerMenu";
+import UsageBadge from "./UsageBadge";
 
 const Navbar = () => {
   return (
@@ -18,6 +19,9 @@ const Navbar = () => {
       </div>
 
       <div className="flex items-center gap-3xl">
+        <div className="hidden xl:block">
+          <UsageBadge />
+        </div>
         <div className="hidden md:block">
           <NavButton />
         </div>

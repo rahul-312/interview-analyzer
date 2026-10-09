@@ -71,6 +71,12 @@ export interface InterviewRound {
   created_at: string;
 }
 
+/** What saving a round returns: the round, plus whether the daily analysis limit stopped an analysis. */
+export interface RoundSaveResult extends InterviewRound {
+  analysis_limited: boolean;
+  analysis_limit_message?: string;
+}
+
 export interface RoundInput {
   application: number | "";
   round_type: RoundType;

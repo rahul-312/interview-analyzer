@@ -43,7 +43,7 @@ const RoundsSection: React.FC<RoundsSectionProps> = ({ applicationId, rounds }) 
                 <div className="flex flex-wrap items-center gap-lg">
                   <span className="font-medium">{r.round_type_label}</span>
                   <OutcomeBadge outcome={r.outcome} />
-                  <AnalysisBadge analysis={r.analysis} />
+                  <AnalysisBadge analysis={r.analysis} hasDebrief={Boolean(r.debrief)} />
                 </div>
                 <div className="text-sm text-medium-gray">
                   {formatDateTime(r.scheduled_at)}
