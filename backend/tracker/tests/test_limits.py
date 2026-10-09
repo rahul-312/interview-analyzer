@@ -594,3 +594,58 @@ def test_no_api_key_still_blocks_double_starts(api, application, settings):
     settings.ANTHROPIC_API_KEY = ""
     round_id = _round_with_queued_analysis(api, application)
     assert api.post(f"/api/rounds/{round_id}/analyze/").status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Cut-offs per kind, free decided at run time, older rule-based runs
+# ---------------------------------------------------------------------------
+
+def test_cut_off_analysis_counts_and_mentions_the_debrief(api, application, run_jobs, with_ai):
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_reply(stop_reason="max_tokens"))):
+        res = log_round(api, application, run_jobs)
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert "shortening your debrief" in analysis.error
+    assert analysis.refunded is False and counted_runs() == 1
+
+
+def test_cut_off_plan_is_a_capped_refund(api, application, run_jobs, with_ai):
+    # A plan's input is mostly ours, so a cut-off isn't the user's doing.
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_reply(stop_reason="max_tokens"))):
+        plan = make_plan(api, application, run_jobs).data
+    plan = PrepPlan.objects.get(id=plan["id"])
+    assert "debrief" not in plan.error and "too long" in plan.error
+    assert plan.refunded is True
+    assert AnalysisRun.objects.get(kind="prep_plan").billed is True  # counts towards the refund cap
+
+
+def test_key_added_while_queued_counts(api, application, settings):
+    settings.ANTHROPIC_API_KEY = ""
+    round_id = _round_with_queued_analysis(api, application)
+    assert AnalysisRun.objects.get().free is True
+
+    settings.ANTHROPIC_API_KEY = "sk-ant-test"  # the job then makes a paid call
+    analyze_round_task(round_id, AnalysisRun.objects.get().id)
+    assert AnalysisRun.objects.get().free is False
+    assert counted_runs() == 1
+
+
+def test_key_removed_while_queued_is_free(api, application, settings):
+    round_id = _round_with_queued_analysis(api, application)
+    settings.ANTHROPIC_API_KEY = ""  # the job then runs the free rule-based analyzer
+    analyze_round_task(round_id, AnalysisRun.objects.get().id)
+    assert AnalysisRun.objects.get().free is True
+
+
+def test_migration_marks_older_rule_based_runs_free(api, application, run_jobs, settings):
+    import importlib
+
+    from django.apps import apps
+
+    settings.ANTHROPIC_API_KEY = ""
+    log_round(api, application, run_jobs)          # rule-based analysis
+    make_plan(api, application, run_jobs)          # rule-based plan
+    AnalysisRun.objects.update(free=False)         # as recorded before the `free` field existed
+
+    migration = importlib.import_module("tracker.migrations.0008_mark_rule_based_runs_free")
+    migration.mark_rule_based_runs_free(apps, None)
+    assert AnalysisRun.objects.filter(free=False).count() == 0

@@ -254,7 +254,10 @@ class Refused(UserCaused):
 
 
 class CutOff(UserCaused):
-    """The reply hit max_tokens. Long or open-ended debrief text can cause this on purpose."""
+    """
+    The reply hit max_tokens. For an analysis, long or open-ended debrief text can cause this on
+    purpose, so it counts. generate_plan turns it into an ordinary (refundable) failure instead.
+    """
 
 
 class Billing:
@@ -309,7 +312,7 @@ def call_claude(system, prompt, schema, billing=None):
     if response.stop_reason == "refusal":
         raise Refused("The AI declined to analyse this content.")
     if response.stop_reason == "max_tokens":
-        raise CutOff("The AI response was too long and got cut off. Try shortening your debrief.")
+        raise CutOff("The AI response was too long and got cut off.")
     text = next(b.text for b in response.content if b.type == "text")
     return json.loads(text)
 
@@ -326,7 +329,10 @@ def analyze_round(context, billing=None):
         "Analyse this interview round. The candidate's debrief and the job context are below as JSON.\n\n"
         f"<round>\n{_context_block(context)}\n</round>"
     )
-    result = call_claude(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA, billing)
+    try:
+        result = call_claude(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA, billing)
+    except CutOff as exc:
+        raise CutOff("The analysis came out too long and got cut off. Try shortening your debrief.") from exc
     result["score"] = max(0, min(100, int(result["score"])))
     return result, "ai"
 
@@ -339,7 +345,12 @@ def generate_plan(context, billing=None):
         f"Build a {context['days']}-day prep plan. The candidate's context and recurring weak spots are below as JSON.\n\n"
         f"<context>\n{_context_block(context)}\n</context>"
     )
-    result = call_claude(PLAN_SYSTEM, prompt, PLAN_SCHEMA, billing)
+    try:
+        result = call_claude(PLAN_SYSTEM, prompt, PLAN_SCHEMA, billing)
+    except CutOff as exc:
+        # A plan's input is mostly ours (weak spots, round type, up to 14 days), and thinking counts
+        # towards max_tokens, so a cut-off isn't the user's doing: a plain failure, refunded within the cap.
+        raise RuntimeError("The plan came out too long and got cut off. Try again.") from exc
     days = max(1, context["days"])
     for task in result["tasks"]:
         task["day"] = max(1, min(days, int(task["day"])))

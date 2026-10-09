@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from . import ai
 from .insights import weak_spots
-from .models import Debrief, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
+from .models import AnalysisRun, Debrief, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
 from .usage import refund_run
 
 MAX_PLAN_DAYS = 14
@@ -38,6 +38,24 @@ def build_analysis_context(rnd):
     }
 
 
+def _settle_free(run_id):
+    """
+    Records whether this run is free from what actually happens now: with no API key the rule-based
+    fallback runs (free); with a key it's a paid call that counts, even if it was queued without one.
+    """
+    if run_id:
+        AnalysisRun.objects.filter(id=run_id).update(free=not ai.ai_enabled())
+
+
+def _refund_kind(exc, billing):
+    """None (counts), "free" or "billed": which refund, if any, a failed job gets."""
+    if isinstance(exc, ai.UserCaused):
+        return None  # refused or cut off: the user's text can cause these on purpose, so they count
+    if isinstance(exc, ai.NotCharged) or not billing.api_called:
+        return "free"  # nothing reached the paid API (or the free rule-based fallback failed)
+    return "billed"  # our side failed after a paid call: give it back, within the cap
+
+
 @shared_task
 def analyze_round_task(round_id, run_id=None):
     """
@@ -54,6 +72,7 @@ def analyze_round_task(round_id, run_id=None):
     )
     if not claimed:
         return
+    _settle_free(run_id)
 
     billing = ai.Billing()
     refund = None  # None, "free" or "billed"
@@ -102,15 +121,6 @@ def build_plan_context(plan):
     }
 
 
-def _refund_kind(exc, billing):
-    """None (counts), "free" or "billed": which refund, if any, a failed job gets."""
-    if isinstance(exc, ai.UserCaused):
-        return None  # refused or cut off: the user's text can cause these on purpose, so they count
-    if isinstance(exc, ai.NotCharged) or not billing.api_called:
-        return "free"  # nothing reached the paid API (or the free rule-based fallback failed)
-    return "billed"  # our side failed after a paid call: give it back, within the cap
-
-
 @shared_task
 def generate_plan_task(plan_id, run_id=None):
     """
@@ -123,6 +133,7 @@ def generate_plan_task(plan_id, run_id=None):
     )
     if not claimed:
         return
+    _settle_free(run_id)
 
     billing = ai.Billing()
     refund = None
