@@ -10,7 +10,8 @@ from django.utils import timezone
 
 from accounts.models import Profile, get_profile
 from tracker import ai
-from tracker.models import AnalysisRun, InterviewRound, JobStatus, RoundAnalysis
+from tracker.models import AnalysisRun, Debrief, InterviewRound, JobStatus, RoundAnalysis
+from tracker.tasks import analyze_round_task
 
 pytestmark = pytest.mark.django_db
 
@@ -227,3 +228,79 @@ def test_me_does_not_write(api, user):
     Profile.objects.filter(user=user).delete()
     assert api.get("/api/auth/me/").data["usage"]["plan"] == "free"
     assert not Profile.objects.filter(user=user).exists()
+
+
+# ---------------------------------------------------------------------------
+# Jobs only write while they are still the current job for the round
+# ---------------------------------------------------------------------------
+
+def test_debrief_edited_while_running_saves_result_as_stale(api, application, run_jobs):
+    real_analyze = ai.analyze_round
+
+    def edit_during_run(context):
+        # The user saves a new debrief while the AI call is in flight.
+        Debrief.objects.filter(round__application=application).update(
+            went_badly="edited mid-run", updated_at=timezone.now() + timedelta(seconds=1)
+        )
+        return real_analyze(context)
+
+    with mock.patch.object(ai, "analyze_round", side_effect=edit_during_run):
+        res = log_round(api, application, run_jobs)
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert analysis.status == JobStatus.DONE
+    assert analysis.stale is True
+
+
+def test_replaced_queued_job_never_runs(api, application):
+    round_id = _round_with_queued_analysis(api, application)
+    old_run = AnalysisRun.objects.get()
+    RoundAnalysis.objects.filter(round_id=round_id).update(updated_at=timezone.now() - timedelta(minutes=20))
+    assert api.post(f"/api/rounds/{round_id}/analyze/").status_code == 202
+    new_run = AnalysisRun.objects.get()
+
+    # The backed-up queue finally delivers the old job: it must not call the API or touch anything.
+    with mock.patch.object(ai, "analyze_round") as analyze:
+        analyze_round_task(round_id, old_run.id)
+    analyze.assert_not_called()
+    analysis = RoundAnalysis.objects.get(round_id=round_id)
+    assert (analysis.run_id, analysis.status) == (new_run.id, JobStatus.PENDING)
+
+
+def test_replaced_running_job_is_discarded_and_keeps_its_charge(api, application, run_jobs):
+    round_id = _round_with_queued_analysis(api, application)
+    old_run = AnalysisRun.objects.get()
+
+    def replaced_mid_run(context):
+        # While this job is in the AI call, it gets treated as stuck and a new analysis starts.
+        RoundAnalysis.objects.filter(round_id=round_id).update(started_at=timezone.now() - timedelta(minutes=20))
+        assert api.post(f"/api/rounds/{round_id}/analyze/").status_code == 202
+        return {"summary": "old job", "score": 10, "strengths": [], "weaknesses": [], "answer_reviews": []}, "ai"
+
+    with mock.patch.object(ai, "analyze_round", side_effect=replaced_mid_run):
+        analyze_round_task(round_id, old_run.id)  # must not crash on the replaced run
+
+    analysis = RoundAnalysis.objects.get(round_id=round_id)
+    assert analysis.summary != "old job"  # the old result was discarded
+    assert analysis.status == JobStatus.PENDING and analysis.run_id != old_run.id
+    # The old job may have been billed, so both runs count.
+    assert AnalysisRun.objects.filter(id=old_run.id).exists()
+    assert AnalysisRun.objects.count() == 2
+
+
+def test_error_before_api_call_is_refunded(api, application, run_jobs, with_ai):
+    with mock.patch("tracker.tasks.build_analysis_context", side_effect=ValueError("bad data")):
+        res = log_round(api, application, run_jobs)
+    assert RoundAnalysis.objects.get(round_id=res.data["id"]).status == JobStatus.FAILED
+    assert AnalysisRun.objects.count() == 0
+
+
+def test_loaddata_with_profile_fixture(tmp_path):
+    from django.core.management import call_command
+
+    fixture = tmp_path / "users.json"
+    fixture.write_text(json.dumps([
+        {"model": "auth.user", "pk": 900, "fields": {"username": "fixture_user", "password": "!"}},
+        {"model": "accounts.profile", "pk": 900, "fields": {"user": 900, "plan": "pro"}},
+    ]))
+    call_command("loaddata", str(fixture), verbosity=0)
+    assert Profile.objects.get(user_id=900).plan == "pro"

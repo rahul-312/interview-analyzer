@@ -7,6 +7,7 @@ Two layers:
    the reply is valid JSON matching the schema.
 """
 import json
+from contextlib import contextmanager
 
 from django.conf import settings
 
@@ -241,7 +242,26 @@ PLAN_SCHEMA = {
 
 
 class NotCharged(Exception):
-    """The API call failed before any billed response came back, so it shouldn't count against a limit."""
+    """The API call failed before any billed response came back (network error, 4xx/429/5xx, overloaded)."""
+
+
+class Billed(Exception):
+    """
+    A failure after the API returned a billed response, or a timeout (the server may have finished
+    and billed after we stopped waiting). Only these count against a user's limit; any other
+    failure happened before anything was billed.
+    """
+
+
+@contextmanager
+def billed():
+    """Anything that fails inside this block happened after a billed response."""
+    try:
+        yield
+    except Billed:
+        raise
+    except Exception as exc:
+        raise Billed(str(exc) or exc.__class__.__name__) from exc
 
 
 def get_client():
@@ -263,20 +283,21 @@ def call_claude(system, prompt, schema):
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
         )
-    except anthropic.APITimeoutError:
+    except anthropic.APITimeoutError as exc:
         # The server may have finished (and billed) the request after we stopped waiting.
-        raise
+        raise Billed("The AI took too long to respond. Try again.") from exc
     except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
         # Network failure, or the API rejected/failed the request (4xx, 429, 5xx, overloaded): nothing billed.
         raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
 
     # From here on a response came back and was billed, so failures still count.
-    if response.stop_reason == "refusal":
-        raise RuntimeError("The AI declined to analyse this content.")
-    if response.stop_reason == "max_tokens":
-        raise RuntimeError("The AI response was cut off. Try again.")
-    text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)
+    with billed():
+        if response.stop_reason == "refusal":
+            raise RuntimeError("The AI declined to analyse this content.")
+        if response.stop_reason == "max_tokens":
+            raise RuntimeError("The AI response was cut off. Try again.")
+        text = next(b.text for b in response.content if b.type == "text")
+        return json.loads(text)
 
 
 def _context_block(context):
@@ -292,7 +313,8 @@ def analyze_round(context):
         f"<round>\n{_context_block(context)}\n</round>"
     )
     result = call_claude(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA)
-    result["score"] = max(0, min(100, int(result["score"])))
+    with billed():
+        result["score"] = max(0, min(100, int(result["score"])))
     return result, "ai"
 
 
@@ -305,8 +327,9 @@ def generate_plan(context):
         f"<context>\n{_context_block(context)}\n</context>"
     )
     result = call_claude(PLAN_SYSTEM, prompt, PLAN_SCHEMA)
-    days = max(1, context["days"])
-    for task in result["tasks"]:
-        task["day"] = max(1, min(days, int(task["day"])))
-        task["minutes"] = max(5, min(480, int(task["minutes"])))
+    with billed():
+        days = max(1, context["days"])
+        for task in result["tasks"]:
+            task["day"] = max(1, min(days, int(task["day"])))
+            task["minutes"] = max(5, min(480, int(task["minutes"])))
     return result, "ai"

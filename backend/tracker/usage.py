@@ -17,7 +17,7 @@ from accounts.models import Profile, get_profile
 from .models import AnalysisRun, JobStatus, RoundAnalysis
 
 WINDOW = timedelta(hours=24)
-# A job queued or running for longer than this is treated as lost (worker or broker died).
+# A job still queued, or running, this long after it was queued or started is treated as lost.
 STUCK_AFTER = timedelta(minutes=15)
 
 QUEUED = "queued"
@@ -80,10 +80,18 @@ def reserve_analysis(user, rnd):
         analysis = RoundAnalysis.objects.filter(round=rnd).first()
 
         if analysis and analysis.status in IN_PROGRESS:
-            if analysis.updated_at > now - STUCK_AFTER:
+            if analysis.status == JobStatus.PENDING:
+                # Queued but never started. Safe to replace: the old job exits when it sees its run
+                # was replaced, so it never calls the API, and its run is refunded.
+                stuck = analysis.updated_at <= now - STUCK_AFTER
+                refund_old_run = True
+            else:
+                # Running. It may already have been billed, so its run is kept even if replaced.
+                stuck = (analysis.started_at or analysis.updated_at) <= now - STUCK_AFTER
+                refund_old_run = False
+            if not stuck:
                 return BUSY, None
-            # Stuck job: give its run back and start again.
-            if analysis.run_id:
+            if refund_old_run and analysis.run_id:
                 AnalysisRun.objects.filter(id=analysis.run_id).delete()
 
         limit = plan_limit(profile.plan)
@@ -92,7 +100,8 @@ def reserve_analysis(user, rnd):
 
         run = AnalysisRun.objects.create(user=user, round=rnd)
         RoundAnalysis.objects.update_or_create(
-            round=rnd, defaults={"status": JobStatus.PENDING, "error": "", "stale": False, "run": run}
+            round=rnd,
+            defaults={"status": JobStatus.PENDING, "error": "", "stale": False, "run": run, "started_at": None},
         )
         return QUEUED, run
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { RegisterInput, User } from '@/models/Auth';
 import { authService } from '@/services/AuthService';
 
@@ -42,7 +42,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshUser = useCallback(async () => {
     if (!authService.hasToken()) return;
     try {
-      setUser(await authService.me());
+      const next = await authService.me();
+      // Keep the same object when nothing changed, so consumers don't re-render
+      setUser((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
     } catch {
       // Keep the current user; a 401 is already handled by the API client.
     }
@@ -71,7 +73,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.href = '/login';
   }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, ready, login, register, logout, refreshUser }}>{children}</AuthContext.Provider>
+  // Stable value: consumers only re-render when the user or ready state actually changes
+  const value = useMemo(
+    () => ({ user, ready, login, register, logout, refreshUser }),
+    [user, ready, login, register, logout, refreshUser]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

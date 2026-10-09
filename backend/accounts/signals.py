@@ -6,7 +6,8 @@ from .models import Profile
 
 
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)
-def create_profile(sender, instance, created, **kwargs):
+def create_profile(sender, instance, created, raw=False, **kwargs):
     """Every new user gets a (free) profile, so admins can change their plan straight away."""
-    if created:
+    # Skip during loaddata: fixtures bring their own Profile rows.
+    if created and not raw:
         Profile.objects.get_or_create(user=instance)

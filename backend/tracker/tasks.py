@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from . import ai
 from .insights import weak_spots
-from .models import AnalysisRun, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
+from .models import AnalysisRun, Debrief, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
 
 MAX_PLAN_DAYS = 14
 
@@ -38,31 +38,46 @@ def build_analysis_context(rnd):
 
 
 @shared_task
-def analyze_round_task(round_id, run_id=None):
-    rnd = InterviewRound.objects.select_related("application", "debrief").get(id=round_id)
-    analysis, _ = RoundAnalysis.objects.get_or_create(round=rnd)
-    analysis.status = JobStatus.RUNNING
-    analysis.error = ""
-    analysis.save(update_fields=["status", "error", "updated_at"])
+def analyze_round_task(round_id, run_id):
+    """
+    Analyses a round. Only the job whose run is on the RoundAnalysis may run or write:
+    if a newer analysis replaced this one, it does nothing and its result is discarded.
+    """
+    now = timezone.now()
+    # Claim the analysis atomically. Zero rows means this job was replaced or already ran.
+    claimed = RoundAnalysis.objects.filter(round_id=round_id, run_id=run_id, status=JobStatus.PENDING).update(
+        status=JobStatus.RUNNING, started_at=now, error="", updated_at=now
+    )
+    if not claimed:
+        return
+
+    refund = False
     try:
+        rnd = InterviewRound.objects.select_related("application", "debrief").get(id=round_id)
+        debrief_version = rnd.debrief.updated_at
         result, source = ai.analyze_round(build_analysis_context(rnd))
-        analysis.summary = result["summary"]
-        analysis.score = result["score"]
-        analysis.strengths = result["strengths"]
-        analysis.weaknesses = result["weaknesses"]
-        analysis.answer_reviews = result["answer_reviews"]
-        analysis.source = source
-        analysis.status = JobStatus.DONE
+        fields = {
+            "summary": result["summary"],
+            "score": result["score"],
+            "strengths": result["strengths"],
+            "weaknesses": result["weaknesses"],
+            "answer_reviews": result["answer_reviews"],
+            "source": source,
+            "status": JobStatus.DONE,
+            # Edited while this ran: the result describes the old debrief.
+            "stale": Debrief.objects.filter(round_id=round_id).values_list("updated_at", flat=True).first()
+            != debrief_version,
+        }
     except Exception as exc:  # store any failure so the UI can show it
-        analysis.status = JobStatus.FAILED
-        analysis.error = str(exc)[:1000]
-        # Refund only failures that cost nothing: the API was never billed (network error,
-        # rejected or overloaded request), or the free rule-based analyzer was used.
-        # Refusals, cut-off responses and bad JSON came back billed, so they still count.
-        if run_id and (isinstance(exc, ai.NotCharged) or not ai.ai_enabled()):
-            analysis.run = None  # or saving below would point back at the deleted run
-            AnalysisRun.objects.filter(id=run_id).delete()
-    analysis.save()
+        fields = {"status": JobStatus.FAILED, "error": str(exc)[:1000]}
+        # Only a failure after a billed API response (or a timeout) counts. Anything else,
+        # including errors before the API was called and the free rule-based analyzer, is refunded.
+        refund = not isinstance(exc, ai.Billed)
+
+    # Write only if this is still the current job for the round.
+    RoundAnalysis.objects.filter(round_id=round_id, run_id=run_id).update(**fields, updated_at=timezone.now())
+    if refund:
+        AnalysisRun.objects.filter(id=run_id).delete()
 
 
 def build_plan_context(plan):

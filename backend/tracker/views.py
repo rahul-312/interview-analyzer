@@ -99,7 +99,8 @@ class AnalysisLimitMixin:
         if result == LIMITED:
             self.analysis_limited = True
             mark_stale(rnd)
-        # BUSY: an analysis of this round is already queued; it reads the debrief when it starts.
+        # BUSY: an analysis is already queued or running. A queued one reads the new debrief when it
+        # starts; a running one notices the debrief changed and saves its result as out of date.
         # Re-read so the response shows the new analysis status, not a cached one.
         serializer.instance = self.get_queryset().get(pk=rnd.pk)
 

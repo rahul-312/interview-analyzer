@@ -110,8 +110,10 @@ class RoundAnalysis(models.Model):
     error = models.TextField(blank=True)
     # The debrief changed after this analysis ran, and no new one could be started (daily limit).
     stale = models.BooleanField(default=False)
-    # The run this analysis counts against; released if the job gets stuck.
+    # The run this analysis counts against. A job only writes here while this is still its run.
     run = models.ForeignKey("AnalysisRun", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    # When the current job actually started running (not when it was queued).
+    started_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
