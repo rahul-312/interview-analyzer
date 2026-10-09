@@ -37,13 +37,16 @@ export const SeverityBadge: React.FC<{ severity: Severity }> = ({ severity }) =>
   <span className={`${base} ${severityStyles[severity]}`}>{severity}</span>
 );
 
-/** Shows where an analysis is: queued, analysing, failed or its score. */
-export const AnalysisBadge: React.FC<{ analysis: Analysis | null }> = ({ analysis }) => {
-  if (!analysis) return null;
+/** Shows where an analysis is: not analysed, queued, analysing, failed, out of date or its score. */
+export const AnalysisBadge: React.FC<{ analysis: Analysis | null; hasDebrief?: boolean }> = ({ analysis, hasDebrief }) => {
+  if (!analysis) {
+    return hasDebrief ? <span className={`${base} bg-amber-light text-amber-dark`}>Not analysed</span> : null;
+  }
   if (analysis.status === 'pending') return <span className={`${base} bg-smoke-white text-dark-gray`}>Queued</span>;
   if (analysis.status === 'running')
     return <span className={`${base} animate-pulse bg-primary-light text-primary-dark`}>Analysing…</span>;
   if (analysis.status === 'failed') return <span className={`${base} bg-rose-light text-rose-dark`}>Analysis failed</span>;
+  if (analysis.stale) return <span className={`${base} bg-amber-light text-amber-dark`}>Out of date</span>;
 
   const score = analysis.score ?? 0;
   const tone =

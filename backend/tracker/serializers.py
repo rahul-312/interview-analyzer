@@ -32,7 +32,7 @@ class DebriefSerializer(serializers.ModelSerializer):
 class RoundAnalysisSerializer(serializers.ModelSerializer):
     class Meta:
         model = RoundAnalysis
-        exclude = ["id", "round"]
+        exclude = ["id", "round", "run"]
         read_only_fields = [f.name for f in RoundAnalysis._meta.fields]
 
 
@@ -76,6 +76,10 @@ class InterviewRoundSerializer(serializers.ModelSerializer):
     def _save_debrief(self, rnd, debrief_data):
         if debrief_data is None:
             return
+        existing = Debrief.objects.filter(round=rnd).first()
+        # Only a changed debrief needs a new analysis (the edit form re-sends it on every save).
+        if existing and all(getattr(existing, field) == value for field, value in debrief_data.items()):
+            return
         Debrief.objects.update_or_create(round=rnd, defaults=debrief_data)
         self.debrief_saved = True
 
@@ -113,9 +117,9 @@ class PrepPlanSerializer(serializers.ModelSerializer):
         model = PrepPlan
         fields = [
             "id", "application", "company", "role", "target_round", "target_round_label",
-            "interview_date", "status", "source", "summary", "error", "tasks", "created_at",
+            "interview_date", "status", "source", "summary", "error", "refunded", "tasks", "created_at",
         ]
-        read_only_fields = ["status", "source", "summary", "error", "created_at"]
+        read_only_fields = ["status", "source", "summary", "error", "refunded", "created_at"]
 
     def validate(self, attrs):
         user = self.context["request"].user

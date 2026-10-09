@@ -7,6 +7,7 @@ import { ArrowLeft, Menu } from "lucide-react";
 import Button from "../ui/Button";
 import NavButton from "./NavButton";
 import UserMenu from "./UserMenu";
+import UsageBadge from "./UsageBadge";
 import { navItems } from "@/config/navItems";
 
 const HamburgerMenu = () => {
@@ -57,6 +58,7 @@ const HamburgerMenu = () => {
 
           {/* Bottom section */}
           <div className="flex flex-col items-start gap-4xl px-6xl pb-8xl">
+            <UsageBadge />
             <NavButton onClick={closeMenu} />
             <UserMenu />
           </div>

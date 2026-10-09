@@ -37,7 +37,7 @@ const PastRounds: React.FC<{ rounds: InterviewRound[] }> = ({ rounds }) => {
                   <span className="font-medium">{r.company}</span>
                   <span className="text-sm text-medium-gray">{r.round_type_label}</span>
                   <OutcomeBadge outcome={r.outcome} />
-                  <AnalysisBadge analysis={r.analysis} />
+                  <AnalysisBadge analysis={r.analysis} hasDebrief={Boolean(r.debrief)} />
                 </div>
                 <p className="text-sm text-medium-gray">{formatDateTime(r.scheduled_at)}</p>
               </div>

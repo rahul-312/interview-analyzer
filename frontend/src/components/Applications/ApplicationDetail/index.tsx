@@ -10,6 +10,7 @@ import Card from '../../ui/Card';
 import { ErrorMessage, Loading } from '../../ui/Feedback';
 import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
+import { useRefreshUsageWhenDone } from '@/hooks/useUsage';
 import { applicationService } from '@/services/ApplicationService';
 import { roundService } from '@/services/RoundService';
 import { anyAnalysing } from '@/utils/analysis';
@@ -27,6 +28,7 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id }) => {
 
   const { data: app, error: loadError, setData } = useApi(`application-${id}`, () => applicationService.get(id));
   const { data: rounds } = useApi(`rounds-${id}`, () => roundService.list(id), anyAnalysing);
+  useRefreshUsageWhenDone(anyAnalysing(rounds ?? []));
 
   const handleDelete = async () => {
     if (!app || !confirm(`Delete ${app.company} and all its rounds? This can't be undone.`)) return;

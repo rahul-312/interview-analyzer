@@ -7,6 +7,7 @@ Two layers:
    the reply is valid JSON matching the schema.
 """
 import json
+import time
 
 from django.conf import settings
 
@@ -240,23 +241,78 @@ PLAN_SCHEMA = {
 }
 
 
-def call_claude(system, prompt, schema):
+class NotCharged(Exception):
+    """Every attempt failed before a billed response came back (network error, 4xx/429/5xx, overloaded)."""
+
+
+class UserCaused(Exception):
+    """A billed failure the user's own text can cause, so it counts against their limit."""
+
+
+class Refused(UserCaused):
+    """The model declined the content."""
+
+
+class CutOff(UserCaused):
+    """
+    The reply hit max_tokens. For an analysis, long or open-ended debrief text can cause this on
+    purpose, so it counts. generate_plan turns it into an ordinary (refundable) failure instead.
+    """
+
+
+class Billing:
+    """
+    Tracks whether a paid API request was sent. Callers use it to decide refunds by *where*
+    a failure happened: once `api_called` is set, any failure counts unless it is NotCharged.
+    """
+
+    def __init__(self):
+        self.api_called = False
+
+
+
+def get_client():
     import anthropic
 
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    response = client.beta.messages.create(
-        model=settings.ANTHROPIC_MODEL,
-        max_tokens=16000,
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
-        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-    )
+    # No hidden SDK retries: a retry after a (possibly billed) timeout must not look "not charged".
+    return anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=0)
+
+
+def call_claude(system, prompt, schema, billing=None):
+    import anthropic
+
+    billing = billing or Billing()
+    client = get_client()
+    # Unbilled failures are retried after these delays (none without a broker); never after a timeout.
+    delays = settings.AI_RETRY_DELAYS
+    for attempt in range(len(delays) + 1):
+        billing.api_called = True  # from here on, an unexpected failure may have been billed
+        try:
+            response = client.beta.messages.create(
+                model=settings.ANTHROPIC_MODEL,
+                max_tokens=16000,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+                output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+            )
+            break
+        except anthropic.APITimeoutError as exc:
+            # The server may have finished (and billed) after we stopped waiting: don't retry, it counts.
+            raise RuntimeError("The AI took too long to respond. Try again.") from exc
+        except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
+            # Network failure, or the API rejected/failed the request (4xx, 429, 5xx, overloaded): nothing billed.
+            retryable = isinstance(exc, anthropic.APIConnectionError) or exc.status_code == 429 or exc.status_code >= 500
+            if retryable and attempt < len(delays):
+                time.sleep(delays[attempt])
+                continue
+            raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
+
     if response.stop_reason == "refusal":
-        raise RuntimeError("The AI declined to analyse this content.")
+        raise Refused("The AI declined to analyse this content.")
     if response.stop_reason == "max_tokens":
-        raise RuntimeError("The AI response was cut off. Try again.")
+        raise CutOff("The AI response was too long and got cut off.")
     text = next(b.text for b in response.content if b.type == "text")
     return json.loads(text)
 
@@ -265,7 +321,7 @@ def _context_block(context):
     return json.dumps(context, indent=2, default=str)
 
 
-def analyze_round(context):
+def analyze_round(context, billing=None):
     """Returns (result, "ai") or (result, "rules")."""
     if not ai_enabled():
         return rule_based_analysis(context), "rules"
@@ -273,12 +329,15 @@ def analyze_round(context):
         "Analyse this interview round. The candidate's debrief and the job context are below as JSON.\n\n"
         f"<round>\n{_context_block(context)}\n</round>"
     )
-    result = call_claude(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA)
+    try:
+        result = call_claude(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA, billing)
+    except CutOff as exc:
+        raise CutOff("The analysis came out too long and got cut off. Try shortening your debrief.") from exc
     result["score"] = max(0, min(100, int(result["score"])))
     return result, "ai"
 
 
-def generate_plan(context):
+def generate_plan(context, billing=None):
     """Returns (result, "ai") or (result, "rules")."""
     if not ai_enabled():
         return rule_based_plan(context), "rules"
@@ -286,7 +345,12 @@ def generate_plan(context):
         f"Build a {context['days']}-day prep plan. The candidate's context and recurring weak spots are below as JSON.\n\n"
         f"<context>\n{_context_block(context)}\n</context>"
     )
-    result = call_claude(PLAN_SYSTEM, prompt, PLAN_SCHEMA)
+    try:
+        result = call_claude(PLAN_SYSTEM, prompt, PLAN_SCHEMA, billing)
+    except CutOff as exc:
+        # A plan's input is mostly ours (weak spots, round type, up to 14 days), and thinking counts
+        # towards max_tokens, so a cut-off isn't the user's doing: a plain failure, refunded within the cap.
+        raise RuntimeError("The plan came out too long and got cut off. Try again.") from exc
     days = max(1, context["days"])
     for task in result["tasks"]:
         task["day"] = max(1, min(days, int(task["day"])))

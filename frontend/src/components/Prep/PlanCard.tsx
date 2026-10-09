@@ -5,10 +5,11 @@ import TaskList from './TaskList';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
 import { ErrorMessage, Working } from '../ui/Feedback';
+import { useUsage } from '@/hooks/useUsage';
 import type { PrepPlan, PrepTask } from '@/models/PrepPlan';
 import { prepPlanService } from '@/services/PrepPlanService';
 import { errorText } from '@/utils/errorText';
-import { daysUntil, formatDate } from '@/utils/format';
+import { daysUntil, formatDate, planLabel } from '@/utils/format';
 
 interface PlanCardProps {
   plan: PrepPlan;
@@ -32,6 +33,8 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
   const [tasks, setTasks] = useState<PrepTask[]>(plan.tasks);
   const [prevTasks, setPrevTasks] = useState(plan.tasks);
   const [error, setError] = useState('');
+  const { usage, reloadUsage } = useUsage();
+  const outOfPlans = usage?.prep_plans.remaining === 0;
 
   // Take the server's tasks when the plan is reloaded
   if (plan.tasks !== prevTasks) {
@@ -59,10 +62,12 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
     if (doneCount && !confirm('Regenerating replaces all tasks, including ticked ones. Continue?')) return;
     try {
       await prepPlanService.regenerate(plan.id);
-      onChange();
     } catch (err) {
       setError(errorText(err));
     }
+    // Reload either way: a 409/429 means the plan or usage changed elsewhere
+    onChange();
+    reloadUsage();
   };
 
   const handleDelete = async () => {
@@ -92,7 +97,14 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
       {generating ? (
         <Working text="Building your plan…" />
       ) : plan.status === 'failed' ? (
-        <ErrorMessage message={`Plan generation failed: ${plan.error}`} />
+        <div className="flex flex-col gap-lg">
+          <ErrorMessage message={`Plan generation failed: ${plan.error}`} />
+          {plan.refunded && (
+            <p className="rounded-lg bg-pale-mint px-2xl py-lg text-sm text-deep-green">
+              This one didn&apos;t count towards your limit.
+            </p>
+          )}
+        </div>
       ) : (
         <>
           <p className="text-sm text-charcoal-gray">{plan.summary}</p>
@@ -121,7 +133,12 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
 
       {/* Actions */}
       <div className="flex justify-end gap-lg border-t border-smoke-white pt-2xl">
-        <Button variant="secondary" onClick={handleRegenerate} disabled={generating}>
+        <Button
+          variant="secondary"
+          onClick={handleRegenerate}
+          disabled={generating || outOfPlans}
+          title={outOfPlans ? `No prep plans left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined}
+        >
           Regenerate
         </Button>
         <Button variant="danger" onClick={handleDelete}>

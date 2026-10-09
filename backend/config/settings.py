@@ -103,6 +103,26 @@ CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "")
 CELERY_TASK_ALWAYS_EAGER = not CELERY_BROKER_URL
 CELERY_TASK_EAGER_PROPAGATES = False
+# Seconds to wait before retrying an AI call that failed without being billed. Without a broker,
+# jobs run inside the web request, so don't sleep there: fail fast and let the user retry.
+AI_RETRY_DELAYS = (1, 3) if CELERY_BROKER_URL else ()
+
+# Round analyses allowed in any rolling 24 hours, by plan (None = unlimited).
+PLAN_ANALYSES_PER_24H = {
+    "free": int(os.environ.get("FREE_ANALYSES_PER_24H", "2")),
+    "pro": None,
+}
+
+# Prep plans generated (new or regenerated) in any rolling 24 hours, by plan (None = unlimited).
+PLAN_PREP_PLANS_PER_24H = {
+    "free": int(os.environ.get("FREE_PREP_PLANS_PER_24H", "2")),
+    "pro": None,
+}
+
+# Failed analyses and prep plans that already cost an API call (timeouts, cut-off or unreadable replies, our
+# own errors) are given back, up to this many per user in 24 hours. Past it they count, so
+# nobody can retry an expensive failure for free. Failures that cost nothing are always refunded.
+BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
 
 # AI: without a key, the rule-based analyzer is used.
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
