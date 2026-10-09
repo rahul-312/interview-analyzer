@@ -34,10 +34,11 @@ class PrepPlanAdmin(admin.ModelAdmin):
 
 @admin.register(AnalysisRun)
 class AnalysisRunAdmin(admin.ModelAdmin):
-    list_display = ["user", "round", "created_at"]
+    list_display = ["user", "kind", "round", "prep_plan", "created_at", "refunded", "billed"]
+    list_filter = ["kind", "refunded", "billed"]
     list_select_related = ["user", "round__application"]
     search_fields = ["user__username", "user__email"]
-    raw_id_fields = ["user", "round"]
+    raw_id_fields = ["user", "round", "prep_plan"]
     date_hierarchy = "created_at"
 
 

@@ -117,9 +117,9 @@ class PrepPlanSerializer(serializers.ModelSerializer):
         model = PrepPlan
         fields = [
             "id", "application", "company", "role", "target_round", "target_round_label",
-            "interview_date", "status", "source", "summary", "error", "tasks", "created_at",
+            "interview_date", "status", "source", "summary", "error", "refunded", "tasks", "created_at",
         ]
-        read_only_fields = ["status", "source", "summary", "error", "created_at"]
+        read_only_fields = ["status", "source", "summary", "error", "refunded", "created_at"]
 
     def validate(self, attrs):
         user = self.context["request"].user

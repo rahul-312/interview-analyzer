@@ -7,7 +7,7 @@ Two layers:
    the reply is valid JSON matching the schema.
 """
 import json
-from contextlib import contextmanager
+import time
 
 from django.conf import settings
 
@@ -242,69 +242,76 @@ PLAN_SCHEMA = {
 
 
 class NotCharged(Exception):
-    """The API call failed before any billed response came back (network error, 4xx/429/5xx, overloaded)."""
+    """Every attempt failed before a billed response came back (network error, 4xx/429/5xx, overloaded)."""
 
 
-class Billed(Exception):
+class Refused(Exception):
+    """The model declined the content. Caused by what the user wrote, so it counts."""
+
+
+class Billing:
     """
-    A failure after the API returned a billed response, or a timeout (the server may have finished
-    and billed after we stopped waiting). Only these count against a user's limit; any other
-    failure happened before anything was billed.
+    Tracks whether a paid API request was sent. Callers use it to decide refunds by *where*
+    a failure happened: once `api_called` is set, any failure counts unless it is NotCharged.
     """
 
+    def __init__(self):
+        self.api_called = False
 
-@contextmanager
-def billed():
-    """Anything that fails inside this block happened after a billed response."""
-    try:
-        yield
-    except Billed:
-        raise
-    except Exception as exc:
-        raise Billed(str(exc) or exc.__class__.__name__) from exc
+
+# Failures where the API sent nothing billable back. Retried here, never after a timeout.
+RETRY_DELAYS = (1, 3)
 
 
 def get_client():
     import anthropic
 
-    return anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    # No hidden SDK retries: a retry after a (possibly billed) timeout must not look "not charged".
+    return anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=0)
 
 
-def call_claude(system, prompt, schema):
+def call_claude(system, prompt, schema, billing=None):
     import anthropic
 
-    try:
-        response = get_client().beta.messages.create(
-            model=settings.ANTHROPIC_MODEL,
-            max_tokens=16000,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
-    except anthropic.APITimeoutError as exc:
-        # The server may have finished (and billed) the request after we stopped waiting.
-        raise Billed("The AI took too long to respond. Try again.") from exc
-    except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
-        # Network failure, or the API rejected/failed the request (4xx, 429, 5xx, overloaded): nothing billed.
-        raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
+    billing = billing or Billing()
+    client = get_client()
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        billing.api_called = True  # from here on, an unexpected failure may have been billed
+        try:
+            response = client.beta.messages.create(
+                model=settings.ANTHROPIC_MODEL,
+                max_tokens=16000,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+                output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+            )
+            break
+        except anthropic.APITimeoutError as exc:
+            # The server may have finished (and billed) after we stopped waiting: don't retry, it counts.
+            raise RuntimeError("The AI took too long to respond. Try again.") from exc
+        except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
+            # Network failure, or the API rejected/failed the request (4xx, 429, 5xx, overloaded): nothing billed.
+            retryable = isinstance(exc, anthropic.APIConnectionError) or exc.status_code == 429 or exc.status_code >= 500
+            if retryable and attempt < len(RETRY_DELAYS):
+                time.sleep(RETRY_DELAYS[attempt])
+                continue
+            raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
 
-    # From here on a response came back and was billed, so failures still count.
-    with billed():
-        if response.stop_reason == "refusal":
-            raise RuntimeError("The AI declined to analyse this content.")
-        if response.stop_reason == "max_tokens":
-            raise RuntimeError("The AI response was cut off. Try again.")
-        text = next(b.text for b in response.content if b.type == "text")
-        return json.loads(text)
+    if response.stop_reason == "refusal":
+        raise Refused("The AI declined to analyse this content.")
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError("The AI response was cut off. Try again.")
+    text = next(b.text for b in response.content if b.type == "text")
+    return json.loads(text)
 
 
 def _context_block(context):
     return json.dumps(context, indent=2, default=str)
 
 
-def analyze_round(context):
+def analyze_round(context, billing=None):
     """Returns (result, "ai") or (result, "rules")."""
     if not ai_enabled():
         return rule_based_analysis(context), "rules"
@@ -312,13 +319,12 @@ def analyze_round(context):
         "Analyse this interview round. The candidate's debrief and the job context are below as JSON.\n\n"
         f"<round>\n{_context_block(context)}\n</round>"
     )
-    result = call_claude(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA)
-    with billed():
-        result["score"] = max(0, min(100, int(result["score"])))
+    result = call_claude(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA, billing)
+    result["score"] = max(0, min(100, int(result["score"])))
     return result, "ai"
 
 
-def generate_plan(context):
+def generate_plan(context, billing=None):
     """Returns (result, "ai") or (result, "rules")."""
     if not ai_enabled():
         return rule_based_plan(context), "rules"
@@ -326,10 +332,9 @@ def generate_plan(context):
         f"Build a {context['days']}-day prep plan. The candidate's context and recurring weak spots are below as JSON.\n\n"
         f"<context>\n{_context_block(context)}\n</context>"
     )
-    result = call_claude(PLAN_SYSTEM, prompt, PLAN_SCHEMA)
-    with billed():
-        days = max(1, context["days"])
-        for task in result["tasks"]:
-            task["day"] = max(1, min(days, int(task["day"])))
-            task["minutes"] = max(5, min(480, int(task["minutes"])))
+    result = call_claude(PLAN_SYSTEM, prompt, PLAN_SCHEMA, billing)
+    days = max(1, context["days"])
+    for task in result["tasks"]:
+        task["day"] = max(1, min(days, int(task["day"])))
+        task["minutes"] = max(5, min(480, int(task["minutes"])))
     return result, "ai"

@@ -1,9 +1,9 @@
 """
-Analysis limits per plan.
+Limits on paid AI jobs, per plan: round analyses and prep plans.
 
-Usage is counted over a rolling 24-hour window: each analysis frees up again
-24 hours after it started. Only failures where nothing was billed are refunded
-(see tasks.py and ai.NotCharged).
+Usage is counted over a rolling 24-hour window: each job frees up again 24 hours
+after it started. Failures that weren't the user's fault are refunded (see refund_run
+and tasks.py); refunds of failures that already cost an API call are capped.
 """
 from datetime import timedelta
 
@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from accounts.models import Profile, get_profile
 
-from .models import AnalysisRun, JobStatus, RoundAnalysis
+from .models import AnalysisRun, JobStatus, PrepPlan, RoundAnalysis
 
 WINDOW = timedelta(hours=24)
 # A job still queued, or running, this long after it was queued or started is treated as lost.
@@ -26,10 +26,20 @@ BUSY = "busy"
 
 IN_PROGRESS = (JobStatus.PENDING, JobStatus.RUNNING)
 
+ANALYSIS = AnalysisRun.Kind.ANALYSIS
+PREP_PLAN = AnalysisRun.Kind.PREP_PLAN
 
-def plan_limit(plan):
-    """Analyses allowed per 24 hours on this plan, or None for unlimited."""
-    return settings.PLAN_ANALYSES_PER_24H.get(plan)
+# How each kind is named in messages, and what "at the limit" means for the user.
+_WORDING = {
+    ANALYSIS: ("analyses", "Your debrief is saved; you can analyse it once one frees up."),
+    PREP_PLAN: ("prep plans", "You can make or regenerate a plan once one frees up."),
+}
+
+
+def plan_limit(plan, kind=ANALYSIS):
+    """Jobs of this kind allowed per 24 hours on this plan, or None for unlimited."""
+    limits = settings.PLAN_ANALYSES_PER_24H if kind == ANALYSIS else settings.PLAN_PREP_PLANS_PER_24H
+    return limits.get(plan)
 
 
 def _current_plan(user):
@@ -38,18 +48,16 @@ def _current_plan(user):
     return profile.plan if profile else Profile.Plan.FREE
 
 
-def _window_stats(user, now):
-    return AnalysisRun.objects.filter(user=user, created_at__gt=now - WINDOW).aggregate(
-        used=Count("id"), oldest=Min("created_at")
-    )
+def _window_stats(user, kind, now):
+    return AnalysisRun.objects.filter(
+        user=user, kind=kind, refunded=False, created_at__gt=now - WINDOW
+    ).aggregate(used=Count("id"), oldest=Min("created_at"))
 
 
-def analysis_usage(user):
-    plan = _current_plan(user)
-    limit = plan_limit(plan)
-    stats = _window_stats(user, timezone.now())
+def _quota(user, plan, kind, now):
+    limit = plan_limit(plan, kind)
+    stats = _window_stats(user, kind, now)
     return {
-        "plan": plan,
         "limit": limit,
         "used": stats["used"],
         "remaining": None if limit is None else max(0, limit - stats["used"]),
@@ -58,52 +66,122 @@ def analysis_usage(user):
     }
 
 
-def limit_message(user):
+def usage(user):
+    """The user's plan and what they have left of each limited job."""
     plan = _current_plan(user)
+    now = timezone.now()
+    return {
+        "plan": plan,
+        "analyses": _quota(user, plan, ANALYSIS, now),
+        "prep_plans": _quota(user, plan, PREP_PLAN, now),
+    }
+
+
+def limit_message(user, kind=ANALYSIS):
+    plan = _current_plan(user)
+    noun, next_step = _WORDING[kind]
     return (
-        f"You've used all {plan_limit(plan)} analyses allowed in 24 hours on the {Profile.Plan(plan).label} plan. "
-        "Your debrief is saved; you can analyse it once one frees up."
+        f"You've used all {plan_limit(plan, kind)} {noun} allowed in 24 hours on the "
+        f"{Profile.Plan(plan).label} plan. {next_step}"
     )
 
 
-def reserve_analysis(user, rnd):
+def refund_run(run_id, *, billed):
     """
-    Starts an analysis for the round if allowed. Returns (QUEUED, run), (LIMITED, None) or (BUSY, None).
+    Gives a run back so it no longer counts. Free refunds (nothing reached the paid API) always
+    succeed; billed ones are capped per user per 24 hours, across both kinds of job.
+    Returns True if the run was refunded.
+    """
+    with transaction.atomic():
+        run = AnalysisRun.objects.select_for_update().filter(id=run_id, refunded=False).first()
+        if run is None:
+            return False
+        if billed:
+            recent = AnalysisRun.objects.filter(
+                user_id=run.user_id, refunded=True, billed=True, created_at__gt=timezone.now() - WINDOW
+            ).count()
+            if recent >= settings.BILLED_REFUNDS_PER_24H:
+                return False
+        run.refunded = True
+        run.billed = billed
+        run.save(update_fields=["refunded", "billed"])
+        return True
 
-    Runs under a lock on the user's profile, so two requests at once can't both take the
-    last analysis or start two analyses of the same round.
+
+def _check_existing_job(job, now):
+    """
+    `job` is the locked RoundAnalysis or PrepPlan row (or None). Returns BUSY if it already has a
+    live job; otherwise releases a stuck one so a new job can start, and returns None.
+    """
+    if job is None or job.status not in IN_PROGRESS or job.run_id is None:
+        return None  # nothing running (or an old row from before runs existed)
+    if job.status == JobStatus.PENDING:
+        # Queued but never started. Safe to replace: the old job exits when it sees its run
+        # was replaced, so it never calls the API, and its run is refunded.
+        if job.run.created_at > now - STUCK_AFTER:
+            return BUSY
+        AnalysisRun.objects.filter(id=job.run_id).update(refunded=True)
+    elif (job.started_at or job.run.created_at) > now - STUCK_AFTER:
+        # Running. If it's stuck it may already have been billed, so its run is kept when replaced.
+        return BUSY
+    return None
+
+
+def _reserve(user, kind, lock_job, start_job, run_fields):
+    """
+    The shared steps for starting a job. Runs under a lock on the user's profile (so two requests
+    can't both take the last slot) and on the job's row (so a queued job's claim can't interleave).
     """
     now = timezone.now()
     get_profile(user)  # make sure the row exists before locking it
     with transaction.atomic():
         profile = Profile.objects.select_for_update().get(user=user)
-        analysis = RoundAnalysis.objects.filter(round=rnd).first()
+        if _check_existing_job(lock_job(), now) == BUSY:
+            return BUSY, None
 
-        if analysis and analysis.status in IN_PROGRESS:
-            if analysis.status == JobStatus.PENDING:
-                # Queued but never started. Safe to replace: the old job exits when it sees its run
-                # was replaced, so it never calls the API, and its run is refunded.
-                stuck = analysis.updated_at <= now - STUCK_AFTER
-                refund_old_run = True
-            else:
-                # Running. It may already have been billed, so its run is kept even if replaced.
-                stuck = (analysis.started_at or analysis.updated_at) <= now - STUCK_AFTER
-                refund_old_run = False
-            if not stuck:
-                return BUSY, None
-            if refund_old_run and analysis.run_id:
-                AnalysisRun.objects.filter(id=analysis.run_id).delete()
-
-        limit = plan_limit(profile.plan)
-        if limit is not None and _window_stats(user, now)["used"] >= limit:
+        limit = plan_limit(profile.plan, kind)
+        if limit is not None and _window_stats(user, kind, now)["used"] >= limit:
             return LIMITED, None
 
-        run = AnalysisRun.objects.create(user=user, round=rnd)
+        run = AnalysisRun.objects.create(user=user, kind=kind, **run_fields)
+        start_job(run)
+        return QUEUED, run
+
+
+def reserve_analysis(user, rnd):
+    """Starts an analysis of the round if allowed. Returns (QUEUED, run), (LIMITED, None) or (BUSY, None)."""
+
+    def start(run):
         RoundAnalysis.objects.update_or_create(
             round=rnd,
-            defaults={"status": JobStatus.PENDING, "error": "", "stale": False, "run": run, "started_at": None},
+            defaults={
+                "status": JobStatus.PENDING, "error": "", "stale": False, "refunded": False,
+                "run": run, "started_at": None,
+            },
         )
-        return QUEUED, run
+
+    return _reserve(
+        user, ANALYSIS,
+        lock_job=lambda: RoundAnalysis.objects.select_for_update(of=("self",)).select_related("run").filter(round=rnd).first(),
+        start_job=start,
+        run_fields={"round": rnd},
+    )
+
+
+def reserve_prep_plan(user, plan):
+    """Starts generating the plan if allowed. Returns (QUEUED, run), (LIMITED, None) or (BUSY, None)."""
+
+    def start(run):
+        PrepPlan.objects.filter(pk=plan.pk).update(
+            status=JobStatus.PENDING, error="", refunded=False, run=run, started_at=None
+        )
+
+    return _reserve(
+        user, PREP_PLAN,
+        lock_job=lambda: PrepPlan.objects.select_for_update(of=("self",)).select_related("run").filter(pk=plan.pk).first(),
+        start_job=start,
+        run_fields={"prep_plan": plan},
+    )
 
 
 def mark_stale(rnd):

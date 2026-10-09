@@ -22,6 +22,8 @@ export interface PrepPlan {
   source: GeneratedBy;
   summary: string;
   error: string;
+  /** Failed for a reason that wasn't the user's, so it was given back. */
+  refunded: boolean;
   tasks: PrepTask[];
   created_at: string;
 }

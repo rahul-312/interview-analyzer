@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
@@ -14,7 +15,16 @@ from .serializers import (
     PrepTaskSerializer,
 )
 from .tasks import analyze_round_task, generate_plan_task, queue
-from .usage import BUSY, LIMITED, QUEUED, limit_message, mark_stale, reserve_analysis
+from .usage import (
+    BUSY,
+    LIMITED,
+    PREP_PLAN,
+    QUEUED,
+    limit_message,
+    mark_stale,
+    reserve_analysis,
+    reserve_prep_plan,
+)
 
 
 def queue_analysis(rnd, user):
@@ -28,11 +38,15 @@ def queue_analysis(rnd, user):
     return result
 
 
-def queue_plan(plan):
-    plan.status = JobStatus.PENDING
-    plan.error = ""
-    plan.save(update_fields=["status", "error"])
-    queue(generate_plan_task, plan.id)
+def queue_plan(plan, user):
+    """
+    Starts generating the plan if the user's plan allows it, and runs it after the transaction
+    commits. Returns QUEUED, LIMITED (no prep plans left) or BUSY (already generating).
+    """
+    result, run = reserve_prep_plan(user, plan)
+    if result == QUEUED:
+        queue(generate_plan_task, plan.id, run.id)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -182,9 +196,18 @@ class PrepPlanListCreateView(PrepPlanQuerysetMixin, generics.ListCreateAPIView):
     serializer_class = PrepPlanSerializer
     permission_classes = [IsAuthenticated]
 
-    def perform_create(self, serializer):
-        plan = serializer.save(user=self.request.user)
-        queue(generate_plan_task, plan.id)
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            plan = serializer.save(user=request.user)
+            if queue_plan(plan, request.user) == LIMITED:
+                message = limit_message(request.user, PREP_PLAN)
+                # At the limit: don't keep an empty plan that can never be generated.
+                transaction.set_rollback(True)
+                return Response({"detail": message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        plan = self.get_queryset().get(pk=plan.pk)
+        return Response(self.get_serializer(plan).data, status=status.HTTP_201_CREATED)
 
 
 class PrepPlanDetailView(PrepPlanQuerysetMixin, generics.RetrieveDestroyAPIView):
@@ -194,12 +217,16 @@ class PrepPlanDetailView(PrepPlanQuerysetMixin, generics.RetrieveDestroyAPIView)
 
 
 class PrepPlanRegenerateView(APIView):
-    """Throws away the plan's tasks and generates new ones."""
+    """Throws away the plan's tasks and generates new ones. Counts against the prep-plan limit."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         plan = get_object_or_404(PrepPlan, pk=pk, user=request.user)
-        queue_plan(plan)
+        result = queue_plan(plan, request.user)
+        if result == BUSY:
+            return Response({"detail": "This plan is already being generated."}, status=status.HTTP_409_CONFLICT)
+        if result == LIMITED:
+            return Response({"detail": limit_message(request.user, PREP_PLAN)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Plan regeneration queued."}, status=status.HTTP_202_ACCEPTED)
 
 

@@ -110,6 +110,17 @@ PLAN_ANALYSES_PER_24H = {
     "pro": None,
 }
 
+# Prep plans generated (new or regenerated) in any rolling 24 hours, by plan (None = unlimited).
+PLAN_PREP_PLANS_PER_24H = {
+    "free": int(os.environ.get("FREE_PREP_PLANS_PER_24H", "2")),
+    "pro": None,
+}
+
+# Failed analyses and prep plans that already cost an API call (timeouts, cut-off or unreadable replies, our
+# own errors) are given back, up to this many per user in 24 hours. Past it they count, so
+# nobody can retry an expensive failure for free. Failures that cost nothing are always refunded.
+BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
+
 # AI: without a key, the rule-based analyzer is used.
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")

@@ -10,6 +10,7 @@ import { ErrorMessage, Loading } from '../ui/Feedback';
 import PageHeader from '../ui/PageHeader';
 import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
+import { useRefreshUsageWhenDone } from '@/hooks/useUsage';
 import type { PrepPlan } from '@/models/PrepPlan';
 import { prepPlanService } from '@/services/PrepPlanService';
 
@@ -34,6 +35,8 @@ const Prep = () => {
 
   // Poll while a plan is being generated
   const { data: plans, error, loading, reload } = useApi('prep-plans', () => prepPlanService.list(), isGenerating);
+  // A refunded (failed) plan changes the count, so refresh it when generation finishes
+  useRefreshUsageWhenDone(isGenerating(plans ?? []));
 
   const closeForm = () => {
     setFormOpen(false);

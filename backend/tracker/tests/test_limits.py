@@ -10,10 +10,15 @@ from django.utils import timezone
 
 from accounts.models import Profile, get_profile
 from tracker import ai
-from tracker.models import AnalysisRun, Debrief, InterviewRound, JobStatus, RoundAnalysis
-from tracker.tasks import analyze_round_task
+from tracker.models import AnalysisRun, Debrief, InterviewRound, JobStatus, PrepPlan, RoundAnalysis
+from tracker.tasks import analyze_round_task, generate_plan_task
 
 pytestmark = pytest.mark.django_db
+
+
+def counted_runs():
+    """Runs that count against the limit; refunded ones stay in the table for the record."""
+    return AnalysisRun.objects.filter(refunded=False).count()
 
 
 def past(days=2):
@@ -49,17 +54,18 @@ def test_free_plan_gets_two_analyses_then_round_is_saved_without_one(api, applic
     # The analyze button is refused too.
     res = api.post(f"/api/rounds/{third.id}/analyze/")
     assert res.status_code == 429
-    assert AnalysisRun.objects.filter(user=application.user).count() == 2
+    assert counted_runs() == 2
 
 
 def test_usage_is_reported_on_me(api, application, run_jobs):
-    usage = api.get("/api/auth/me/").data["usage"]
-    assert usage == {"plan": "free", "limit": 2, "used": 0, "remaining": 2, "next_available_at": None}
+    fresh = {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None}
+    assert api.get("/api/auth/me/").data["usage"] == {"plan": "free", "analyses": fresh, "prep_plans": fresh}
 
     log_round(api, application, run_jobs)
     usage = api.get("/api/auth/me/").data["usage"]
-    assert usage["used"] == 1 and usage["remaining"] == 1
-    assert usage["next_available_at"] is not None
+    assert usage["analyses"]["used"] == 1 and usage["analyses"]["remaining"] == 1
+    assert usage["analyses"]["next_available_at"] is not None
+    assert usage["prep_plans"] == fresh  # counted separately
 
 
 def test_analyses_free_up_after_24_hours(api, application, run_jobs):
@@ -74,15 +80,15 @@ def test_pro_plan_is_unlimited(api, application, run_jobs, user):
     Profile.objects.update_or_create(user=user, defaults={"plan": Profile.Plan.PRO})
     for i in range(4):
         assert not log_round(api, application, run_jobs, f"Q{i}").data["analysis_limited"]
-    assert api.get("/api/auth/me/").data["usage"]["remaining"] is None
+    assert api.get("/api/auth/me/").data["usage"]["analyses"]["remaining"] is None
 
 
 def test_failed_analysis_is_refunded(api, application, run_jobs):
     with mock.patch("tracker.ai.analyze_round", side_effect=RuntimeError("API down")):
         res = log_round(api, application, run_jobs)
     assert RoundAnalysis.objects.get(round_id=res.data["id"]).status == JobStatus.FAILED
-    assert AnalysisRun.objects.count() == 0
-    assert api.get("/api/auth/me/").data["usage"]["remaining"] == 2
+    assert counted_runs() == 0
+    assert api.get("/api/auth/me/").data["usage"]["analyses"]["remaining"] == 2
 
 
 def test_editing_round_without_changing_debrief_does_not_use_an_analysis(api, application, run_jobs):
@@ -93,12 +99,12 @@ def test_editing_round_without_changing_debrief_does_not_use_an_analysis(api, ap
     with run_jobs():
         res = api.patch(f"/api/rounds/{rnd['id']}/", {"outcome": "passed", "debrief": debrief()}, format="json")
     assert res.status_code == 200
-    assert AnalysisRun.objects.count() == 1
+    assert counted_runs() == 1
 
     # Changing the debrief does run a new analysis.
     with run_jobs():
         api.patch(f"/api/rounds/{rnd['id']}/", {"debrief": debrief(confidence=1)}, format="json")
-    assert AnalysisRun.objects.count() == 2
+    assert counted_runs() == 2
 
 
 def test_new_users_start_on_free_plan(user):
@@ -132,17 +138,48 @@ def with_ai(settings):
     settings.ANTHROPIC_API_KEY = "sk-ant-test"
 
 
+def test_refusal_counts(api, application, run_jobs, with_ai):
+    # The AI declined what the user wrote: that's on the user, so it counts.
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_reply(stop_reason="refusal"))):
+        res = log_round(api, application, run_jobs)
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert analysis.status == JobStatus.FAILED and analysis.refunded is False
+    assert counted_runs() == 1
+
+
 @pytest.mark.parametrize("outcome", [
-    _reply(stop_reason="refusal"),
     _reply(stop_reason="max_tokens"),
     _reply(text="not json"),
     anthropic.APITimeoutError(request=_REQ),
-], ids=["refusal", "cut-off", "bad-json", "timeout"])
-def test_billed_failures_still_count(api, application, run_jobs, with_ai, outcome):
+], ids=["cut-off", "bad-json", "timeout"])
+def test_our_side_failures_after_a_paid_call_are_given_back(api, application, run_jobs, with_ai, outcome):
     with mock.patch.object(ai, "get_client", return_value=_fake_client(outcome)):
         res = log_round(api, application, run_jobs)
-    assert RoundAnalysis.objects.get(round_id=res.data["id"]).status == JobStatus.FAILED
-    assert AnalysisRun.objects.count() == 1
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert analysis.status == JobStatus.FAILED and analysis.refunded is True
+    assert counted_runs() == 0
+    assert AnalysisRun.objects.get().billed is True  # counts towards the refund cap
+
+
+def test_billed_refunds_are_capped(api, application, run_jobs, with_ai, settings):
+    settings.BILLED_REFUNDS_PER_24H = 1
+    cut_off = _reply(stop_reason="max_tokens")
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(cut_off)):
+        first = log_round(api, application, run_jobs, "Q1")
+        second = log_round(api, application, run_jobs, "Q2")
+    assert RoundAnalysis.objects.get(round_id=first.data["id"]).refunded is True
+    # Past the cap the failure counts, so an expensive failure can't be retried for free.
+    assert RoundAnalysis.objects.get(round_id=second.data["id"]).refunded is False
+    assert counted_runs() == 1
+
+
+def test_unbilled_refunds_are_not_capped(api, application, run_jobs, with_ai, settings):
+    settings.BILLED_REFUNDS_PER_24H = 0
+    down = anthropic.APIConnectionError(request=_REQ)
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(down)):
+        res = log_round(api, application, run_jobs)
+    assert RoundAnalysis.objects.get(round_id=res.data["id"]).refunded is True
+    assert counted_runs() == 0
 
 
 @pytest.mark.parametrize("outcome", [
@@ -156,7 +193,7 @@ def test_unbilled_failures_are_refunded(api, application, run_jobs, with_ai, out
     analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
     assert analysis.status == JobStatus.FAILED
     assert "unavailable" in analysis.error
-    assert AnalysisRun.objects.count() == 0
+    assert counted_runs() == 0
 
 
 # ---------------------------------------------------------------------------
@@ -178,18 +215,18 @@ def test_analyze_while_already_queued_is_rejected(api, application):
 
     res = api.post(f"/api/rounds/{round_id}/analyze/")
     assert res.status_code == 409
-    assert AnalysisRun.objects.count() == 1
+    assert counted_runs() == 1
 
 
 def test_stuck_analysis_releases_its_run_and_can_restart(api, application):
     round_id = _round_with_queued_analysis(api, application)
-    stuck_run = AnalysisRun.objects.get()
-    RoundAnalysis.objects.filter(round_id=round_id).update(updated_at=timezone.now() - timedelta(minutes=20))
+    stuck_run = AnalysisRun.objects.get(refunded=False)
+    AnalysisRun.objects.filter(round_id=round_id).update(created_at=timezone.now() - timedelta(minutes=20))
 
     res = api.post(f"/api/rounds/{round_id}/analyze/")
     assert res.status_code == 202
-    assert not AnalysisRun.objects.filter(id=stuck_run.id).exists()
-    assert AnalysisRun.objects.count() == 1
+    assert AnalysisRun.objects.get(id=stuck_run.id).refunded
+    assert counted_runs() == 1
 
 
 # ---------------------------------------------------------------------------
@@ -237,12 +274,12 @@ def test_me_does_not_write(api, user):
 def test_debrief_edited_while_running_saves_result_as_stale(api, application, run_jobs):
     real_analyze = ai.analyze_round
 
-    def edit_during_run(context):
+    def edit_during_run(context, billing=None):
         # The user saves a new debrief while the AI call is in flight.
         Debrief.objects.filter(round__application=application).update(
             went_badly="edited mid-run", updated_at=timezone.now() + timedelta(seconds=1)
         )
-        return real_analyze(context)
+        return real_analyze(context, billing)
 
     with mock.patch.object(ai, "analyze_round", side_effect=edit_during_run):
         res = log_round(api, application, run_jobs)
@@ -253,10 +290,10 @@ def test_debrief_edited_while_running_saves_result_as_stale(api, application, ru
 
 def test_replaced_queued_job_never_runs(api, application):
     round_id = _round_with_queued_analysis(api, application)
-    old_run = AnalysisRun.objects.get()
-    RoundAnalysis.objects.filter(round_id=round_id).update(updated_at=timezone.now() - timedelta(minutes=20))
+    old_run = AnalysisRun.objects.get(refunded=False)
+    AnalysisRun.objects.filter(round_id=round_id).update(created_at=timezone.now() - timedelta(minutes=20))
     assert api.post(f"/api/rounds/{round_id}/analyze/").status_code == 202
-    new_run = AnalysisRun.objects.get()
+    new_run = AnalysisRun.objects.get(refunded=False)
 
     # The backed-up queue finally delivers the old job: it must not call the API or touch anything.
     with mock.patch.object(ai, "analyze_round") as analyze:
@@ -268,9 +305,9 @@ def test_replaced_queued_job_never_runs(api, application):
 
 def test_replaced_running_job_is_discarded_and_keeps_its_charge(api, application, run_jobs):
     round_id = _round_with_queued_analysis(api, application)
-    old_run = AnalysisRun.objects.get()
+    old_run = AnalysisRun.objects.get(refunded=False)
 
-    def replaced_mid_run(context):
+    def replaced_mid_run(context, billing=None):
         # While this job is in the AI call, it gets treated as stuck and a new analysis starts.
         RoundAnalysis.objects.filter(round_id=round_id).update(started_at=timezone.now() - timedelta(minutes=20))
         assert api.post(f"/api/rounds/{round_id}/analyze/").status_code == 202
@@ -283,15 +320,15 @@ def test_replaced_running_job_is_discarded_and_keeps_its_charge(api, application
     assert analysis.summary != "old job"  # the old result was discarded
     assert analysis.status == JobStatus.PENDING and analysis.run_id != old_run.id
     # The old job may have been billed, so both runs count.
-    assert AnalysisRun.objects.filter(id=old_run.id).exists()
-    assert AnalysisRun.objects.count() == 2
+    assert not AnalysisRun.objects.get(id=old_run.id).refunded
+    assert counted_runs() == 2
 
 
 def test_error_before_api_call_is_refunded(api, application, run_jobs, with_ai):
     with mock.patch("tracker.tasks.build_analysis_context", side_effect=ValueError("bad data")):
         res = log_round(api, application, run_jobs)
     assert RoundAnalysis.objects.get(round_id=res.data["id"]).status == JobStatus.FAILED
-    assert AnalysisRun.objects.count() == 0
+    assert counted_runs() == 0
 
 
 def test_loaddata_with_profile_fixture(tmp_path):
@@ -304,3 +341,177 @@ def test_loaddata_with_profile_fixture(tmp_path):
     ]))
     call_command("loaddata", str(fixture), verbosity=0)
     assert Profile.objects.get(user_id=900).plan == "pro"
+
+
+# ---------------------------------------------------------------------------
+# Refunds decided by where the failure happened
+# ---------------------------------------------------------------------------
+
+def _sequence_client(*outcomes):
+    """A fake client that returns or raises each outcome in turn, and counts the calls."""
+    calls = []
+
+    def create(**kwargs):
+        outcome = outcomes[len(calls)]
+        calls.append(kwargs)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    return SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(create=create))), calls
+
+
+def _overloaded():
+    return anthropic.OverloadedError("overloaded", response=httpx2.Response(529, request=_REQ), body=None)
+
+
+@pytest.fixture(autouse=True)
+def no_retry_sleep():
+    with mock.patch.object(ai.time, "sleep"):
+        yield
+
+
+def test_sdk_validation_error_after_paid_reply_is_given_back(api, application, run_jobs, with_ai):
+    # Raised by the SDK after a 200 (billed) response it can't parse; not a status/connection error.
+    error = anthropic.APIResponseValidationError(response=httpx2.Response(200, request=_REQ), body=None)
+    client, _ = _sequence_client(error)
+    with mock.patch.object(ai, "get_client", return_value=client):
+        res = log_round(api, application, run_jobs)
+    assert RoundAnalysis.objects.get(round_id=res.data["id"]).status == JobStatus.FAILED
+    assert counted_runs() == 0
+    assert AnalysisRun.objects.get().billed is True  # a paid call was made: counts towards the refund cap
+
+
+def test_failure_in_task_after_api_call_is_given_back(api, application, run_jobs, with_ai):
+    # The reply parses, but the task fails while reading it (missing "summary").
+    client, _ = _sequence_client(_reply(text=json.dumps({"score": 50})))
+    with mock.patch.object(ai, "get_client", return_value=client):
+        res = log_round(api, application, run_jobs)
+    assert RoundAnalysis.objects.get(round_id=res.data["id"]).status == JobStatus.FAILED
+    assert counted_runs() == 0
+    assert AnalysisRun.objects.get().billed is True
+
+
+def test_unbilled_errors_are_retried_then_succeed(api, application, run_jobs, with_ai):
+    client, calls = _sequence_client(_overloaded(), _reply())
+    with mock.patch.object(ai, "get_client", return_value=client):
+        res = log_round(api, application, run_jobs)
+    assert len(calls) == 2
+    assert RoundAnalysis.objects.get(round_id=res.data["id"]).status == JobStatus.DONE
+    assert counted_runs() == 1
+
+
+def test_unbilled_errors_on_every_attempt_are_refunded(api, application, run_jobs, with_ai):
+    client, calls = _sequence_client(_overloaded(), _overloaded(), _overloaded())
+    with mock.patch.object(ai, "get_client", return_value=client):
+        log_round(api, application, run_jobs)
+    assert len(calls) == 3
+    assert counted_runs() == 0
+
+
+def test_timeout_is_not_retried_and_is_a_billed_refund(api, application, run_jobs, with_ai):
+    # Not retried: a timeout may already have been paid for. Given back, but as a capped (billed) refund.
+    client, calls = _sequence_client(anthropic.APITimeoutError(request=_REQ), _reply())
+    with mock.patch.object(ai, "get_client", return_value=client):
+        res = log_round(api, application, run_jobs)
+    assert len(calls) == 1
+    assert RoundAnalysis.objects.get(round_id=res.data["id"]).status == JobStatus.FAILED
+    assert counted_runs() == 0
+    assert AnalysisRun.objects.get().billed is True
+
+
+def test_client_has_sdk_retries_disabled(with_ai):
+    assert ai.get_client().max_retries == 0
+
+
+def test_job_queued_by_older_deploy_still_runs(api, application):
+    # Before runs existed, jobs were queued as analyze_round_task(round_id) and rows had no run.
+    round_id = _round_with_queued_analysis(api, application)
+    RoundAnalysis.objects.filter(round_id=round_id).update(run=None)
+    analyze_round_task(round_id)
+    assert RoundAnalysis.objects.get(round_id=round_id).status == JobStatus.DONE
+
+
+# ---------------------------------------------------------------------------
+# Prep plans: same limits, refunds and job safety as analyses
+# ---------------------------------------------------------------------------
+
+def counted_plan_runs():
+    return AnalysisRun.objects.filter(kind="prep_plan", refunded=False).count()
+
+
+def make_plan(api, application, run_jobs=None):
+    body = {"application": application.id, "interview_date": (timezone.localdate() + timedelta(days=5)).isoformat()}
+    if run_jobs is None:  # leave the generation job queued
+        return api.post("/api/prep-plans/", body, format="json")
+    with run_jobs():
+        return api.post("/api/prep-plans/", body, format="json")
+
+
+def test_free_plan_gets_two_prep_plans_then_none_is_created(api, application, run_jobs):
+    assert make_plan(api, application, run_jobs).status_code == 201
+    assert make_plan(api, application, run_jobs).status_code == 201
+
+    res = make_plan(api, application, run_jobs)
+    assert res.status_code == 429
+    assert "2 prep plans" in res.data["detail"]
+    assert PrepPlan.objects.count() == 2  # no empty plan left behind
+
+
+def test_regenerate_counts_and_is_limited(api, application, run_jobs):
+    plan = make_plan(api, application, run_jobs).data
+    assert PrepPlan.objects.get(id=plan["id"]).status == JobStatus.DONE
+    with run_jobs():
+        assert api.post(f"/api/prep-plans/{plan['id']}/regenerate/").status_code == 202
+    assert api.post(f"/api/prep-plans/{plan['id']}/regenerate/").status_code == 429
+    assert counted_plan_runs() == 2
+
+
+def test_analyses_and_prep_plans_are_counted_separately(api, application, run_jobs):
+    log_round(api, application, run_jobs, "Q1")
+    log_round(api, application, run_jobs, "Q2")  # analyses used up
+    assert make_plan(api, application, run_jobs).status_code == 201
+    usage = api.get("/api/auth/me/").data["usage"]
+    assert usage["analyses"]["remaining"] == 0 and usage["prep_plans"]["remaining"] == 1
+
+
+def test_regenerate_while_generating_is_rejected(api, application):
+    plan = make_plan(api, application).data
+    assert plan["status"] == "pending"
+    assert api.post(f"/api/prep-plans/{plan['id']}/regenerate/").status_code == 409
+    assert counted_plan_runs() == 1
+
+
+def test_unbilled_plan_failure_is_given_back(api, application, run_jobs, with_ai):
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(anthropic.APIConnectionError(request=_REQ))):
+        plan = make_plan(api, application, run_jobs).data
+    plan = PrepPlan.objects.get(id=plan["id"])
+    assert plan.status == JobStatus.FAILED and plan.refunded is True
+    assert counted_plan_runs() == 0
+
+
+def test_plan_refusal_counts(api, application, run_jobs, with_ai):
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_reply(stop_reason="refusal"))):
+        plan = make_plan(api, application, run_jobs).data
+    assert PrepPlan.objects.get(id=plan["id"]).refunded is False
+    assert counted_plan_runs() == 1
+
+
+def test_replaced_queued_plan_job_never_runs(api, application):
+    plan_id = make_plan(api, application).data["id"]
+    old_run = AnalysisRun.objects.get(kind="prep_plan")
+    AnalysisRun.objects.filter(id=old_run.id).update(created_at=timezone.now() - timedelta(minutes=20))
+    assert api.post(f"/api/prep-plans/{plan_id}/regenerate/").status_code == 202
+
+    with mock.patch.object(ai, "generate_plan") as generate:
+        generate_plan_task(plan_id, old_run.id)
+    generate.assert_not_called()
+    assert AnalysisRun.objects.get(id=old_run.id).refunded  # never billed: given back
+    assert PrepPlan.objects.get(id=plan_id).status == JobStatus.PENDING
+
+
+def test_plan_job_queued_by_older_deploy_still_runs(api, application):
+    plan_id = make_plan(api, application).data["id"]
+    PrepPlan.objects.filter(id=plan_id).update(run=None)
+    generate_plan_task(plan_id)
+    assert PrepPlan.objects.get(id=plan_id).status == JobStatus.DONE

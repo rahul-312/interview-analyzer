@@ -29,7 +29,7 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
   // Poll until the analysis is done
   const { data: round, error: loadError, reload } = useApi(`round-${id}`, () => roundService.get(id), isAnalysing);
   const { usage, reloadUsage } = useUsage();
-  const outOfAnalyses = usage?.remaining === 0;
+  const outOfAnalyses = usage?.analyses.remaining === 0;
   // A refunded (failed) analysis changes the count, so refresh it when the job finishes
   useRefreshUsageWhenDone(round ? isAnalysing(round) : false);
 
@@ -117,6 +117,11 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
         <Card className="flex flex-col items-start gap-lg text-sm">
           <p className="font-medium text-rose-dark">The analysis failed.</p>
           <p className="text-dark-gray">{analysis.error}</p>
+          {analysis.refunded && (
+            <p className="rounded-lg bg-pale-mint px-2xl py-lg text-deep-green">
+              This one didn&apos;t count towards your limit.
+            </p>
+          )}
           <Button variant="primary" onClick={handleAnalyse} disabled={outOfAnalyses}>
             Try again
           </Button>

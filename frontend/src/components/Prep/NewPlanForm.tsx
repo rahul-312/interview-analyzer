@@ -6,6 +6,7 @@ import Card from '../ui/Card';
 import { ErrorMessage } from '../ui/Feedback';
 import { Field, Input, Select } from '../ui/FormControls';
 import { useApi } from '@/hooks/useApi';
+import { useUsage } from '@/hooks/useUsage';
 import { applicationService } from '@/services/ApplicationService';
 import { prepPlanService } from '@/services/PrepPlanService';
 import { roundService } from '@/services/RoundService';
@@ -30,6 +31,9 @@ const NewPlanForm: React.FC<NewPlanFormProps> = ({ initialApplication, initialRo
   const { data: applications } = useApi('applications', () => applicationService.list());
   const { data: rounds } = useApi(application ? `rounds-${application}` : null, () => roundService.list(application));
   const upcoming = (rounds ?? []).filter((r) => !isPast(r.scheduled_at));
+  const { usage } = useUsage();
+  const quota = usage?.prep_plans;
+  const outOfPlans = quota?.remaining === 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,14 +102,21 @@ const NewPlanForm: React.FC<NewPlanFormProps> = ({ initialApplication, initialRo
 
         <p className="text-xs text-medium-gray">
           The plan puts your recurring weak spots first, then the basics for the round type. Up to 14 days.
+          {quota?.remaining != null && ` You have ${quota.remaining} of ${quota.limit} prep plans left.`}
         </p>
+        {outOfPlans && (
+          <p className="rounded-lg bg-amber-light px-2xl py-lg text-sm text-amber-dark">
+            You&apos;ve used all {quota?.limit} prep plans allowed in 24 hours on the free plan.
+            {quota?.next_available_at && <> The next one frees up at {formatDateTime(quota.next_available_at)}.</>}
+          </p>
+        )}
         <ErrorMessage message={error} />
 
         <div className="flex justify-end gap-lg">
           <Button variant="secondary" onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy || application === ''}>
+          <Button type="submit" variant="primary" disabled={busy || application === '' || outOfPlans}>
             {busy ? 'Creating…' : 'Create plan'}
           </Button>
         </div>

@@ -15,7 +15,8 @@ interface NotAnalysedProps {
 
 /** A saved debrief with no current analysis, usually because the plan's limit was reached. */
 const NotAnalysed: React.FC<NotAnalysedProps> = ({ usage, stale = false, onAnalyse }) => {
-  const outOfAnalyses = usage?.remaining === 0;
+  const quota = usage?.analyses;
+  const outOfAnalyses = quota?.remaining === 0;
   const planName = usage?.plan === 'pro' ? 'Pro' : 'Free';
 
   return (
@@ -27,13 +28,13 @@ const NotAnalysed: React.FC<NotAnalysedProps> = ({ usage, stale = false, onAnaly
       </p>
       {outOfAnalyses ? (
         <p className="text-dark-gray">
-          You&apos;ve used all {usage?.limit} analyses allowed in 24 hours on the {planName} plan.
-          {usage?.next_available_at && <> The next one frees up at {formatDateTime(usage.next_available_at)}.</>}
+          You&apos;ve used all {quota?.limit} analyses allowed in 24 hours on the {planName} plan.
+          {quota?.next_available_at && <> The next one frees up at {formatDateTime(quota.next_available_at)}.</>}
         </p>
       ) : (
         <p className="text-dark-gray">
           Your debrief is saved.
-          {usage?.remaining != null && ` You have ${usage.remaining} of ${usage.limit} analyses left.`}
+          {quota?.remaining != null && ` You have ${quota.remaining} of ${quota.limit} analyses left.`}
         </p>
       )}
       <Button variant="primary" onClick={onAnalyse} disabled={outOfAnalyses}>

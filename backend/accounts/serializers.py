@@ -27,7 +27,7 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "username"]
 
     def get_usage(self, user):
-        """The user's plan and how many analyses they have left in the last 24 hours."""
-        from tracker.usage import analysis_usage
+        """The user's plan and how many analyses and prep plans they have left in the last 24 hours."""
+        from tracker.usage import usage
 
-        return analysis_usage(user)
+        return usage(user)

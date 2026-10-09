@@ -50,8 +50,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Out of analyses: refresh when the next one frees up, so "Analyse now" re-enables by itself
-  const nextAvailableAt = user?.usage.remaining === 0 ? user.usage.next_available_at : null;
+  // Out of something: refresh when the next one frees up, so buttons re-enable by themselves
+  const nextAvailableAt =
+    [user?.usage.analyses, user?.usage.prep_plans]
+      .filter((q) => q?.remaining === 0 && q.next_available_at)
+      .map((q) => q!.next_available_at as string)
+      .sort()[0] ?? null;
   useEffect(() => {
     if (!nextAvailableAt) return;
     const delay = Math.max(0, new Date(nextAvailableAt).getTime() - Date.now()) + 1000;
