@@ -57,10 +57,10 @@ const HamburgerMenu = () => {
           </div>
 
           {/* Bottom section */}
-          <div className="flex flex-col items-start gap-4xl px-6xl pb-8xl">
+          <div className="flex flex-col items-start gap-4xl border-t border-light-gray px-6xl pt-6xl pb-8xl">
             <UsageBadge />
             <NavButton onClick={closeMenu} />
-            <UserMenu />
+            <UserMenu inline />
           </div>
         </div>
       )}
