@@ -14,22 +14,18 @@ from .serializers import (
     PrepTaskSerializer,
 )
 from .tasks import analyze_round_task, generate_plan_task, queue
-from .usage import limit_message, start_analysis
+from .usage import BUSY, LIMITED, QUEUED, limit_message, mark_stale, reserve_analysis
 
 
 def queue_analysis(rnd, user):
     """
-    Mark the round's analysis as pending and run it after the transaction commits.
-    Returns False (and queues nothing) when the user has no analyses left today.
+    Starts an analysis of the round if the user's plan allows it, and runs it after the
+    transaction commits. Returns QUEUED, LIMITED (no analyses left) or BUSY (already running).
     """
-    run = start_analysis(user, rnd)
-    if run is None:
-        return False
-    RoundAnalysis.objects.update_or_create(
-        round=rnd, defaults={"status": JobStatus.PENDING, "error": ""}
-    )
-    queue(analyze_round_task, rnd.id, run.id)
-    return True
+    result, run = reserve_analysis(user, rnd)
+    if result == QUEUED:
+        queue(analyze_round_task, rnd.id, run.id)
+    return result
 
 
 def queue_plan(plan):
@@ -97,10 +93,15 @@ class AnalysisLimitMixin:
     analysis_limited = False
 
     def queue_if_debrief_saved(self, serializer, rnd):
-        if serializer.debrief_saved:
-            self.analysis_limited = not queue_analysis(rnd, self.request.user)
-            # Re-read so the response shows the new analysis status, not a cached one.
-            serializer.instance = self.get_queryset().get(pk=rnd.pk)
+        if not serializer.debrief_saved:
+            return
+        result = queue_analysis(rnd, self.request.user)
+        if result == LIMITED:
+            self.analysis_limited = True
+            mark_stale(rnd)
+        # BUSY: an analysis of this round is already queued; it reads the debrief when it starts.
+        # Re-read so the response shows the new analysis status, not a cached one.
+        serializer.instance = self.get_queryset().get(pk=rnd.pk)
 
     def add_limit_info(self, response):
         response.data["analysis_limited"] = self.analysis_limited
@@ -153,7 +154,10 @@ class RoundAnalyzeView(APIView):
         rnd = get_object_or_404(InterviewRound, pk=pk, application__user=request.user)
         if not hasattr(rnd, "debrief"):
             return Response({"detail": "Write a debrief first."}, status=status.HTTP_400_BAD_REQUEST)
-        if not queue_analysis(rnd, request.user):
+        result = queue_analysis(rnd, request.user)
+        if result == BUSY:
+            return Response({"detail": "This round is already being analysed."}, status=status.HTTP_409_CONFLICT)
+        if result == LIMITED:
             return Response({"detail": limit_message(request.user)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
 

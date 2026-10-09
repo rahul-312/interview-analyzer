@@ -10,6 +10,8 @@ interface AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => void;
+  /** Refetches the user, including plan usage. */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -37,6 +39,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .finally(() => setReady(true));
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    if (!authService.hasToken()) return;
+    try {
+      setUser(await authService.me());
+    } catch {
+      // Keep the current user; a 401 is already handled by the API client.
+    }
+  }, []);
+
+  // Out of analyses: refresh when the next one frees up, so "Analyse now" re-enables by itself
+  const nextAvailableAt = user?.usage.remaining === 0 ? user.usage.next_available_at : null;
+  useEffect(() => {
+    if (!nextAvailableAt) return;
+    const delay = Math.max(0, new Date(nextAvailableAt).getTime() - Date.now()) + 1000;
+    const timer = setTimeout(refreshUser, Math.min(delay, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [nextAvailableAt, refreshUser]);
+
   const login = useCallback(async (username: string, password: string) => {
     setUser(await authService.login(username, password));
   }, []);
@@ -51,5 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.href = '/login';
   }, []);
 
-  return <AuthContext.Provider value={{ user, ready, login, register, logout }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, ready, login, register, logout, refreshUser }}>{children}</AuthContext.Provider>
+  );
 };

@@ -35,7 +35,10 @@ class PrepPlanAdmin(admin.ModelAdmin):
 @admin.register(AnalysisRun)
 class AnalysisRunAdmin(admin.ModelAdmin):
     list_display = ["user", "round", "created_at"]
-    list_filter = ["user"]
+    list_select_related = ["user", "round__application"]
+    search_fields = ["user__username", "user__email"]
+    raw_id_fields = ["user", "round"]
+    date_hierarchy = "created_at"
 
 
 admin.site.register(Debrief)

@@ -240,19 +240,37 @@ PLAN_SCHEMA = {
 }
 
 
+class NotCharged(Exception):
+    """The API call failed before any billed response came back, so it shouldn't count against a limit."""
+
+
+def get_client():
+    import anthropic
+
+    return anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+
 def call_claude(system, prompt, schema):
     import anthropic
 
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    response = client.beta.messages.create(
-        model=settings.ANTHROPIC_MODEL,
-        max_tokens=16000,
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
-        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-    )
+    try:
+        response = get_client().beta.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=16000,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+        )
+    except anthropic.APITimeoutError:
+        # The server may have finished (and billed) the request after we stopped waiting.
+        raise
+    except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
+        # Network failure, or the API rejected/failed the request (4xx, 429, 5xx, overloaded): nothing billed.
+        raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
+
+    # From here on a response came back and was billed, so failures still count.
     if response.stop_reason == "refusal":
         raise RuntimeError("The AI declined to analyse this content.")
     if response.stop_reason == "max_tokens":

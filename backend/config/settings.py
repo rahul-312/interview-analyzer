@@ -104,9 +104,9 @@ CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "")
 CELERY_TASK_ALWAYS_EAGER = not CELERY_BROKER_URL
 CELERY_TASK_EAGER_PROPAGATES = False
 
-# Round analyses allowed per rolling 24 hours, by plan (None = unlimited).
-PLAN_DAILY_ANALYSES = {
-    "free": int(os.environ.get("FREE_DAILY_ANALYSES", "2")),
+# Round analyses allowed in any rolling 24 hours, by plan (None = unlimited).
+PLAN_ANALYSES_PER_24H = {
+    "free": int(os.environ.get("FREE_ANALYSES_PER_24H", "2")),
     "pro": None,
 }
 

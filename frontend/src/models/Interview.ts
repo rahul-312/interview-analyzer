@@ -53,6 +53,8 @@ export interface Analysis {
   weaknesses: Weakness[];
   answer_reviews: AnswerReview[];
   error: string;
+  /** The debrief changed after this ran and no new analysis could start. */
+  stale: boolean;
   updated_at: string;
 }
 

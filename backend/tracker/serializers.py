@@ -32,7 +32,7 @@ class DebriefSerializer(serializers.ModelSerializer):
 class RoundAnalysisSerializer(serializers.ModelSerializer):
     class Meta:
         model = RoundAnalysis
-        exclude = ["id", "round"]
+        exclude = ["id", "round", "run"]
         read_only_fields = [f.name for f in RoundAnalysis._meta.fields]
 
 

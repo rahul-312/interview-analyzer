@@ -1,10 +1,24 @@
 'use client';
 
-import { useApi } from './useApi';
-import { authService } from '@/services/AuthService';
+import { useEffect, useRef } from 'react';
+import { useAuth } from '@/context/AuthContext';
 
-/** The user's plan and analyses left today. Refetches whenever a dialog saves something. */
+/** The user's plan and analyses left, from the shared auth state (no extra requests). */
 export function useUsage() {
-  const { data, reload } = useApi('usage', () => authService.me());
-  return { usage: data?.usage ?? null, reloadUsage: reload };
+  const { user, refreshUser } = useAuth();
+  return { usage: user?.usage ?? null, reloadUsage: refreshUser };
+}
+
+/**
+ * Refreshes usage when background analyses finish (`busy` goes from true to false),
+ * so a refunded analysis shows up in the count straight away.
+ */
+export function useRefreshUsageWhenDone(busy: boolean) {
+  const { reloadUsage } = useUsage();
+  const wasBusy = useRef(busy);
+
+  useEffect(() => {
+    if (wasBusy.current && !busy) reloadUsage();
+    wasBusy.current = busy;
+  }, [busy, reloadUsage]);
 }

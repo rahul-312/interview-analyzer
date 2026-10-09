@@ -12,7 +12,7 @@ import Card from '../../ui/Card';
 import { ErrorMessage, Loading, Working } from '../../ui/Feedback';
 import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
-import { useUsage } from '@/hooks/useUsage';
+import { useRefreshUsageWhenDone, useUsage } from '@/hooks/useUsage';
 import { roundService } from '@/services/RoundService';
 import { isAnalysing } from '@/utils/analysis';
 import { errorText } from '@/utils/errorText';
@@ -28,17 +28,21 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
   const [error, setError] = useState('');
   // Poll until the analysis is done
   const { data: round, error: loadError, reload } = useApi(`round-${id}`, () => roundService.get(id), isAnalysing);
-  const { usage } = useUsage();
+  const { usage, reloadUsage } = useUsage();
   const outOfAnalyses = usage?.remaining === 0;
+  // A refunded (failed) analysis changes the count, so refresh it when the job finishes
+  useRefreshUsageWhenDone(round ? isAnalysing(round) : false);
 
   const handleAnalyse = async () => {
     setError('');
     try {
       await roundService.analyze(id);
-      bump(); // reloads this round and the usage count
     } catch (err) {
       setError(errorText(err));
     }
+    // Reload either way: a 409/429 means the round or usage changed elsewhere
+    reload();
+    reloadUsage();
   };
 
   const handleDelete = async () => {
@@ -79,7 +83,7 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
           </p>
         </div>
         <div className="flex flex-wrap gap-lg">
-          {round.debrief && analysis && (
+          {round.debrief && analysis && !analysis.stale && (
             <Button
               variant="secondary"
               onClick={handleAnalyse}
@@ -117,6 +121,18 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
             Try again
           </Button>
         </Card>
+      ) : analysis.stale ? (
+        <>
+          <NotAnalysed usage={usage} stale onAnalyse={handleAnalyse} />
+          <details className="flex flex-col gap-8xl">
+            <summary className="cursor-pointer text-sm font-medium text-medium-gray">
+              Show the previous analysis (before your last edit)
+            </summary>
+            <div className="mt-6xl flex flex-col gap-8xl opacity-75">
+              <AnalysisResult analysis={analysis} />
+            </div>
+          </details>
+        </>
       ) : (
         <AnalysisResult analysis={analysis} />
       )}

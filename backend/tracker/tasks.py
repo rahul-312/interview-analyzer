@@ -56,8 +56,11 @@ def analyze_round_task(round_id, run_id=None):
     except Exception as exc:  # store any failure so the UI can show it
         analysis.status = JobStatus.FAILED
         analysis.error = str(exc)[:1000]
-        # A failed analysis doesn't count against the daily limit.
-        if run_id:
+        # Refund only failures that cost nothing: the API was never billed (network error,
+        # rejected or overloaded request), or the free rule-based analyzer was used.
+        # Refusals, cut-off responses and bad JSON came back billed, so they still count.
+        if run_id and (isinstance(exc, ai.NotCharged) or not ai.ai_enabled()):
+            analysis.run = None  # or saving below would point back at the deleted run
             AnalysisRun.objects.filter(id=run_id).delete()
     analysis.save()
 

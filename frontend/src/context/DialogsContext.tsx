@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Info, X } from 'lucide-react';
 import ApplicationForm from '@/components/ApplicationForm';
 import Modal from '@/components/Modal';
@@ -8,6 +8,7 @@ import RoundForm from '@/components/RoundForm';
 import Button from '@/components/ui/Button';
 import type { Application } from '@/models/Application';
 import type { InterviewRound } from '@/models/Interview';
+import { useAuth } from './AuthContext';
 import { RefreshContext } from './RefreshContext';
 
 interface AddApplicationOptions {
@@ -46,6 +47,17 @@ export const DialogsProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [addApp, setAddApp] = useState<AddApplicationOptions | null>(null);
   const [roundForm, setRoundForm] = useState<RoundFormOptions | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { refreshUser } = useAuth();
+
+  // Anything saved through a dialog can change usage, so refresh it along with the data
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    refreshUser();
+  }, [refreshKey, refreshUser]);
 
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
   const openAddApplication = useCallback((options: AddApplicationOptions = {}) => setAddApp(options), []);
