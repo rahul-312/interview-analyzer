@@ -78,6 +78,8 @@ def usage(user):
     now = timezone.now()
     return {
         "plan": plan,
+        # False with no API key: jobs use the free rule-based engine, so the limits are off.
+        "ai_enabled": ai.ai_enabled(),
         "analyses": _quota(user, plan, ANALYSIS, now),
         "prep_plans": _quota(user, plan, PREP_PLAN, now),
     }

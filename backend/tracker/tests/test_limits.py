@@ -85,7 +85,9 @@ def test_free_plan_gets_two_analyses_then_round_is_saved_without_one(api, applic
 
 def test_usage_is_reported_on_me(api, application, run_jobs):
     fresh = {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None}
-    assert api.get("/api/auth/me/").data["usage"] == {"plan": "free", "analyses": fresh, "prep_plans": fresh}
+    assert api.get("/api/auth/me/").data["usage"] == {
+        "plan": "free", "ai_enabled": True, "analyses": fresh, "prep_plans": fresh
+    }
 
     log_round(api, application, run_jobs)
     usage = api.get("/api/auth/me/").data["usage"]
@@ -579,6 +581,7 @@ def test_no_api_key_means_no_limits(api, application, run_jobs, settings):
 
     usage = api.get("/api/auth/me/").data["usage"]
     assert usage["analyses"]["limit"] is None and usage["prep_plans"]["limit"] is None
+    assert usage["ai_enabled"] is False
     assert AnalysisRun.objects.filter(free=False).count() == 0  # recorded, but never counted
 
 
