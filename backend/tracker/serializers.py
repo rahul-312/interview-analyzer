@@ -10,7 +10,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Application
         exclude = ["user"]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["applied_at", "created_at", "updated_at"]
 
 
 class DebriefQuestionSerializer(serializers.Serializer):

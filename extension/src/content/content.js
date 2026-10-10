@@ -7,34 +7,61 @@
   globalThis.IAContent = true;
 
   const { adapter, fromCard, fromPage } = globalThis.IASites;
-  const { openSaveDialog, trackButton } = globalThis.IAUi;
+  const { openSaveDialog, trackButton, ask } = globalThis.IAUi;
 
-  // Job links already saved (kept by the background worker), so buttons can say "Saved".
-  let saved = {};
+  // "✓ Saved" marks come from the app: the job links on screen are checked against it in batches, and
+  // again whenever this tab comes back into view, so jobs added or deleted in the app (or on another
+  // device) show correctly. Nothing is remembered between page loads.
+  const known = new Map(); // jobUrl -> application id, or null when not saved
   let buttons = []; // { jobUrl, host, setSaved }
-  const register = (jobUrl, { host, setSaved }) => {
-    if (!jobUrl) return;
-    buttons.push({ jobUrl, host, setSaved });
-    setSaved(Boolean(saved[jobUrl]));
-  };
+  const pending = new Set();
+  let lookupTimer = null;
+
   const refreshButtons = () => {
     buttons = buttons.filter((b) => b.host.isConnected); // cards replaced by paging or filters
-    buttons.forEach((b) => b.setSaved(Boolean(saved[b.jobUrl])));
+    buttons.forEach((b) => b.setSaved(Boolean(known.get(b.jobUrl))));
   };
 
-  chrome.storage.local.get({ saved: {} }).then((data) => {
-    saved = data.saved;
+  async function lookUp() {
+    lookupTimer = null;
+    const urls = [...pending];
+    pending.clear();
+    if (!urls.length) return;
+    const res = await ask('lookup', { jobUrls: urls });
+    if (!res.ok) return; // signed out or offline: leave the buttons as they are
+    urls.forEach((url) => known.set(url, res.matches[url] ?? null));
     refreshButtons();
-  });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.saved) return;
-    saved = changes.saved.newValue ?? {};
+  }
+
+  const queueLookup = (urls) => {
+    urls.forEach((url) => url && pending.add(url));
+    lookupTimer ??= setTimeout(lookUp, 400);
+  };
+
+  const register = (jobUrl, { host, setSaved }) => {
+    if (!jobUrl) return; // no link: it can still be saved, but can't be matched
+    buttons.push({ jobUrl, host, setSaved });
+    setSaved(Boolean(known.get(jobUrl)));
+    if (!known.has(jobUrl)) queueLookup([jobUrl]);
+  };
+
+  const markSaved = (app) => {
+    if (!app.job_url) return;
+    known.set(app.job_url, app.id);
     refreshButtons();
+  };
+
+  const open = (job) => openSaveDialog(job, { onSaved: markSaved });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    buttons = buttons.filter((b) => b.host.isConnected);
+    queueLookup(buttons.map((b) => b.jobUrl));
   });
 
   // The toolbar button: save whatever job this page shows.
   chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type === 'open-page') openSaveDialog(fromPage());
+    if (message?.type === 'open-page') open(fromPage());
   });
 
   if (!adapter) return; // not a supported site: only the toolbar button works here
@@ -45,7 +72,7 @@
     adapter.findCards().forEach((card) => {
       if (card.dataset[MARK]) return;
       card.dataset[MARK] = '1';
-      const button = trackButton({ onClick: () => openSaveDialog(fromCard(card)) });
+      const button = trackButton({ onClick: () => open(fromCard(card)) });
       adapter.placeButton(card, button.host);
       register(fromCard(card).jobUrl, button);
     });
@@ -62,7 +89,7 @@
     }
     if (floating || !adapter.isJobPage()) return;
 
-    const button = trackButton({ floating: true, onClick: () => openSaveDialog(fromPage()) });
+    const button = trackButton({ floating: true, onClick: () => open(fromPage()) });
     document.documentElement.append(button.host);
     floating = { host: button.host, url };
     register(fromPage().jobUrl, button);

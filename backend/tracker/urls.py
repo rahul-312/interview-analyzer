@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     ApplicationDetailView,
+    ApplicationLookupView,
     ApplicationListCreateView,
     InsightsView,
     PrepPlanDetailView,
@@ -15,6 +16,7 @@ from .views import (
 
 urlpatterns = [
     path("applications/", ApplicationListCreateView.as_view()),
+    path("applications/lookup/", ApplicationLookupView.as_view()),
     path("applications/<int:pk>/", ApplicationDetailView.as_view()),
     path("rounds/", RoundListCreateView.as_view()),
     path("rounds/<int:pk>/", RoundDetailView.as_view()),

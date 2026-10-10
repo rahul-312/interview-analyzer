@@ -1,5 +1,8 @@
 // The "Add application" pop-up and the buttons, drawn inside shadow roots so the job site's CSS
 // can't reach them (and theirs can't leak out). Page text only ever goes in via textContent/value.
+//
+// The shadow root hides elements, not keystrokes: the page can still listen to every key typed here.
+// So this dialog never asks for a password. Signing in happens on the extension's own page.
 
 (() => {
   if (globalThis.IAUi) return;
@@ -112,7 +115,7 @@
 
   let openDialog = null; // { host, close }
 
-  /** Opens the pop-up for one job, as read by IASites. `onSaved(app)` runs once it's saved. */
+  /** Opens the pop-up for one job, as read by IASites. `onSaved(app)` runs once it's saved, or found saved. */
   function openSaveDialog(job, { onSaved } = {}) {
     openDialog?.close();
 
@@ -124,9 +127,11 @@
     document.documentElement.append(host);
 
     let appUrl = '';
+    let onVisible = null; // set while waiting for the user to sign in on the extension's page
     const close = () => {
       host.remove();
       document.removeEventListener('keydown', onKey, true);
+      if (onVisible) document.removeEventListener('visibilitychange', onVisible);
       if (openDialog?.host === host) openDialog = null;
     };
     const onKey = (e) => {
@@ -136,7 +141,23 @@
     };
     document.addEventListener('keydown', onKey, true);
     overlay.addEventListener('mousedown', (e) => e.target === overlay && close());
+    // Keep typing in the form away from the site's keyboard shortcuts (like "/" to search).
+    ['keydown', 'keyup', 'keypress'].forEach((type) => overlay.addEventListener(type, (e) => e.stopPropagation()));
     openDialog = { host, close };
+
+    /** Link to an application in the app, or null if the app's address isn't a web address. */
+    const appLink = (id) => {
+      try {
+        const url = new URL(`/applications/${id}`, appUrl);
+        return /^https?:$/.test(url.protocol) ? url.href : null;
+      } catch {
+        return null;
+      }
+    };
+    const openButton = (app) => {
+      const href = appLink(app.id);
+      return href && h('a', { class: 'btn primary', href, target: '_blank', rel: 'noopener' }, 'Open it');
+    };
 
     /** Swaps the dialog's content. */
     const show = (title, ...body) => {
@@ -152,32 +173,40 @@
       box.hidden = !message;
     };
 
-    function showSignIn(next) {
+    /** Signed out: sign in on the extension's page (a new tab), then carry on here once back. */
+    function showSignedOut(next) {
       const error = errorBox();
-      const username = h('input', { name: 'username', autocomplete: 'username', required: true });
-      const password = h('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true });
-      const submit = h('button', { class: 'btn primary', type: 'submit' }, 'Sign in');
+      if (!onVisible) {
+        onVisible = async () => {
+          if (document.visibilityState !== 'visible') return;
+          const config = await ask('config');
+          if (!config.ok || !config.signedIn || !onVisible) return;
+          document.removeEventListener('visibilitychange', onVisible);
+          onVisible = null;
+          next();
+        };
+        document.addEventListener('visibilitychange', onVisible);
+      }
       show(
         'Sign in to Interview Analyzer',
-        h('p', { class: 'muted', style: 'margin:0' }, 'Sign in once and you can save jobs from here. You stay signed in for a week.'),
+        h('p', { style: 'margin:0' }, "Sign in on the extension's own page, then come back to this tab to save the job."),
+        h('p', { class: 'muted', style: 'margin:0' }, 'The extension never asks for your password on a job site.'),
+        error,
         h(
-          'form',
-          {
-            style: 'display:flex;flex-direction:column;gap:16px',
-            onsubmit: async (e) => {
-              e.preventDefault();
-              submit.disabled = true;
-              showError(error, '');
-              const res = await ask('login', { username: username.value.trim(), password: password.value });
-              submit.disabled = false;
-              if (res.ok) next();
-              else showError(error, res.error);
+          'div',
+          { class: 'actions' },
+          h('button', { class: 'btn secondary', onclick: close }, 'Cancel'),
+          h(
+            'button',
+            {
+              class: 'btn primary',
+              onclick: async () => {
+                const res = await ask('openSignIn');
+                if (!res.ok) showError(error, res.error);
+              },
             },
-          },
-          error,
-          h('label', { class: 'field' }, 'Username', username),
-          h('label', { class: 'field' }, 'Password', password),
-          h('div', { class: 'actions' }, h('button', { class: 'btn secondary', type: 'button', onclick: close }, 'Cancel'), submit),
+            'Sign in',
+          ),
         ),
       );
     }
@@ -190,7 +219,7 @@
           'div',
           { class: 'actions' },
           h('button', { class: 'btn secondary', onclick: () => showForm() }, 'Add it again'),
-          h('a', { class: 'btn primary', href: `${appUrl}/applications/${app.id}`, target: '_blank', rel: 'noopener' }, 'Open it'),
+          openButton(app),
         ),
       );
     }
@@ -209,7 +238,7 @@
           'div',
           { class: 'actions' },
           h('button', { class: 'btn secondary', onclick: close }, 'Done'),
-          h('a', { class: 'btn primary', href: `${appUrl}/applications/${app.id}`, target: '_blank', rel: 'noopener' }, 'Open it'),
+          openButton(app),
         ),
       );
     }
@@ -273,7 +302,7 @@
                 chrome.storage.local.set({ lastStatus: draft.status }).catch(() => {});
                 onSaved?.(res.app);
                 showSaved(res.app);
-              } else if (res.signedOut) showSignIn(showForm);
+              } else if (res.signedOut) showSignedOut(showForm);
               else showError(error, res.error);
             },
           },
@@ -303,21 +332,25 @@
     show('Add application', h('p', { class: 'muted', style: 'margin:0' }, 'Loading…'));
 
     (async () => {
-      const status = await ask('status');
-      appUrl = status.appUrl ?? '';
+      const config = await ask('config');
+      appUrl = config.appUrl ?? '';
       // Start from the status picked last time: some people save jobs to apply later, others after applying.
       const { lastStatus } = await chrome.storage.local.get({ lastStatus: 'applied' }).catch(() => ({}));
       if (STATUS_OPTIONS.some(([value]) => value === lastStatus)) draft.status = lastStatus;
       const start = async () => {
         if (job.jobUrl) {
           const found = await ask('find', { jobUrl: job.jobUrl });
-          if (found.signedOut) return showSignIn(start);
-          if (found.ok && found.app) return showAlreadySaved(found.app);
+          if (found.signedOut) return showSignedOut(start);
+          if (found.ok && found.app) {
+            onSaved?.(found.app); // so the page's buttons show it as saved too
+            return showAlreadySaved(found.app);
+          }
           // Any other failure (server down…) shows up when saving, with the form already filled.
         }
         showForm();
       };
-      if (!status.ok || !status.user) showSignIn(start);
+      if (!config.ok) showForm(); // the extension can't be reached: saving will say so
+      else if (!config.signedIn) showSignedOut(start);
       else start();
     })();
   }

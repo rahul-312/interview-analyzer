@@ -25,9 +25,11 @@
       .trim();
   }
 
-  const TRACKING_PARAMS = /^(utm_.*|src|sid|xp|px|ref|refid|trk|trackingid|currentjobid|from|position|pagenum)$/i;
-
-  /** Absolute link without tracking parameters, so the same job always has the same link. '' if unusable. */
+  /**
+   * Absolute link without tracking parameters, so the same job always has the same link. '' if unusable.
+   * Only utm_* is removed everywhere: other names (ref, from, currentJobId…) identify the job on some
+   * sites, so each adapter lists its own. Too long a link is dropped, not cut, so two jobs never share one.
+   */
   function cleanUrl(href) {
     let url;
     try {
@@ -37,8 +39,10 @@
     }
     if (!/^https?:$/.test(url.protocol)) return '';
     url.hash = '';
-    [...url.searchParams.keys()].forEach((key) => TRACKING_PARAMS.test(key) && url.searchParams.delete(key));
-    if (url.href.length > 500) url.search = '';
+    const siteParams = adapter?.trackingParams ?? [];
+    [...url.searchParams.keys()].forEach((key) => {
+      if (/^utm_/i.test(key) || siteParams.includes(key.toLowerCase())) url.searchParams.delete(key);
+    });
     return url.href.length > 500 ? '' : url.href;
   }
 
@@ -86,6 +90,8 @@
 
   const naukri = {
     source: 'job_board',
+    // Search tracking Naukri adds to job links. The job itself is identified by the path.
+    trackingParams: ['src', 'sid', 'xp', 'px'],
     matches: () => /(^|\.)naukri\.com$/.test(location.hostname),
 
     /** Job cards on search and recommendation lists. */
@@ -159,7 +165,8 @@
       company: (job.company ?? '').slice(0, 200),
       salary: job.salary ?? '',
       description: job.description ?? '',
-      jobUrl: cleanUrl(job.jobUrl || location.href),
+      // No fallback to the page's address here: on a list, every card would get the same one.
+      jobUrl: job.jobUrl ? cleanUrl(job.jobUrl) : '',
       source: adapter?.source ?? 'job_board',
     };
   }

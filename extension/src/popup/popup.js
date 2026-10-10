@@ -1,6 +1,11 @@
-import { ask, getSettings } from '../shared.js';
+// The toolbar popup. Opened with ?signin=1 in a tab, it's also the sign-in page the in-page dialog
+// sends people to, since passwords are only ever typed into the extension's own pages.
+
+import { ask, serverUrlProblem } from '../shared.js';
 
 const $ = (id) => document.getElementById(id);
+const signInPage = new URLSearchParams(location.search).has('signin');
+if (signInPage) document.body.classList.add('page');
 
 const showError = (message) => {
   $('error').textContent = message ?? '';
@@ -17,19 +22,26 @@ const initialsOf = (name) =>
 
 async function render() {
   const status = await ask('status');
-  const { user, appUrl } = status;
+  if (!status.ok) return showError(status.error);
+  const { user, apiUrl, appUrl } = status;
   $('signin').hidden = Boolean(user);
-  $('account').hidden = !user;
+  $('account').hidden = !user || signInPage;
+  $('signed-in').hidden = !user || !signInPage;
   if (user) {
     $('initials').textContent = initialsOf(user.name);
     $('name').textContent = user.name;
     $('email').textContent = user.email ?? '';
   }
   $('open-app').href = appUrl;
+  $('settings').apiUrl.value = apiUrl;
+  $('settings').appUrl.value = appUrl;
+}
 
-  const settings = await getSettings();
-  $('settings').apiUrl.value = settings.apiUrl;
-  $('settings').appUrl.value = settings.appUrl;
+/** On the sign-in page: go back to the job site's tab it was opened from, and close this one. */
+async function returnToJob() {
+  const tab = await chrome.tabs.getCurrent();
+  if (tab?.openerTabId !== undefined) await chrome.tabs.update(tab.openerTabId, { active: true }).catch(() => {});
+  if (tab) chrome.tabs.remove(tab.id);
 }
 
 $('signin').addEventListener('submit', async (e) => {
@@ -42,8 +54,11 @@ $('signin').addEventListener('submit', async (e) => {
   submit.disabled = false;
   if (!res.ok) return showError(res.error);
   form.reset();
+  if (signInPage) return returnToJob();
   render();
 });
+
+$('back').addEventListener('click', returnToJob);
 
 $('signout').addEventListener('click', async () => {
   await ask('logout');
@@ -72,14 +87,17 @@ $('settings').addEventListener('submit', async (e) => {
   const trim = (url) => url.trim().replace(/\/+$/, '');
   const apiUrl = trim(e.target.apiUrl.value);
   const appUrl = trim(e.target.appUrl.value);
+  const problem = serverUrlProblem(apiUrl) || serverUrlProblem(appUrl);
+  if (problem) return showError(problem);
 
   // The worker can only call servers it has permission for. Ask now, while the click still counts.
-  const granted = await chrome.permissions.request({ origins: [`${new URL(apiUrl).origin}/*`] });
-  if (!granted) return showError(`The extension needs permission to reach ${new URL(apiUrl).origin}.`);
+  // (localhost is always allowed, so this only asks for https servers.)
+  const origin = new URL(apiUrl).origin;
+  const granted = await chrome.permissions.request({ origins: [`${origin}/*`] }).catch(() => false);
+  if (!granted) return showError(`The extension needs permission to reach ${origin}.`);
 
-  const changed = apiUrl !== (await getSettings()).apiUrl;
-  await chrome.storage.local.set({ apiUrl, appUrl });
-  if (changed) await ask('logout'); // tokens belong to the old server
+  const res = await ask('saveSettings', { apiUrl, appUrl });
+  if (!res.ok) return showError(res.error);
   render();
 });
 

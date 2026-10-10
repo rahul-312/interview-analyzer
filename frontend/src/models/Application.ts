@@ -18,6 +18,8 @@ export interface ApplicationInput {
 export interface Application extends ApplicationInput {
   id: number;
   status_label: string;
+  /** When it was actually applied to. Null while only saved, or if it never was. */
+  applied_at: string | null;
   rounds_count: number;
   created_at: string;
   updated_at: string;

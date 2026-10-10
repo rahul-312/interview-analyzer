@@ -35,12 +35,16 @@ Open http://localhost:3000 and create an account.
 
 `extension/` is a Chrome extension (it also works in Edge and Brave) for saving jobs without leaving the job site. On Naukri it adds a **+ Track** button to every job card and a **+ Save to Interview Analyzer** button on each job's page. On any other job site, click the extension's toolbar icon and choose **Save the job on this page**. Either way, the same "Add application" pop-up opens on the page, already filled in.
 
-To install it, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the `extension` folder. Sign in from the pop-up the first time you use it. After changing the extension's code, click its reload button on that page and reload the job site.
+To install it, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the `extension/src` folder. The first time you save a job, the pop-up sends you to the extension's own sign-in page. After changing the extension's code, click its reload button on that page and reload the job site.
 
-- `background.js`: the only part that calls the API. It keeps the JWT tokens and refreshes them, and its requests don't go through CORS.
-- `content/sites.js`: reads the job from the page. Naukri has its own adapter; other sites use the schema.org `JobPosting` most job pages include, then the page title and any selected text. To support another site, add an adapter here and its address under `content_scripts` in `manifest.json`.
-- `content/ui.js`, `content/content.js`: the pop-up and buttons (in shadow roots, so the site's CSS doesn't affect them) and the code that places them.
-- `popup/`: sign in, sign out, save the current page, and the server addresses (http://localhost:8000/api and http://localhost:3000 by default).
+The extension's code is in `extension/src`. It has no build step:
+
+- `background.js`: the only part that calls the API, and the only one that sees the JWT tokens. It keeps them and the server addresses in its own IndexedDB, which scripts on job sites can't read. Job sites can only ask it to save a job, look jobs up, or open the sign-in page. Signing in and changing settings work only from the extension's own pages. Its requests don't go through CORS.
+- `content/sites.js`: reads the job from the page. Naukri has its own adapter; other sites use the schema.org `JobPosting` most job pages include, then the page heading or title and any selected text. To support another site, add an adapter here (with any tracking parameters to strip from its links) and its address under `content_scripts` in `manifest.json`.
+- `content/ui.js`, `content/content.js`: the pop-up and buttons (in shadow roots, so the site's CSS doesn't affect them) and the code that places them. The "✓ Saved" marks are checked against the app in batches, and again when you come back to the tab. The pop-up never asks for a password, because the job site can see what's typed into it.
+- `popup/`: the toolbar popup (sign in and out, save the current page, server addresses) and, opened with `?signin=1`, the sign-in page. Server addresses must be https, except for localhost (http://localhost:8000/api and http://localhost:3000 by default).
+
+The tests (`extension/tests`, run with jsdom) sit outside `src` so their packages never end up in the extension.
 
 ## Frontend structure
 
@@ -68,8 +72,9 @@ Spacing uses the named scale from `globals.css` (`gap-4xl`, `px-6xl` and so on) 
 ## Tests and checks
 
 ```powershell
-cd backend;  .venv\Scripts\python -m pytest -q
-cd frontend; npm run lint; npm run build
+cd backend;   .venv\Scripts\python -m pytest -q
+cd frontend;  npm run lint; npm run build
+cd extension; npm install; npm test
 ```
 
 ## Redis and Claude
@@ -95,6 +100,7 @@ With an API key set, round analysis and prep plans use `claude-opus-5-5` with st
 | POST | `/api/auth/register/`, `/api/auth/token/`, `/api/auth/token/refresh/` |
 | GET/PATCH | `/api/auth/me/` |
 | GET/POST | `/api/applications/` (`?status=`, `?search=`, `?job_url=`) |
+| POST | `/api/applications/lookup/` (`{"job_urls": [...]}`: which are saved, as `{"matches": {url: id}}`) |
 | GET/PUT/PATCH/DELETE | `/api/applications/{id}/` |
 | GET/POST | `/api/rounds/` (`?application=`; send `debrief` to save one) |
 | GET/PUT/PATCH/DELETE | `/api/rounds/{id}/` |

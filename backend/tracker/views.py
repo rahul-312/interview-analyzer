@@ -83,6 +83,24 @@ class ApplicationListCreateView(ApplicationQuerysetMixin, generics.ListCreateAPI
         serializer.save(user=self.request.user)
 
 
+class ApplicationLookupView(APIView):
+    """
+    POST {"job_urls": [...]}: which of these job links the user has saved, as {"matches": {url: id}}.
+    The browser extension asks once per page of job cards, so its "Saved" marks follow the app.
+    """
+    permission_classes = [IsAuthenticated]
+    MAX_URLS = 100
+
+    def post(self, request):
+        urls = request.data.get("job_urls")
+        if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
+            return Response({"job_urls": ["Send a list of links."]}, status=status.HTTP_400_BAD_REQUEST)
+        if len(urls) > self.MAX_URLS:
+            return Response({"job_urls": [f"Send at most {self.MAX_URLS} links."]}, status=status.HTTP_400_BAD_REQUEST)
+        found = Application.objects.filter(user=request.user, job_url__in=[u for u in urls if u])
+        return Response({"matches": dict(found.values_list("job_url", "id"))})
+
+
 class ApplicationDetailView(ApplicationQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
     """GET, PUT, PATCH and DELETE a single application."""
     serializer_class = ApplicationSerializer

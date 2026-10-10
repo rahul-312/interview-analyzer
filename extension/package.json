@@ -1,0 +1,11 @@
+{
+  "name": "interview-analyzer-extension",
+  "private": true,
+  "description": "Only for tests: the extension itself has no build step and loads straight from this folder.",
+  "scripts": {
+    "test": "node --test \"tests/*.test.mjs\""
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

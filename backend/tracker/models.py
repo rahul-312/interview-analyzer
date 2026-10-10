@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 
 class JobStatus(models.TextChoices):
@@ -41,14 +42,40 @@ class Application(models.Model):
     contact = models.CharField(max_length=200, blank=True)
     notes = models.TextField(blank=True)
     job_description = models.TextField(blank=True)
+    # When the user actually applied. Empty while the job is only saved, and stays empty if a saved job
+    # goes straight to rejected or withdrawn, so the funnel only counts real applications.
+    applied_at = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    # Moving a saved job to one of these means it was applied to.
+    APPLIED_STATUSES = {Status.APPLIED, Status.SCREENING, Status.INTERVIEW, Status.OFFER}
 
     class Meta:
         ordering = ["-date_applied", "-created_at"]
 
     def __str__(self):
         return f"{self.role} at {self.company}"
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        if self.applied_at is None:
+            if self._state.adding:
+                # Added directly with a later status (e.g. logging an old rejection): it was applied to.
+                if self.status != self.Status.SAVED:
+                    self.applied_at = self.date_applied
+            elif self.status in self.APPLIED_STATUSES:
+                # Saved -> applied: applied today, so the card's date (the date saved) moves to today.
+                # If the same edit set the date, that's when they applied.
+                before = type(self).objects.filter(pk=self.pk).values("date_applied").first()
+                changed = ["applied_at"]
+                if before and self.date_applied == before["date_applied"]:
+                    self.date_applied = timezone.localdate()
+                    changed.append("date_applied")
+                self.applied_at = self.date_applied
+                if update_fields is not None:
+                    kwargs["update_fields"] = {*update_fields, *changed}
+        super().save(*args, **kwargs)
 
 
 class InterviewRound(models.Model):

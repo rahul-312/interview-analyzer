@@ -17,8 +17,15 @@
     <form id="signin" hidden>
       <label>Username <input name="username" autocomplete="username" required /></label>
       <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+      <p class="muted">Use your Interview Analyzer account. You'll stay signed in for a week.</p>
       <button class="primary" type="submit">Sign in</button>
     </form>
+
+    <!-- Sign-in page, once signed in -->
+    <section id="signed-in" hidden>
+      <p>You're signed in. Go back to the job and save it.</p>
+      <button class="primary" id="back">Back to the job</button>
+    </section>
 
     <!-- Signed in -->
     <section id="account" hidden>

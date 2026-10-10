@@ -59,6 +59,20 @@ def test_find_application_by_job_url(api, application):
     assert api.get("/api/applications/", {"job_url": url + "9"}).data == []
 
 
+def test_lookup_many_job_urls(api, application, other_user):
+    url = "https://www.naukri.com/job-listings-a-091025012345"
+    application.job_url = url
+    application.save()
+    Application.objects.create(user=other_user, company="Theirs", role="x", date_applied=date.today(),
+                               job_url="https://www.naukri.com/job-listings-b-091025099999")
+
+    res = api.post("/api/applications/lookup/", {"job_urls": [url, "https://www.naukri.com/job-listings-b-091025099999", ""]},
+                   format="json")
+    assert res.data == {"matches": {url: application.id}}  # not other users' jobs
+    assert api.post("/api/applications/lookup/", {"job_urls": "nope"}, format="json").status_code == 400
+    assert api.post("/api/applications/lookup/", {"job_urls": ["x"] * 101}, format="json").status_code == 400
+
+
 def test_other_users_cannot_see_or_use_data(api, application, other_user):
     from rest_framework.test import APIClient
 
@@ -148,6 +162,34 @@ def test_logging_a_round_moves_a_saved_job_forward(api, user, run_jobs):
         api.post("/api/rounds/", {"application": app.id, "round_type": "phone_screen", "scheduled_at": past()}, format="json")
     app.refresh_from_db()
     assert app.status == "screening"
+    assert app.applied_at == date.today()
+
+
+def test_applied_at_records_when_a_job_was_really_applied_to(api, user):
+    old = date(2026, 9, 1)
+    added = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": old, "status": "rejected"},
+                     format="json").data
+    assert added["applied_at"] == "2026-09-01"  # added after the fact: applied on its date
+
+    saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": old, "status": "saved"},
+                     format="json").data
+    assert saved["applied_at"] is None
+    applied = api.patch(f"/api/applications/{saved['id']}/", {"status": "applied"}, format="json").data
+    assert applied["applied_at"] == applied["date_applied"] == date.today().isoformat()
+
+    # Saved, then rejected without applying: never applied, so not in the funnel.
+    skipped = api.post("/api/applications/", {"company": "C", "role": "x", "date_applied": old, "status": "saved"},
+                       format="json").data
+    assert api.patch(f"/api/applications/{skipped['id']}/", {"status": "withdrawn"}, format="json").data["applied_at"] is None
+    funnel = api.get("/api/insights/").data["funnel"]
+    assert funnel["total"] == 2 and "withdrawn" not in funnel["status_counts"]
+
+
+def test_moving_to_applied_keeps_a_date_changed_in_the_same_edit(api, user):
+    saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
+                     format="json").data
+    res = api.patch(f"/api/applications/{saved['id']}/", {"status": "applied", "date_applied": "2026-09-03"}, format="json")
+    assert res.data["date_applied"] == res.data["applied_at"] == "2026-09-03"
 
 
 def test_prep_plan_targets_weak_spots_and_ends_with_review(api, application, run_jobs):
