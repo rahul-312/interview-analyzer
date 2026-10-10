@@ -72,9 +72,19 @@ class Application(models.Model):
         instance._remember_loaded()
         return instance
 
+    def refresh_from_db(self, *args, fields=None, **kwargs):
+        super().refresh_from_db(*args, fields=fields, **kwargs)
+        loaded = getattr(self, "_loaded", None) or {}
+        for name in ("status", "date_applied"):
+            if fields is None or name in fields:
+                loaded[name] = self.__dict__.get(name)
+        self._loaded = loaded
+
     def _remember_loaded(self):
         # What's in the database, so save() can tell what an edit changed without querying again.
-        # (Deferred fields aren't in __dict__ and come out as None.)
+        # (Deferred fields aren't in __dict__ and come out as None.) An edit is judged against the
+        # values its instance was loaded with: if another request changed the status in between,
+        # last write wins, as for every other field.
         self._loaded = {"status": self.__dict__.get("status"), "date_applied": self.__dict__.get("date_applied")}
 
     def _before(self):
@@ -112,7 +122,7 @@ class Application(models.Model):
             elif saved and self.saved_at is None:
                 self.saved_at = self.date_applied  # saved before saved_at existed
                 changed.append("saved_at")
-            elif self.applied_at is None and (self.previous_applied_at or self.status in self.APPLIED_STATUSES):
+            elif not saved and self.applied_at is None and (self.previous_applied_at or self.status in self.APPLIED_STATUSES):
                 # Leaving Saved after a mistaken "Saved" (to any status, rejected included), or applying to
                 # a saved job. The date is the one set in the same edit if any, else the applied date from
                 # before the mistaken "Saved", else today (saved_at keeps the date it was saved).

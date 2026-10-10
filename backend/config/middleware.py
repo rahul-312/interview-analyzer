@@ -1,6 +1,10 @@
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, available_timezones
 
 from django.utils import timezone
+
+# Every time zone name the server knows, read once. Names are only ever looked up in here, so
+# anything else (a region like "Asia", a path, stray characters) is never handed to ZoneInfo.
+KNOWN_ZONES = frozenset(available_timezones())
 
 
 class ClientTimezoneMiddleware:
@@ -14,19 +18,10 @@ class ClientTimezoneMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        zone = self._zone(request.headers.get("X-Timezone", ""))
-        if zone:
-            timezone.activate(zone)
+        name = request.headers.get("X-Timezone", "")
+        if name in KNOWN_ZONES:
+            timezone.activate(ZoneInfo(name))
         try:
             return self.get_response(request)
         finally:
             timezone.deactivate()
-
-    @staticmethod
-    def _zone(name):
-        if not name or len(name) > 64:
-            return None
-        try:
-            return ZoneInfo(name)
-        except (ZoneInfoNotFoundError, ValueError):
-            return None

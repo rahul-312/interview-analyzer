@@ -218,6 +218,33 @@ def test_undoing_a_mistaken_saved_keeps_the_real_applied_date(api, user):
     assert back["saved_at"] is None  # it was never really saved for later
 
 
+def test_editing_a_mistakenly_saved_job_leaves_its_dates_alone(api, user):
+    app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
+                   format="json").data
+    saved = api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json").data
+    edited = api.patch(f"/api/applications/{app['id']}/", {"notes": "call recruiter"}, format="json").data
+    for field in ("status", "date_applied", "applied_at", "saved_at"):
+        assert edited[field] == saved[field], field
+
+    # The applied date is still there to restore once it leaves Saved.
+    back = api.patch(f"/api/applications/{app['id']}/", {"status": "applied"}, format="json").data
+    assert back["date_applied"] == back["applied_at"] == "2026-09-01"
+
+
+def test_refreshing_keeps_the_remembered_status_current(user):
+    app = Application.objects.create(user=user, company="A", role="x", date_applied=date(2026, 9, 1), status="applied")
+    elsewhere = Application.objects.get(pk=app.pk)
+    elsewhere.status = "saved"  # set to Saved by mistake, through another instance
+    elsewhere.save()
+
+    app.refresh_from_db()
+    app.status = "applied"  # undoing it
+    app.save()
+    # Judged against the refreshed values (Saved, dated today), so the real date comes back. Against
+    # the stale ones (Applied, Sep 1) the date would look edited and today would stick.
+    assert app.date_applied == app.applied_at == date(2026, 9, 1)
+
+
 def test_undoing_a_mistaken_saved_to_rejected_keeps_the_application(api, user):
     app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
                    format="json").data
@@ -248,9 +275,10 @@ def test_today_is_the_users_day_not_the_servers(user):
     seen = []
     middleware = ClientTimezoneMiddleware(lambda request: seen.append(timezone.get_current_timezone_name()))
     middleware(RequestFactory().get("/", HTTP_X_TIMEZONE="Asia/Kolkata"))
-    middleware(RequestFactory().get("/", HTTP_X_TIMEZONE="../../etc/passwd"))  # not a zone: ignored
+    for bad in ["../../etc/passwd", "/etc/passwd", "Asia", "Asia/Kolkata\n", "x" * 500]:
+        middleware(RequestFactory().get("/", HTTP_X_TIMEZONE=bad))  # not a zone: ignored, no error
     middleware(RequestFactory().get("/"))
-    assert seen == ["Asia/Kolkata", "UTC", "UTC"]
+    assert seen == ["Asia/Kolkata"] + ["UTC"] * 6
     assert timezone.get_current_timezone_name() == "UTC"  # nothing left active afterwards
 
 
