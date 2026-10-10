@@ -2,6 +2,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -35,6 +36,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "config.middleware.ClientTimezoneMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -98,6 +100,8 @@ SIMPLE_JWT = {
 }
 
 CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+# X-Timezone: the browser's time zone, so dates like "applied today" use the user's day.
+CORS_ALLOW_HEADERS = (*default_headers, "x-timezone")
 
 # Celery: with no broker configured, tasks run inline so Redis isn't needed yet.
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "")

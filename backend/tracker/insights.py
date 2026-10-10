@@ -68,8 +68,15 @@ def round_outcomes(user):
 
 
 def funnel(user):
-    """How many applications reached each stage, plus by-source and status counts."""
-    apps = list(Application.objects.filter(user=user).values("status", "source"))
+    """
+    How many applications reached each stage, plus by-source and status counts. Only jobs actually
+    applied to count: not saved ones, nor saved ones that went straight to rejected or withdrawn.
+    """
+    apps = list(
+        Application.objects.filter(user=user, applied_at__isnull=False)
+        .exclude(status=Application.Status.SAVED)
+        .values("status", "source")
+    )
     stages, prev = [], None
     for stage in STAGES:
         count = sum(1 for a in apps if a["status"] in REACHED[stage])

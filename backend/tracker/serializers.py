@@ -9,8 +9,8 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Application
-        exclude = ["user"]
-        read_only_fields = ["created_at", "updated_at"]
+        exclude = ["user", "previous_applied_at"]
+        read_only_fields = ["applied_at", "saved_at", "created_at", "updated_at"]
 
 
 class DebriefQuestionSerializer(serializers.Serializer):
@@ -40,7 +40,7 @@ def advance_status(rnd):
     """Logging a round moves the application forward so the funnel stays accurate."""
     app = rnd.application
     is_screen = rnd.round_type == InterviewRound.RoundType.PHONE_SCREEN
-    if app.status == Application.Status.APPLIED:
+    if app.status in (Application.Status.SAVED, Application.Status.APPLIED):
         app.status = Application.Status.SCREENING if is_screen else Application.Status.INTERVIEW
     elif app.status == Application.Status.SCREENING and not is_screen:
         app.status = Application.Status.INTERVIEW

@@ -3,6 +3,7 @@ import type { Option } from "@/models/Common";
 import type { Outcome, RoundType } from "@/models/Interview";
 
 export const statusOptions: Option<AppStatus>[] = [
+  { value: "saved", label: "Saved" },
   { value: "applied", label: "Applied" },
   { value: "screening", label: "Screening" },
   { value: "interview", label: "Interviewing" },

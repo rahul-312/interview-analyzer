@@ -61,7 +61,7 @@ class ApplicationQuerysetMixin:
 
 class ApplicationListCreateView(ApplicationQuerysetMixin, generics.ListCreateAPIView):
     """
-    GET: list the user's applications (supports ?status= and ?search=).
+    GET: list the user's applications (supports ?status=, ?search= and ?job_url=, an exact match).
     POST: create an application. Only company, role and date_applied are required.
     """
     serializer_class = ApplicationSerializer
@@ -74,10 +74,33 @@ class ApplicationListCreateView(ApplicationQuerysetMixin, generics.ListCreateAPI
             qs = qs.filter(status=params["status"])
         if params.get("search"):
             qs = qs.filter(Q(company__icontains=params["search"]) | Q(role__icontains=params["search"]))
+        # The browser extension uses this to tell whether a job was already saved.
+        if params.get("job_url"):
+            qs = qs.filter(job_url=params["job_url"])
         return qs
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+
+class ApplicationLookupView(APIView):
+    """
+    POST {"job_urls": [...]}: which of these job links the user has saved, as {"matches": {url: id}}.
+    The browser extension asks once per page of job cards, so its "Saved" marks follow the app.
+    """
+    permission_classes = [IsAuthenticated]
+    MAX_URLS = 100
+
+    def post(self, request):
+        if not isinstance(request.data, dict):
+            return Response({"job_urls": ["Send a JSON object with a list of links."]}, status=status.HTTP_400_BAD_REQUEST)
+        urls = request.data.get("job_urls")
+        if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
+            return Response({"job_urls": ["Send a list of links."]}, status=status.HTTP_400_BAD_REQUEST)
+        if len(urls) > self.MAX_URLS:
+            return Response({"job_urls": [f"Send at most {self.MAX_URLS} links."]}, status=status.HTTP_400_BAD_REQUEST)
+        found = Application.objects.filter(user=request.user, job_url__in=[u for u in urls if u])
+        return Response({"matches": dict(found.values_list("job_url", "id"))})
 
 
 class ApplicationDetailView(ApplicationQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):

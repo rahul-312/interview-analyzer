@@ -25,6 +25,8 @@ interface RoundFormOptions {
 interface DialogsState {
   openAddApplication: (options?: AddApplicationOptions) => void;
   openRoundForm: (options?: RoundFormOptions) => void;
+  /** Shows a dismissable notice at the bottom of the screen. */
+  notify: (message: string) => void;
   bump: () => void;
 }
 
@@ -65,7 +67,12 @@ export const DialogsProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const closeAddApp = useCallback(() => setAddApp(null), []);
   const closeRoundForm = useCallback(() => setRoundForm(null), []);
 
-  const dialogs = useMemo(() => ({ openAddApplication, openRoundForm, bump }), [openAddApplication, openRoundForm, bump]);
+  const notify = useCallback((message: string) => setNotice(message), []);
+
+  const dialogs = useMemo(
+    () => ({ openAddApplication, openRoundForm, notify, bump }),
+    [openAddApplication, openRoundForm, notify, bump]
+  );
   const refresh = useMemo(() => ({ key: refreshKey, bump }), [refreshKey, bump]);
 
   return (

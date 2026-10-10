@@ -14,6 +14,7 @@ import { useRefreshUsageWhenDone } from '@/hooks/useUsage';
 import { applicationService } from '@/services/ApplicationService';
 import { roundService } from '@/services/RoundService';
 import { anyAnalysing } from '@/utils/analysis';
+import { dateChangeNotice } from '@/utils/application';
 import { errorText } from '@/utils/errorText';
 
 interface ApplicationDetailProps {
@@ -22,7 +23,7 @@ interface ApplicationDetailProps {
 
 const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id }) => {
   const router = useRouter();
-  const { bump } = useDialogs();
+  const { notify, bump } = useDialogs();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
 
@@ -55,7 +56,9 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id }) => {
           <ApplicationForm
             initial={app}
             onCancel={() => setEditing(false)}
-            onSaved={(saved) => {
+            onSaved={(saved, sent) => {
+              const notice = dateChangeNotice(app, saved, sent.date_applied);
+              if (notice) notify(notice);
               setData(saved);
               setEditing(false);
               bump();

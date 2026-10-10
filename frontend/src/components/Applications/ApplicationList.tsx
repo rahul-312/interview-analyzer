@@ -25,7 +25,7 @@ const ApplicationList: React.FC<ApplicationListProps> = ({ applications, onStatu
               <StatusBadge status={app.status} label={app.status_label} />
             </div>
             <div className="truncate text-sm text-medium-gray">
-              {app.role} · applied {formatDate(app.date_applied)}
+              {app.role} · {app.applied_at ? 'applied' : 'saved'} {formatDate(app.date_applied)}
               {app.rounds_count > 0 && ` · ${app.rounds_count} round${app.rounds_count === 1 ? '' : 's'}`}
             </div>
           </Link>

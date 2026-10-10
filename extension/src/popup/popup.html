@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Interview Analyzer</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <span class="logo">IA</span>
+      <strong>Interview Analyzer</strong>
+    </header>
+
+    <p class="error" id="error" hidden></p>
+
+    <!-- Signed out -->
+    <form id="signin" hidden>
+      <label>Username <input name="username" autocomplete="username" required /></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+      <p class="muted">Use your Interview Analyzer account. You'll stay signed in for a week.</p>
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+
+    <!-- Sign-in page, once signed in -->
+    <section id="signed-in" hidden>
+      <p>You're signed in. Go back to the job and save it.</p>
+      <button class="primary" id="back">Back to the job</button>
+    </section>
+
+    <!-- Signed in -->
+    <section id="account" hidden>
+      <div class="user">
+        <span class="avatar" id="initials"></span>
+        <div>
+          <p class="name" id="name"></p>
+          <p class="muted" id="email"></p>
+        </div>
+      </div>
+      <button class="primary" id="save-page">+ Save the job on this page</button>
+      <p class="muted">On Naukri, use the <b>+ Track</b> button on each job, or the button on a job's page.</p>
+      <div class="row">
+        <a id="open-app" target="_blank" rel="noopener">Open Interview Analyzer</a>
+        <button class="link" id="signout">Sign out</button>
+      </div>
+    </section>
+
+    <details>
+      <summary>Server</summary>
+      <form id="settings">
+        <label>API URL <input name="apiUrl" type="url" required /></label>
+        <label>App URL <input name="appUrl" type="url" required /></label>
+        <button class="secondary" type="submit">Save</button>
+      </form>
+    </details>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
