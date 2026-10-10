@@ -113,10 +113,15 @@ class Application(models.Model):
                     self.previous_applied_at = self.applied_at
                     self.applied_at = None
                     changed += ["previous_applied_at", "applied_at"]
-                if self.saved_at is None:
-                    self.saved_at = self.date_applied if date_edited else timezone.localdate()
+                # A date set in the same edit is the date saved; otherwise keep an earlier saved date,
+                # or use today.
+                if date_edited:
+                    self.saved_at = self.date_applied
                     changed.append("saved_at")
-                if not date_edited:
+                else:
+                    if self.saved_at is None:
+                        self.saved_at = timezone.localdate()
+                        changed.append("saved_at")
                     self.date_applied = self.saved_at
                     changed.append("date_applied")
             elif saved and (self.saved_at is None or date_edited):

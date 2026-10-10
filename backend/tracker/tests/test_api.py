@@ -291,6 +291,15 @@ def test_changing_a_saved_jobs_date_changes_its_saved_date(api, user):
     assert applied["saved_at"] == "2026-08-28"
 
 
+def test_a_date_set_while_moving_back_to_saved_is_the_saved_date(api, user):
+    app = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
+                   format="json").data
+    api.patch(f"/api/applications/{app['id']}/", {"status": "applied", "date_applied": "2026-09-05"}, format="json")
+    back = api.patch(f"/api/applications/{app['id']}/", {"status": "saved", "date_applied": "2026-09-03"},
+                     format="json").data
+    assert back["date_applied"] == back["saved_at"] == "2026-09-03"
+
+
 def test_refresh_from_db_takes_fields_by_position_too(user):
     app = Application.objects.create(user=user, company="A", role="x", date_applied=date(2026, 9, 1), status="applied")
     Application.objects.filter(pk=app.pk).update(status="saved", date_applied=date(2026, 9, 5))
