@@ -66,6 +66,24 @@ class Application(models.Model):
     def __str__(self):
         return f"{self.role} at {self.company}"
 
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._remember_loaded()
+        return instance
+
+    def _remember_loaded(self):
+        # What's in the database, so save() can tell what an edit changed without querying again.
+        # (Deferred fields aren't in __dict__ and come out as None.)
+        self._loaded = {"status": self.__dict__.get("status"), "date_applied": self.__dict__.get("date_applied")}
+
+    def _before(self):
+        """Status and date as stored, from when this was loaded (or from the database if not known)."""
+        loaded = getattr(self, "_loaded", None)
+        if loaded is None or None in loaded.values():
+            loaded = type(self).objects.filter(pk=self.pk).values("status", "date_applied").first() or {}
+        return loaded
+
     def save(self, *args, **kwargs):
         changed = []
         saved = self.status == self.Status.SAVED
@@ -76,7 +94,7 @@ class Application(models.Model):
                 # Added directly with a later status (e.g. logging an old rejection): it was applied to.
                 self.applied_at = self.date_applied
         else:
-            before = type(self).objects.filter(pk=self.pk).values("status", "date_applied").first() or {}
+            before = self._before()
             date_edited = self.date_applied != before.get("date_applied")
             if saved and before.get("status") != self.Status.SAVED:
                 # Set back to saved (often correcting a status picked by mistake): not applied after all.
@@ -94,9 +112,10 @@ class Application(models.Model):
             elif saved and self.saved_at is None:
                 self.saved_at = self.date_applied  # saved before saved_at existed
                 changed.append("saved_at")
-            elif self.applied_at is None and self.status in self.APPLIED_STATUSES:
-                # Saved -> applied. The date is the one set in the same edit if any, else the applied
-                # date from before a mistaken "Saved", else today (saved_at keeps the date it was saved).
+            elif self.applied_at is None and (self.previous_applied_at or self.status in self.APPLIED_STATUSES):
+                # Leaving Saved after a mistaken "Saved" (to any status, rejected included), or applying to
+                # a saved job. The date is the one set in the same edit if any, else the applied date from
+                # before the mistaken "Saved", else today (saved_at keeps the date it was saved).
                 restoring = not date_edited and self.previous_applied_at is not None
                 if not date_edited:
                     self.date_applied = self.previous_applied_at or timezone.localdate()
@@ -112,6 +131,7 @@ class Application(models.Model):
         if changed and kwargs.get("update_fields") is not None:
             kwargs["update_fields"] = {*kwargs["update_fields"], *changed}
         super().save(*args, **kwargs)
+        self._remember_loaded()
 
 
 class InterviewRound(models.Model):

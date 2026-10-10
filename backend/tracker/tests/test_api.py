@@ -218,6 +218,42 @@ def test_undoing_a_mistaken_saved_keeps_the_real_applied_date(api, user):
     assert back["saved_at"] is None  # it was never really saved for later
 
 
+def test_undoing_a_mistaken_saved_to_rejected_keeps_the_application(api, user):
+    app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
+                   format="json").data
+    api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json")
+    rejected = api.patch(f"/api/applications/{app['id']}/", {"status": "rejected"}, format="json").data
+    assert rejected["date_applied"] == rejected["applied_at"] == "2026-09-01"
+    assert api.get("/api/insights/").data["funnel"]["total"] == 1
+
+
+def test_saving_an_edit_does_not_query_the_old_values_again(api, user, django_assert_num_queries):
+    app = Application.objects.create(user=user, company="A", role="x", date_applied=date(2026, 9, 1), status="saved")
+    app = Application.objects.get(pk=app.pk)
+    app.status = "applied"
+    with django_assert_num_queries(1):  # just the UPDATE
+        app.save()
+    app.status = "saved"  # values remembered from that save, not the original load
+    with django_assert_num_queries(1):
+        app.save()
+    assert app.previous_applied_at == date.today()
+
+
+def test_today_is_the_users_day_not_the_servers(user):
+    from django.test import RequestFactory
+    from django.utils import timezone
+
+    from config.middleware import ClientTimezoneMiddleware
+
+    seen = []
+    middleware = ClientTimezoneMiddleware(lambda request: seen.append(timezone.get_current_timezone_name()))
+    middleware(RequestFactory().get("/", HTTP_X_TIMEZONE="Asia/Kolkata"))
+    middleware(RequestFactory().get("/", HTTP_X_TIMEZONE="../../etc/passwd"))  # not a zone: ignored
+    middleware(RequestFactory().get("/"))
+    assert seen == ["Asia/Kolkata", "UTC", "UTC"]
+    assert timezone.get_current_timezone_name() == "UTC"  # nothing left active afterwards
+
+
 def test_moving_to_applied_keeps_a_date_changed_in_the_same_edit(api, user):
     saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
                      format="json").data

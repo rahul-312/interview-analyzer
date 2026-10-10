@@ -15,7 +15,8 @@ import { today } from '@/utils/format';
 interface ApplicationFormProps {
   initial?: Application;
   quick?: boolean;
-  onSaved: (app: Application) => void;
+  /** Gets the saved application and what was sent, which the server may have adjusted (e.g. dates). */
+  onSaved: (app: Application, sent: ApplicationInput) => void;
   onCancel?: () => void;
 }
 
@@ -61,7 +62,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({ initial, quick = fals
       const saved = initial
         ? await applicationService.update(initial.id, form)
         : await applicationService.create(form);
-      onSaved(saved);
+      onSaved(saved, form);
     } catch (err) {
       setError(errorText(err));
     } finally {

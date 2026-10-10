@@ -75,7 +75,8 @@ export default class ApiClient {
   }
 
   private send(path: string, { method = "GET", body, auth = true }: RequestOptions) {
-    const headers: Record<string, string> = {};
+    // The browser's time zone, so the server's "today" (e.g. applying to a saved job) is the user's day.
+    const headers: Record<string, string> = { "X-Timezone": Intl.DateTimeFormat().resolvedOptions().timeZone };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (auth && this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
 

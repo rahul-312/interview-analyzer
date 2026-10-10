@@ -64,8 +64,17 @@ test('only https servers are accepted, apart from this computer', () => {
   assert.match(serverUrlProblem('http://[::1]:8000/api'), /https/);
 });
 
-test('a tab waiting for sign-in is remembered, once, so only it is told when someone signs in', async () => {
-  assert.deepEqual(await ask({ type: 'waitForSignIn' }, jobSite), { ok: true });
-  await ask({ type: 'waitForSignIn' }, jobSite);
-  assert.deepEqual(chrome.storage.session.data.waitingTabs, [7]);
+test('tabs waiting for sign-in are remembered once each, even when they register at the same time', async () => {
+  // Slow storage, so the registrations overlap.
+  const { get, set } = chrome.storage.session;
+  chrome.storage.session.get = async (d) => (await new Promise((r) => setTimeout(r, 5)), get.call(chrome.storage.session, d));
+  chrome.storage.session.set = async (v) => (await new Promise((r) => setTimeout(r, 5)), set.call(chrome.storage.session, v));
+  const otherTab = { ...jobSite, tab: { id: 8, index: 1 } };
+  const replies = await Promise.all([
+    ask({ type: 'waitForSignIn' }, jobSite),
+    ask({ type: 'waitForSignIn' }, otherTab),
+    ask({ type: 'waitForSignIn' }, jobSite),
+  ]);
+  assert.deepEqual(replies, [{ ok: true }, { ok: true }, { ok: true }]);
+  assert.deepEqual(chrome.storage.session.data.waitingTabs, [7, 8]);
 });

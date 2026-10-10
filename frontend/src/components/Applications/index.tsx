@@ -13,7 +13,7 @@ import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
 import type { Application, AppStatus } from '@/models/Application';
 import { applicationService } from '@/services/ApplicationService';
-import { appliedTodayNotice } from '@/utils/application';
+import { dateChangeNotice } from '@/utils/application';
 import { errorText } from '@/utils/errorText';
 
 const Applications = () => {
@@ -47,7 +47,7 @@ const Applications = () => {
     try {
       const updated = await applicationService.update(app.id, { status: next });
       setData((current) => (current ?? []).map((a) => (a.id === app.id ? updated : a)));
-      const notice = appliedTodayNotice(app, updated);
+      const notice = dateChangeNotice(app, updated);
       if (notice) notify(notice);
       bump();
     } catch (err) {

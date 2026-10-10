@@ -45,12 +45,24 @@ const clearSession = () => kv('readwrite', (s) => s.delete('session'));
 const getSettings = async () => ({ ...DEFAULT_SETTINGS, ...((await kv('readonly', (s) => s.get('settings'))) ?? {}) });
 
 // Tabs with a save pop-up waiting for a sign-in, told when it happens. Kept in session storage,
-// which content scripts can't read and which empties when the browser closes.
-const getWaitingTabs = async () => (await chrome.storage.session.get({ waitingTabs: [] })).waitingTabs;
-async function addWaitingTab(tabId) {
-  const tabs = await getWaitingTabs();
-  if (!tabs.includes(tabId)) await chrome.storage.session.set({ waitingTabs: [...tabs, tabId] });
+// which content scripts can't read and which empties when the browser closes. Changes run one at
+// a time, so two tabs registering at once can't overwrite each other.
+let waitingTabsQueue = Promise.resolve();
+function updateWaitingTabs(change) {
+  const run = async () => {
+    const { waitingTabs } = await chrome.storage.session.get({ waitingTabs: [] });
+    const { next, result } = change(waitingTabs);
+    await chrome.storage.session.set({ waitingTabs: next });
+    return result;
+  };
+  const done = waitingTabsQueue.then(run, run);
+  waitingTabsQueue = done.catch(() => {});
+  return done;
 }
+const addWaitingTab = (tabId) =>
+  updateWaitingTabs((tabs) => ({ next: tabs.includes(tabId) ? tabs : [...tabs, tabId] }));
+/** Empties the list, returning who was on it. */
+const takeWaitingTabs = () => updateWaitingTabs((tabs) => ({ next: [], result: tabs }));
 
 // ---------------------------------------------------------------------------
 // API
@@ -94,7 +106,8 @@ function refreshAccess() {
  */
 async function request(path, { method = 'GET', body, auth = true, token } = {}, retried = false) {
   const { apiUrl } = await getSettings();
-  const headers = {};
+  // The browser's time zone, so the server's "today" is the user's day.
+  const headers = { 'X-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (auth) {
     const access = token ?? (await getSession()).access;
@@ -187,8 +200,7 @@ const pageHandlers = {
     await setSession({ access: tokens.access, refresh: tokens.refresh, user });
     // Save pop-ups waiting for this carry on (and their pages' "Saved" marks refresh). Other tabs
     // re-check their marks when they're next looked at.
-    const waiting = await getWaitingTabs();
-    await chrome.storage.session.set({ waitingTabs: [] });
+    const waiting = await takeWaitingTabs();
     waiting.forEach((tabId) => chrome.tabs.sendMessage(tabId, { type: 'signed-in' }).catch(() => {}));
     return { user };
   },
