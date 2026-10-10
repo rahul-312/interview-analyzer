@@ -191,7 +191,7 @@ def test_setting_a_job_back_to_saved_takes_it_out_of_the_funnel(api, user):
     app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
                    format="json").data
     corrected = api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json").data
-    assert corrected["applied_at"] is None and corrected["saved_at"] == "2026-09-01"
+    assert corrected["applied_at"] is None and corrected["saved_at"] == date.today().isoformat()
     funnel = api.get("/api/insights/").data["funnel"]
     assert funnel["total"] == 0 and funnel["status_counts"] == {}
 
@@ -203,6 +203,19 @@ def test_saved_at_keeps_the_date_a_job_was_saved(api, user):
     applied = api.patch(f"/api/applications/{saved['id']}/", {"status": "interview"}, format="json").data
     assert applied["saved_at"] == "2026-09-01"
     assert applied["date_applied"] == applied["applied_at"] == date.today().isoformat()
+
+
+def test_undoing_a_mistaken_saved_keeps_the_real_applied_date(api, user):
+    app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
+                   format="json").data
+    saved = api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json").data
+    # Dated as saved today, not with the applied date.
+    assert saved["date_applied"] == saved["saved_at"] == date.today().isoformat()
+    assert saved["applied_at"] is None and "previous_applied_at" not in saved
+
+    back = api.patch(f"/api/applications/{app['id']}/", {"status": "applied"}, format="json").data
+    assert back["date_applied"] == back["applied_at"] == "2026-09-01"
+    assert back["saved_at"] is None  # it was never really saved for later
 
 
 def test_moving_to_applied_keeps_a_date_changed_in_the_same_edit(api, user):

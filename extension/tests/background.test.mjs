@@ -14,7 +14,18 @@ globalThis.chrome = {
     onInstalled: { addListener() {} },
     onMessage: { addListener: (fn) => (listener = fn) },
   },
-  storage: { local: { remove: async () => {} } },
+  storage: {
+    local: { remove: async () => {} },
+    session: {
+      data: {},
+      async get(defaults) {
+        return { ...defaults, ...this.data };
+      },
+      async set(values) {
+        Object.assign(this.data, values);
+      },
+    },
+  },
 };
 
 await import('../src/background.js');
@@ -22,6 +33,9 @@ const { serverUrlProblem } = await import('../src/shared.js');
 
 /** Sends a message as `sender`. Returns whether the worker took it (it replies later if so). */
 const send = (message, sender) => listener(message, sender, () => {});
+
+/** Sends a message as `sender` and waits for the reply. */
+const ask = (message, sender) => new Promise((resolve) => assert.equal(listener(message, sender, resolve), true));
 
 const jobSite = { id: EXTENSION_ID, url: 'https://www.naukri.com/backend-jobs', tab: { id: 7, index: 0 } };
 const popup = { id: EXTENSION_ID, url: `${BASE}popup/popup.html` };
@@ -48,4 +62,10 @@ test('only https servers are accepted, apart from this computer', () => {
   assert.match(serverUrlProblem('not a url'), /full address/);
   // Not in the manifest's host permissions, so requests to it would fail.
   assert.match(serverUrlProblem('http://[::1]:8000/api'), /https/);
+});
+
+test('a tab waiting for sign-in is remembered, once, so only it is told when someone signs in', async () => {
+  assert.deepEqual(await ask({ type: 'waitForSignIn' }, jobSite), { ok: true });
+  await ask({ type: 'waitForSignIn' }, jobSite);
+  assert.deepEqual(chrome.storage.session.data.waitingTabs, [7]);
 });

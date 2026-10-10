@@ -9,7 +9,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Application
-        exclude = ["user"]
+        exclude = ["user", "previous_applied_at"]
         read_only_fields = ["applied_at", "saved_at", "created_at", "updated_at"]
 
 

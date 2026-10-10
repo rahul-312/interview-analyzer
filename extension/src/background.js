@@ -44,6 +44,14 @@ const clearSession = () => kv('readwrite', (s) => s.delete('session'));
 
 const getSettings = async () => ({ ...DEFAULT_SETTINGS, ...((await kv('readonly', (s) => s.get('settings'))) ?? {}) });
 
+// Tabs with a save pop-up waiting for a sign-in, told when it happens. Kept in session storage,
+// which content scripts can't read and which empties when the browser closes.
+const getWaitingTabs = async () => (await chrome.storage.session.get({ waitingTabs: [] })).waitingTabs;
+async function addWaitingTab(tabId) {
+  const tabs = await getWaitingTabs();
+  if (!tabs.includes(tabId)) await chrome.storage.session.set({ waitingTabs: [...tabs, tabId] });
+}
+
 // ---------------------------------------------------------------------------
 // API
 
@@ -147,8 +155,15 @@ const contentHandlers = {
     return { app };
   },
 
+  /** The pop-up in this tab is waiting for a sign-in: tell it when one happens (from anywhere). */
+  async waitForSignIn(_message, sender) {
+    if (sender.tab) await addWaitingTab(sender.tab.id);
+    return {};
+  },
+
   /** Signing in happens on the extension's own page, never inside the job site. */
   async openSignIn(_message, sender) {
+    if (sender.tab) await addWaitingTab(sender.tab.id);
     await chrome.tabs.create({
       url: chrome.runtime.getURL('popup/popup.html?signin=1'),
       ...(sender.tab && { openerTabId: sender.tab.id, index: sender.tab.index + 1 }),
@@ -170,9 +185,11 @@ const pageHandlers = {
     // Stored only once both calls worked, so a failure can't leave half a session behind.
     const user = { name: me.first_name || me.username, email: me.email };
     await setSession({ access: tokens.access, refresh: tokens.refresh, user });
-    // A save pop-up waiting on a job site carries on, and "Saved" marks refresh.
-    const tabs = await chrome.tabs.query({});
-    tabs.forEach((tab) => chrome.tabs.sendMessage(tab.id, { type: 'signed-in' }).catch(() => {}));
+    // Save pop-ups waiting for this carry on (and their pages' "Saved" marks refresh). Other tabs
+    // re-check their marks when they're next looked at.
+    const waiting = await getWaitingTabs();
+    await chrome.storage.session.set({ waitingTabs: [] });
+    waiting.forEach((tabId) => chrome.tabs.sendMessage(tabId, { type: 'signed-in' }).catch(() => {}));
     return { user };
   },
 

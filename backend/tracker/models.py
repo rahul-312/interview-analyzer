@@ -36,7 +36,7 @@ class Application(models.Model):
     date_applied = models.DateField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.APPLIED)
     # Job board links can be long (slug + id), so allow more than URLField's default 200.
-    job_url = models.URLField(max_length=500, blank=True, db_index=True)  # the extension looks jobs up by link
+    job_url = models.URLField(max_length=500, blank=True)
     salary = models.CharField(max_length=100, blank=True)
     source = models.CharField(max_length=20, choices=Source.choices, blank=True)
     contact = models.CharField(max_length=200, blank=True)
@@ -49,6 +49,9 @@ class Application(models.Model):
     # When it was saved for later. date_applied becomes the applied date once it's applied to,
     # so this keeps the date it was saved.
     saved_at = models.DateField(null=True, blank=True)
+    # The applied date of a job set back to Saved, put back if it's applied to again (undoing a
+    # mistaken "Saved" shouldn't lose the real date). Internal: not in the API.
+    previous_applied_at = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -57,6 +60,8 @@ class Application(models.Model):
 
     class Meta:
         ordering = ["-date_applied", "-created_at"]
+        # The browser extension looks up the user's jobs by link.
+        indexes = [models.Index(fields=["user", "job_url"], name="application_user_job_url")]
 
     def __str__(self):
         return f"{self.role} at {self.company}"
@@ -70,23 +75,39 @@ class Application(models.Model):
             else:
                 # Added directly with a later status (e.g. logging an old rejection): it was applied to.
                 self.applied_at = self.date_applied
-        elif saved:
-            # Set back to saved (often correcting a status picked by mistake): not applied after all.
-            if self.applied_at is not None:
-                self.applied_at = None
-                changed.append("applied_at")
-            if self.saved_at is None:
-                self.saved_at = self.date_applied
+        else:
+            before = type(self).objects.filter(pk=self.pk).values("status", "date_applied").first() or {}
+            date_edited = self.date_applied != before.get("date_applied")
+            if saved and before.get("status") != self.Status.SAVED:
+                # Set back to saved (often correcting a status picked by mistake): not applied after all.
+                # Remember the applied date in case that's undone, and date the card as saved.
+                if self.applied_at is not None:
+                    self.previous_applied_at = self.applied_at
+                    self.applied_at = None
+                    changed += ["previous_applied_at", "applied_at"]
+                if self.saved_at is None:
+                    self.saved_at = self.date_applied if date_edited else timezone.localdate()
+                    changed.append("saved_at")
+                if not date_edited:
+                    self.date_applied = self.saved_at
+                    changed.append("date_applied")
+            elif saved and self.saved_at is None:
+                self.saved_at = self.date_applied  # saved before saved_at existed
                 changed.append("saved_at")
-        elif self.applied_at is None and self.status in self.APPLIED_STATUSES:
-            # Saved -> applied: applied today, so the card's date moves to today (saved_at keeps the
-            # old one). If the same edit set the date, that's when they applied.
-            before = type(self).objects.filter(pk=self.pk).values("date_applied").first()
-            if before and self.date_applied == before["date_applied"]:
-                self.date_applied = timezone.localdate()
-                changed.append("date_applied")
-            self.applied_at = self.date_applied
-            changed.append("applied_at")
+            elif self.applied_at is None and self.status in self.APPLIED_STATUSES:
+                # Saved -> applied. The date is the one set in the same edit if any, else the applied
+                # date from before a mistaken "Saved", else today (saved_at keeps the date it was saved).
+                restoring = not date_edited and self.previous_applied_at is not None
+                if not date_edited:
+                    self.date_applied = self.previous_applied_at or timezone.localdate()
+                    changed.append("date_applied")
+                if restoring and self.saved_at and self.saved_at >= self.previous_applied_at:
+                    # Only "saved" by the mistake being undone: it was never saved for later.
+                    self.saved_at = None
+                    changed.append("saved_at")
+                self.applied_at = self.date_applied
+                self.previous_applied_at = None
+                changed += ["applied_at", "previous_applied_at"]
 
         if changed and kwargs.get("update_fields") is not None:
             kwargs["update_fields"] = {*kwargs["update_fields"], *changed}

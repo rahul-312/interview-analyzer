@@ -193,6 +193,7 @@
         next();
       };
       resume = waiting;
+      ask('waitForSignIn'); // so the worker tells this tab when someone signs in
       show(
         'Sign in to Interview Analyzer',
         h('p', { style: 'margin:0' }, "Sign in on the extension's own page, then come back to this tab to save the job."),

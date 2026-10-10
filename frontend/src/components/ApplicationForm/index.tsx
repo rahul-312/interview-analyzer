@@ -8,6 +8,7 @@ import MoreDetails from './MoreDetails';
 import { statusOptions } from '@/config/options';
 import type { Application, ApplicationInput, AppStatus } from '@/models/Application';
 import { applicationService } from '@/services/ApplicationService';
+import { datesApplied } from '@/utils/application';
 import { errorText } from '@/utils/errorText';
 import { today } from '@/utils/format';
 
@@ -78,7 +79,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({ initial, quick = fals
         <Field id="role" label="Role">
           <Input id="role" required value={form.role} onChange={(e) => setField('role', e.target.value)} />
         </Field>
-        <Field id="date_applied" label={form.status === 'saved' ? 'Date saved' : 'Date applied'}>
+        <Field id="date_applied" label={datesApplied(form.status, initial) ? 'Date applied' : 'Date saved'}>
           <Input
             id="date_applied"
             type="date"
