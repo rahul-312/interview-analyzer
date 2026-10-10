@@ -25,7 +25,7 @@ const Navbar = () => {
         <div className="hidden md:block">
           <NavButton />
         </div>
-        <div className="hidden lg:block">
+        <div className="hidden md:block">
           <UserMenu />
         </div>
         <HamburgerMenu />
