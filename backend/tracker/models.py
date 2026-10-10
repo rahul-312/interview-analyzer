@@ -36,7 +36,7 @@ class Application(models.Model):
     date_applied = models.DateField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.APPLIED)
     # Job board links can be long (slug + id), so allow more than URLField's default 200.
-    job_url = models.URLField(max_length=500, blank=True)
+    job_url = models.URLField(max_length=500, blank=True, db_index=True)  # the extension looks jobs up by link
     salary = models.CharField(max_length=100, blank=True)
     source = models.CharField(max_length=20, choices=Source.choices, blank=True)
     contact = models.CharField(max_length=200, blank=True)
@@ -44,7 +44,11 @@ class Application(models.Model):
     job_description = models.TextField(blank=True)
     # When the user actually applied. Empty while the job is only saved, and stays empty if a saved job
     # goes straight to rejected or withdrawn, so the funnel only counts real applications.
+    # Kept up to date in save(): edits that skip it (QuerySet.update, bulk admin actions) don't set it.
     applied_at = models.DateField(null=True, blank=True)
+    # When it was saved for later. date_applied becomes the applied date once it's applied to,
+    # so this keeps the date it was saved.
+    saved_at = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -58,23 +62,34 @@ class Application(models.Model):
         return f"{self.role} at {self.company}"
 
     def save(self, *args, **kwargs):
-        update_fields = kwargs.get("update_fields")
-        if self.applied_at is None:
-            if self._state.adding:
+        changed = []
+        saved = self.status == self.Status.SAVED
+        if self._state.adding:
+            if saved:
+                self.saved_at = self.date_applied
+            else:
                 # Added directly with a later status (e.g. logging an old rejection): it was applied to.
-                if self.status != self.Status.SAVED:
-                    self.applied_at = self.date_applied
-            elif self.status in self.APPLIED_STATUSES:
-                # Saved -> applied: applied today, so the card's date (the date saved) moves to today.
-                # If the same edit set the date, that's when they applied.
-                before = type(self).objects.filter(pk=self.pk).values("date_applied").first()
-                changed = ["applied_at"]
-                if before and self.date_applied == before["date_applied"]:
-                    self.date_applied = timezone.localdate()
-                    changed.append("date_applied")
                 self.applied_at = self.date_applied
-                if update_fields is not None:
-                    kwargs["update_fields"] = {*update_fields, *changed}
+        elif saved:
+            # Set back to saved (often correcting a status picked by mistake): not applied after all.
+            if self.applied_at is not None:
+                self.applied_at = None
+                changed.append("applied_at")
+            if self.saved_at is None:
+                self.saved_at = self.date_applied
+                changed.append("saved_at")
+        elif self.applied_at is None and self.status in self.APPLIED_STATUSES:
+            # Saved -> applied: applied today, so the card's date moves to today (saved_at keeps the
+            # old one). If the same edit set the date, that's when they applied.
+            before = type(self).objects.filter(pk=self.pk).values("date_applied").first()
+            if before and self.date_applied == before["date_applied"]:
+                self.date_applied = timezone.localdate()
+                changed.append("date_applied")
+            self.applied_at = self.date_applied
+            changed.append("applied_at")
+
+        if changed and kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = {*kwargs["update_fields"], *changed}
         super().save(*args, **kwargs)
 
 

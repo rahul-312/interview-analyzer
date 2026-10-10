@@ -13,6 +13,7 @@
   // again whenever this tab comes back into view, so jobs added or deleted in the app (or on another
   // device) show correctly. Nothing is remembered between page loads.
   const known = new Map(); // jobUrl -> application id, or null when not saved
+  const savedAt = new Map(); // jobUrl -> when it was saved from this page (newer than any lookup in flight)
   let buttons = []; // { jobUrl, host, setSaved }
   const pending = new Set();
   let lookupTimer = null;
@@ -27,9 +28,13 @@
     const urls = [...pending];
     pending.clear();
     if (!urls.length) return;
+    const started = performance.now();
     const res = await ask('lookup', { jobUrls: urls });
     if (!res.ok) return; // signed out or offline: leave the buttons as they are
-    urls.forEach((url) => known.set(url, res.matches[url] ?? null));
+    urls.forEach((url) => {
+      if ((savedAt.get(url) ?? -1) > started) return; // saved while this was in flight: that's newer
+      known.set(url, res.matches[url] ?? null);
+    });
     refreshButtons();
   }
 
@@ -48,20 +53,21 @@
   const markSaved = (app) => {
     if (!app.job_url) return;
     known.set(app.job_url, app.id);
+    savedAt.set(app.job_url, performance.now());
     refreshButtons();
   };
 
   const open = (job) => openSaveDialog(job, { onSaved: markSaved });
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
+  const recheckAll = () => {
     buttons = buttons.filter((b) => b.host.isConnected);
     queueLookup(buttons.map((b) => b.jobUrl));
-  });
+  };
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && recheckAll());
 
-  // The toolbar button: save whatever job this page shows.
   chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type === 'open-page') open(fromPage());
+    if (message?.type === 'open-page') open(fromPage()); // the toolbar button: save the job this page shows
+    if (message?.type === 'signed-in') recheckAll();
   });
 
   if (!adapter) return; // not a supported site: only the toolbar button works here

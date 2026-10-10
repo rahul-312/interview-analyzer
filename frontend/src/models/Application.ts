@@ -20,6 +20,8 @@ export interface Application extends ApplicationInput {
   status_label: string;
   /** When it was actually applied to. Null while only saved, or if it never was. */
   applied_at: string | null;
+  /** When it was saved for later, if it ever was. */
+  saved_at: string | null;
   rounds_count: number;
   created_at: string;
   updated_at: string;

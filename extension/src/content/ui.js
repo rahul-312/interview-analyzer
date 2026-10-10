@@ -113,7 +113,15 @@
   // ---------------------------------------------------------------------------
   // Save dialog
 
-  let openDialog = null; // { host, close }
+  let openDialog = null; // { host, close, resume }
+
+  // An open dialog waiting for sign-in carries on when it may have happened.
+  const resumeOpenDialog = () => openDialog?.resume();
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === 'signed-in') resumeOpenDialog();
+  });
+  window.addEventListener('focus', resumeOpenDialog);
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && resumeOpenDialog());
 
   /** Opens the pop-up for one job, as read by IASites. `onSaved(app)` runs once it's saved, or found saved. */
   function openSaveDialog(job, { onSaved } = {}) {
@@ -127,11 +135,10 @@
     document.documentElement.append(host);
 
     let appUrl = '';
-    let onVisible = null; // set while waiting for the user to sign in on the extension's page
+    let resume = null; // set while waiting for the user to sign in on the extension's page
     const close = () => {
       host.remove();
       document.removeEventListener('keydown', onKey, true);
-      if (onVisible) document.removeEventListener('visibilitychange', onVisible);
       if (openDialog?.host === host) openDialog = null;
     };
     const onKey = (e) => {
@@ -143,12 +150,12 @@
     overlay.addEventListener('mousedown', (e) => e.target === overlay && close());
     // Keep typing in the form away from the site's keyboard shortcuts (like "/" to search).
     ['keydown', 'keyup', 'keypress'].forEach((type) => overlay.addEventListener(type, (e) => e.stopPropagation()));
-    openDialog = { host, close };
+    openDialog = { host, close, resume: () => resume?.() };
 
-    /** Link to an application in the app, or null if the app's address isn't a web address. */
+    /** Link to an application in the app (keeping any path the app lives under), or null if not a web address. */
     const appLink = (id) => {
       try {
-        const url = new URL(`/applications/${id}`, appUrl);
+        const url = new URL(`${appUrl.replace(/\/+$/, '')}/applications/${id}`);
         return /^https?:$/.test(url.protocol) ? url.href : null;
       } catch {
         return null;
@@ -173,20 +180,19 @@
       box.hidden = !message;
     };
 
-    /** Signed out: sign in on the extension's page (a new tab), then carry on here once back. */
+    /**
+     * Signed out: sign in on the extension's page (a new tab, or the toolbar popup), then carry on here.
+     * The worker tells every tab when someone signs in; coming back to this tab or window re-checks too.
+     */
     function showSignedOut(next) {
       const error = errorBox();
-      if (!onVisible) {
-        onVisible = async () => {
-          if (document.visibilityState !== 'visible') return;
-          const config = await ask('config');
-          if (!config.ok || !config.signedIn || !onVisible) return;
-          document.removeEventListener('visibilitychange', onVisible);
-          onVisible = null;
-          next();
-        };
-        document.addEventListener('visibilitychange', onVisible);
-      }
+      const waiting = async () => {
+        const config = await ask('config');
+        if (!config.ok || !config.signedIn || resume !== waiting) return; // still signed out, or already resumed
+        resume = null;
+        next();
+      };
+      resume = waiting;
       show(
         'Sign in to Interview Analyzer',
         h('p', { style: 'margin:0' }, "Sign in on the extension's own page, then come back to this tab to save the job."),

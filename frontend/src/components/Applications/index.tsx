@@ -13,10 +13,11 @@ import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
 import type { Application, AppStatus } from '@/models/Application';
 import { applicationService } from '@/services/ApplicationService';
+import { appliedTodayNotice } from '@/utils/application';
 import { errorText } from '@/utils/errorText';
 
 const Applications = () => {
-  const { openAddApplication, bump } = useDialogs();
+  const { openAddApplication, notify, bump } = useDialogs();
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<AppStatus | ''>('');
@@ -44,7 +45,10 @@ const Applications = () => {
     const label = statusOptions.find((o) => o.value === next)?.label ?? next;
     setData(all.map((a) => (a.id === app.id ? { ...a, status: next, status_label: label } : a)));
     try {
-      await applicationService.update(app.id, { status: next });
+      const updated = await applicationService.update(app.id, { status: next });
+      setData((current) => (current ?? []).map((a) => (a.id === app.id ? updated : a)));
+      const notice = appliedTodayNotice(app, updated);
+      if (notice) notify(notice);
       bump();
     } catch (err) {
       setData(previous);

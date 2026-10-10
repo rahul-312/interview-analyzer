@@ -51,7 +51,8 @@ const ApplicationInfo: React.FC<ApplicationInfoProps> = ({ app, onEdit, onDelete
 
       {/* Details */}
       <dl className="mt-6xl grid gap-4xl md:grid-cols-3">
-        <Detail label={app.status === 'saved' ? 'Saved' : 'Applied'}>{formatDate(app.date_applied)}</Detail>
+        <Detail label={app.applied_at ? 'Applied' : 'Saved'}>{formatDate(app.date_applied)}</Detail>
+        {app.applied_at && app.saved_at && <Detail label="Saved">{formatDate(app.saved_at)}</Detail>}
         <Detail label="Source">{sourceLabel}</Detail>
         <Detail label="Salary">{app.salary}</Detail>
         <Detail label="Contact">{app.contact}</Detail>

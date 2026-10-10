@@ -92,6 +92,8 @@ class ApplicationLookupView(APIView):
     MAX_URLS = 100
 
     def post(self, request):
+        if not isinstance(request.data, dict):
+            return Response({"job_urls": ["Send a JSON object with a list of links."]}, status=status.HTTP_400_BAD_REQUEST)
         urls = request.data.get("job_urls")
         if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
             return Response({"job_urls": ["Send a list of links."]}, status=status.HTTP_400_BAD_REQUEST)

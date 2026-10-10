@@ -46,4 +46,6 @@ test('only https servers are accepted, apart from this computer', () => {
   assert.match(serverUrlProblem('http://ia.example.com/api'), /https/);
   assert.match(serverUrlProblem('javascript:alert(1)'), /https/);
   assert.match(serverUrlProblem('not a url'), /full address/);
+  // Not in the manifest's host permissions, so requests to it would fail.
+  assert.match(serverUrlProblem('http://[::1]:8000/api'), /https/);
 });

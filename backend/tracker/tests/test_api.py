@@ -70,6 +70,7 @@ def test_lookup_many_job_urls(api, application, other_user):
                    format="json")
     assert res.data == {"matches": {url: application.id}}  # not other users' jobs
     assert api.post("/api/applications/lookup/", {"job_urls": "nope"}, format="json").status_code == 400
+    assert api.post("/api/applications/lookup/", [url], format="json").status_code == 400  # not an object
     assert api.post("/api/applications/lookup/", {"job_urls": ["x"] * 101}, format="json").status_code == 400
 
 
@@ -183,6 +184,25 @@ def test_applied_at_records_when_a_job_was_really_applied_to(api, user):
     assert api.patch(f"/api/applications/{skipped['id']}/", {"status": "withdrawn"}, format="json").data["applied_at"] is None
     funnel = api.get("/api/insights/").data["funnel"]
     assert funnel["total"] == 2 and "withdrawn" not in funnel["status_counts"]
+
+
+def test_setting_a_job_back_to_saved_takes_it_out_of_the_funnel(api, user):
+    # Picked Applied by mistake, then corrected to Saved.
+    app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
+                   format="json").data
+    corrected = api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json").data
+    assert corrected["applied_at"] is None and corrected["saved_at"] == "2026-09-01"
+    funnel = api.get("/api/insights/").data["funnel"]
+    assert funnel["total"] == 0 and funnel["status_counts"] == {}
+
+
+def test_saved_at_keeps_the_date_a_job_was_saved(api, user):
+    saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
+                     format="json").data
+    assert saved["saved_at"] == "2026-09-01"
+    applied = api.patch(f"/api/applications/{saved['id']}/", {"status": "interview"}, format="json").data
+    assert applied["saved_at"] == "2026-09-01"
+    assert applied["date_applied"] == applied["applied_at"] == date.today().isoformat()
 
 
 def test_moving_to_applied_keeps_a_date_changed_in_the_same_edit(api, user):

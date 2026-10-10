@@ -1,0 +1,106 @@
+// The page scripts together (sites.js, ui.js, content.js) on a Naukri search page, with the
+// background worker faked: "Saved" marks, saving, and carrying on after signing in elsewhere.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
+
+const read = (path) => readFileSync(new URL(`../src/content/${path}`, import.meta.url), 'utf8');
+const SCRIPTS = ['sites.js', 'ui.js', 'content.js'].map(read);
+const JOB_URL = 'https://www.naukri.com/job-listings-backend-engineer-acme-111';
+
+const CARD = `
+  <div class="srp-jobtuple-wrapper"><div class="cust-job-tuple sjw__tuple">
+    <div class="row1"><h2><a class="title" title="Backend Engineer" href="${JOB_URL}?src=jobsearchDesk">Backend Engineer</a></h2></div>
+    <div class="row2"><a class="comp-name" title="Acme" href="#">Acme</a></div>
+    <div class="row6"><span class="save-job-tag">Save</span></div>
+  </div></div>`;
+
+const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A Naukri search page with the extension's scripts running. `worker(message)` answers what the
+ * background worker would. Shadow roots are opened so the test can look inside them.
+ */
+function page(worker) {
+  const dom = new JSDOM(`<body>${CARD}</body>`, {
+    url: 'https://www.naukri.com/backend-jobs',
+    runScripts: 'outside-only',
+    pretendToBeVisual: true,
+  });
+  const w = dom.window;
+  const listeners = [];
+  w.chrome = {
+    runtime: {
+      sendMessage: async (message) => worker(message),
+      onMessage: { addListener: (fn) => listeners.push(fn) },
+    },
+    storage: { local: { get: async (defaults) => defaults, set: async () => {} } },
+  };
+  const attach = w.Element.prototype.attachShadow;
+  w.Element.prototype.attachShadow = function () {
+    return attach.call(this, { mode: 'open' });
+  };
+  SCRIPTS.forEach((script) => w.eval(script));
+
+  const button = () => w.document.querySelector('[data-interview-analyzer]')?.shadowRoot?.querySelector('button');
+  const dialog = () => w.document.querySelector('div[data-interview-analyzer]')?.shadowRoot;
+  const broadcast = (message) => listeners.forEach((fn) => fn(message, {}, () => {}));
+  return { w, button, dialog, broadcast };
+}
+
+const savedApp = { id: 9, company: 'Acme', role: 'Backend Engineer', date_applied: '2026-10-10', job_url: JOB_URL };
+
+test('marks come from the app: a job saved elsewhere shows as saved', async () => {
+  const { button } = page(async (m) => (m.type === 'lookup' ? { ok: true, matches: { [JOB_URL]: 9 } } : { ok: false }));
+  await tick(50);
+  assert.equal(button().textContent, '+ Track');
+  await tick(450); // lookups are batched
+  assert.equal(button().textContent, '✓ Saved');
+});
+
+test('a lookup that was already in flight when the job was saved does not undo the save', async () => {
+  let answerLookup;
+  const { button, dialog } = page(async (m) => {
+    if (m.type === 'lookup') return new Promise((resolve) => (answerLookup = resolve));
+    if (m.type === 'config') return { ok: true, appUrl: 'https://ia.example.com/app', signedIn: true };
+    if (m.type === 'find') return { ok: true, app: null };
+    if (m.type === 'save') return { ok: true, app: savedApp };
+    return { ok: false };
+  });
+  await tick(500); // the lookup is now waiting for an answer
+  assert.ok(answerLookup);
+
+  button().click();
+  await tick(20);
+  dialog().querySelector('form').requestSubmit();
+  await tick(20);
+  assert.equal(button().textContent, '✓ Saved');
+  // "Open it" keeps the path the app lives under.
+  assert.equal(dialog().querySelector('a.btn.primary').href, 'https://ia.example.com/app/applications/9');
+
+  answerLookup({ ok: true, matches: {} }); // stale: from before the save
+  await tick(20);
+  assert.equal(button().textContent, '✓ Saved');
+});
+
+test('a dialog waiting for sign-in carries on when told someone signed in, without a tab switch', async () => {
+  let signedIn = false;
+  const { button, dialog, broadcast } = page(async (m) => {
+    if (m.type === 'config') return { ok: true, appUrl: 'https://ia.example.com', signedIn };
+    if (m.type === 'find') return { ok: true, app: null };
+    return { ok: false };
+  });
+  await tick(50);
+  button().click();
+  await tick(20);
+  assert.equal(dialog().querySelector('h2').textContent, 'Sign in to Interview Analyzer');
+  assert.equal(dialog().querySelector('input[type="password"]'), null); // never asks for it on the page
+
+  signedIn = true; // e.g. from the toolbar popup; this tab never became hidden
+  broadcast({ type: 'signed-in' });
+  await tick(20);
+  assert.equal(dialog().querySelector('h2').textContent, 'Add application');
+  assert.equal(dialog().querySelector('input[name="company"]').value, 'Acme');
+});

@@ -170,6 +170,9 @@ const pageHandlers = {
     // Stored only once both calls worked, so a failure can't leave half a session behind.
     const user = { name: me.first_name || me.username, email: me.email };
     await setSession({ access: tokens.access, refresh: tokens.refresh, user });
+    // A save pop-up waiting on a job site carries on, and "Saved" marks refresh.
+    const tabs = await chrome.tabs.query({});
+    tabs.forEach((tab) => chrome.tabs.sendMessage(tab.id, { type: 'signed-in' }).catch(() => {}));
     return { user };
   },
 

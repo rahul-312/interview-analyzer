@@ -6,7 +6,8 @@ export const DEFAULT_SETTINGS = {
   appUrl: 'http://localhost:3000',
 };
 
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+// Must match the http hosts in manifest.json's host_permissions, or saving works but requests don't.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 
 /**
  * Why a server address can't be used, or '' if it's fine. Only https, except on this computer:
