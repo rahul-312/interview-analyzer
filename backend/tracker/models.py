@@ -72,8 +72,8 @@ class Application(models.Model):
         instance._remember_loaded()
         return instance
 
-    def refresh_from_db(self, *args, fields=None, **kwargs):
-        super().refresh_from_db(*args, fields=fields, **kwargs)
+    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
+        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
         loaded = getattr(self, "_loaded", None) or {}
         for name in ("status", "date_applied"):
             if fields is None or name in fields:
@@ -119,8 +119,10 @@ class Application(models.Model):
                 if not date_edited:
                     self.date_applied = self.saved_at
                     changed.append("date_applied")
-            elif saved and self.saved_at is None:
-                self.saved_at = self.date_applied  # saved before saved_at existed
+            elif saved and (self.saved_at is None or date_edited):
+                # Still saved: its date is the date saved, so keep saved_at in step when it's edited
+                # (or fill it in for jobs saved before saved_at existed).
+                self.saved_at = self.date_applied
                 changed.append("saved_at")
             elif not saved and self.applied_at is None and (self.previous_applied_at or self.status in self.APPLIED_STATUSES):
                 # Leaving Saved after a mistaken "Saved" (to any status, rejected included), or applying to

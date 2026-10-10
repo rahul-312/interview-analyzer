@@ -282,6 +282,23 @@ def test_today_is_the_users_day_not_the_servers(user):
     assert timezone.get_current_timezone_name() == "UTC"  # nothing left active afterwards
 
 
+def test_changing_a_saved_jobs_date_changes_its_saved_date(api, user):
+    saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
+                     format="json").data
+    moved = api.patch(f"/api/applications/{saved['id']}/", {"date_applied": "2026-08-28"}, format="json").data
+    assert moved["date_applied"] == moved["saved_at"] == "2026-08-28"
+    applied = api.patch(f"/api/applications/{saved['id']}/", {"status": "applied"}, format="json").data
+    assert applied["saved_at"] == "2026-08-28"
+
+
+def test_refresh_from_db_takes_fields_by_position_too(user):
+    app = Application.objects.create(user=user, company="A", role="x", date_applied=date(2026, 9, 1), status="applied")
+    Application.objects.filter(pk=app.pk).update(status="saved", date_applied=date(2026, 9, 5))
+    app.date_applied = date(2026, 9, 9)  # unsaved local change
+    app.refresh_from_db(None, ["status"])
+    assert app._loaded == {"status": "saved", "date_applied": date(2026, 9, 1)}  # date not refreshed: kept as loaded
+
+
 def test_moving_to_applied_keeps_a_date_changed_in_the_same_edit(api, user):
     saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
                      format="json").data
