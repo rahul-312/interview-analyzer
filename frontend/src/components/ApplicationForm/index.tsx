@@ -78,7 +78,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({ initial, quick = fals
         <Field id="role" label="Role">
           <Input id="role" required value={form.role} onChange={(e) => setField('role', e.target.value)} />
         </Field>
-        <Field id="date_applied" label="Date applied">
+        <Field id="date_applied" label={form.status === 'saved' ? 'Date saved' : 'Date applied'}>
           <Input
             id="date_applied"
             type="date"

@@ -61,7 +61,7 @@ class ApplicationQuerysetMixin:
 
 class ApplicationListCreateView(ApplicationQuerysetMixin, generics.ListCreateAPIView):
     """
-    GET: list the user's applications (supports ?status= and ?search=).
+    GET: list the user's applications (supports ?status=, ?search= and ?job_url=, an exact match).
     POST: create an application. Only company, role and date_applied are required.
     """
     serializer_class = ApplicationSerializer
@@ -74,6 +74,9 @@ class ApplicationListCreateView(ApplicationQuerysetMixin, generics.ListCreateAPI
             qs = qs.filter(status=params["status"])
         if params.get("search"):
             qs = qs.filter(Q(company__icontains=params["search"]) | Q(role__icontains=params["search"]))
+        # The browser extension uses this to tell whether a job was already saved.
+        if params.get("job_url"):
+            qs = qs.filter(job_url=params["job_url"])
         return qs
 
     def perform_create(self, serializer):

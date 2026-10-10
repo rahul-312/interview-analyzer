@@ -5,6 +5,7 @@ import type { Analysis, Outcome, Severity } from '@/models/Interview';
 const base = 'inline-flex items-center whitespace-nowrap rounded-full px-lg py-xs text-xs font-medium';
 
 const statusStyles: Record<AppStatus, string> = {
+  saved: 'bg-white text-medium-gray ring-1 ring-inset ring-light-gray',
   applied: 'bg-smoke-white text-charcoal-gray',
   screening: 'bg-sky-light text-sky-dark',
   interview: 'bg-primary-light text-primary-dark',

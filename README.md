@@ -31,6 +31,17 @@ npm run dev
 
 Open http://localhost:3000 and create an account.
 
+## Browser extension
+
+`extension/` is a Chrome extension (it also works in Edge and Brave) for saving jobs without leaving the job site. On Naukri it adds a **+ Track** button to every job card and a **+ Save to Interview Analyzer** button on each job's page. On any other job site, click the extension's toolbar icon and choose **Save the job on this page**. Either way, the same "Add application" pop-up opens on the page, already filled in.
+
+To install it, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the `extension` folder. Sign in from the pop-up the first time you use it. After changing the extension's code, click its reload button on that page and reload the job site.
+
+- `background.js`: the only part that calls the API. It keeps the JWT tokens and refreshes them, and its requests don't go through CORS.
+- `content/sites.js`: reads the job from the page. Naukri has its own adapter; other sites use the schema.org `JobPosting` most job pages include, then the page title and any selected text. To support another site, add an adapter here and its address under `content_scripts` in `manifest.json`.
+- `content/ui.js`, `content/content.js`: the pop-up and buttons (in shadow roots, so the site's CSS doesn't affect them) and the code that places them.
+- `popup/`: sign in, sign out, save the current page, and the server addresses (http://localhost:8000/api and http://localhost:3000 by default).
+
 ## Frontend structure
 
 ```
@@ -83,7 +94,7 @@ With an API key set, round analysis and prep plans use `claude-opus-5-5` with st
 |---|---|
 | POST | `/api/auth/register/`, `/api/auth/token/`, `/api/auth/token/refresh/` |
 | GET/PATCH | `/api/auth/me/` |
-| GET/POST | `/api/applications/` (`?status=`, `?search=`) |
+| GET/POST | `/api/applications/` (`?status=`, `?search=`, `?job_url=`) |
 | GET/PUT/PATCH/DELETE | `/api/applications/{id}/` |
 | GET/POST | `/api/rounds/` (`?application=`; send `debrief` to save one) |
 | GET/PUT/PATCH/DELETE | `/api/rounds/{id}/` |

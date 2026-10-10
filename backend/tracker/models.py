@@ -13,6 +13,8 @@ class JobStatus(models.TextChoices):
 
 class Application(models.Model):
     class Status(models.TextChoices):
+        # Found and kept for later (e.g. from the browser extension), not applied to yet.
+        SAVED = "saved", "Saved"
         APPLIED = "applied", "Applied"
         SCREENING = "screening", "Screening"
         INTERVIEW = "interview", "Interviewing"
@@ -32,7 +34,8 @@ class Application(models.Model):
     role = models.CharField(max_length=200)
     date_applied = models.DateField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.APPLIED)
-    job_url = models.URLField(blank=True)
+    # Job board links can be long (slug + id), so allow more than URLField's default 200.
+    job_url = models.URLField(max_length=500, blank=True)
     salary = models.CharField(max_length=100, blank=True)
     source = models.CharField(max_length=20, choices=Source.choices, blank=True)
     contact = models.CharField(max_length=200, blank=True)

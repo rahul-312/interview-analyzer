@@ -50,6 +50,15 @@ def test_list_filters(api, application):
     assert [a["company"] for a in api.get("/api/applications/?search=acm").data] == ["Acme"]
 
 
+def test_find_application_by_job_url(api, application):
+    url = "https://www.naukri.com/job-listings-backend-engineer-acme-bengaluru-3-to-5-years-091025012345"
+    application.job_url = url
+    application.save()
+
+    assert [a["id"] for a in api.get("/api/applications/", {"job_url": url}).data] == [application.id]
+    assert api.get("/api/applications/", {"job_url": url + "9"}).data == []
+
+
 def test_other_users_cannot_see_or_use_data(api, application, other_user):
     from rest_framework.test import APIClient
 
@@ -115,7 +124,8 @@ def test_same_topic_in_two_rounds_ranks_first(api, application, run_jobs):
 
 
 def test_funnel_and_pass_rates(api, user):
-    for status, source in [("applied", "cold"), ("screening", "cold"), ("interview", "referral"), ("offer", "referral")]:
+    for status, source in [("saved", "referral"), ("applied", "cold"), ("screening", "cold"), ("interview", "referral"),
+                           ("offer", "referral")]:
         Application.objects.create(user=user, company=status, role="x", date_applied=date.today(),
                                    status=status, source=source)
     app = Application.objects.get(company="interview")
@@ -128,6 +138,16 @@ def test_funnel_and_pass_rates(api, user):
     referral = next(s for s in data["funnel"]["by_source"] if s["source"] == "referral")
     assert referral == {"source": "referral", "label": "Referral", "total": 2, "interviews": 2, "offers": 1}
     assert data["round_outcomes"]["weakest"] == "Technical"
+    # The saved job isn't an application yet, so it's in none of the numbers.
+    assert data["funnel"]["total"] == 4 and "saved" not in data["funnel"]["status_counts"]
+
+
+def test_logging_a_round_moves_a_saved_job_forward(api, user, run_jobs):
+    app = Application.objects.create(user=user, company="Acme", role="x", date_applied=date.today(), status="saved")
+    with run_jobs():
+        api.post("/api/rounds/", {"application": app.id, "round_type": "phone_screen", "scheduled_at": past()}, format="json")
+    app.refresh_from_db()
+    assert app.status == "screening"
 
 
 def test_prep_plan_targets_weak_spots_and_ends_with_review(api, application, run_jobs):

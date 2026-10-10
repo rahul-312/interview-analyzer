@@ -1,4 +1,4 @@
-export type AppStatus = "applied" | "screening" | "interview" | "offer" | "rejected" | "withdrawn";
+export type AppStatus = "saved" | "applied" | "screening" | "interview" | "offer" | "rejected" | "withdrawn";
 
 export type Source = "" | "cold" | "referral" | "recruiter" | "job_board" | "other";
 

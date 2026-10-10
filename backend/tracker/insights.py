@@ -8,7 +8,7 @@ SEVERITY_SCORE = {"low": 1, "medium": 2, "high": 3}
 # Statuses that imply the application reached at least this stage.
 STAGES = ["applied", "screening", "interview", "offer"]
 REACHED = {
-    "applied": set(Application.Status.values),
+    "applied": set(Application.Status.values) - {"saved"},
     "screening": {"screening", "interview", "offer"},
     "interview": {"interview", "offer"},
     "offer": {"offer"},
@@ -68,8 +68,8 @@ def round_outcomes(user):
 
 
 def funnel(user):
-    """How many applications reached each stage, plus by-source and status counts."""
-    apps = list(Application.objects.filter(user=user).values("status", "source"))
+    """How many applications reached each stage, plus by-source and status counts. Saved jobs aren't applications yet."""
+    apps = list(Application.objects.filter(user=user).exclude(status=Application.Status.SAVED).values("status", "source"))
     stages, prev = [], None
     for stage in STAGES:
         count = sum(1 for a in apps if a["status"] in REACHED[stage])
