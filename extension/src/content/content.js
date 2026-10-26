@@ -1,12 +1,12 @@
-// Puts "+ Track" on each job card and "+ Save to Interview Analyzer" on job pages of supported
-// sites, and opens the save pop-up for the toolbar button on any site. Runs on Naukri by default
-// and is injected into other pages when the toolbar button is clicked; it only sets itself up once.
+// Puts "+ Track" on each job card in a list and "+ Save to Interview Analyzer" on a job's own page,
+// on any site, and opens the save pop-up for the toolbar button. Runs on every https page, and is
+// injected into other pages when the toolbar button is clicked; it only sets itself up once.
 
 (() => {
   if (globalThis.IAContent) return;
   globalThis.IAContent = true;
 
-  const { adapter, fromCard, fromPage } = globalThis.IASites;
+  const { findCards, placeButton, fromCard, fromPage, isJobPage } = globalThis.IASites;
   const { openSaveDialog, trackButton, ask } = globalThis.IAUi;
 
   // "✓ Saved" marks come from the app: the job links on screen are checked against it in batches, and
@@ -70,30 +70,30 @@
     if (message?.type === 'signed-in') recheckAll();
   });
 
-  if (!adapter) return; // not a supported site: only the toolbar button works here
+  const MARK = 'data-ia-tracked';
 
-  const MARK = 'iaTracked';
-
+  /** "+ Track" on each job card, once: a card found again, or inside or around one, is skipped. */
   function decorateCards() {
-    adapter.findCards().forEach((card) => {
-      if (card.dataset[MARK]) return;
-      card.dataset[MARK] = '1';
+    findCards().forEach((card) => {
+      if (card.hasAttribute(MARK) || card.closest(`[${MARK}]`) || card.querySelector(`[${MARK}]`)) return;
+      card.setAttribute(MARK, '');
       const button = trackButton({ onClick: () => open(fromCard(card)) });
-      adapter.placeButton(card, button.host);
+      placeButton(card, button.host);
       register(fromCard(card).jobUrl, button);
     });
   }
 
   let floating = null; // { host, url }
 
-  /** One floating button on a job's own page. Naukri changes page without reloading, so this re-checks. */
+  /** One floating button on a job's own page. Many job sites change page without reloading, so this re-checks. */
   function syncFloatingButton() {
     const url = location.href;
-    if (floating && (floating.url !== url || !adapter.isJobPage())) {
+    const onJob = isJobPage();
+    if (floating && (floating.url !== url || !onJob)) {
       floating.host.remove();
       floating = null;
     }
-    if (floating || !adapter.isJobPage()) return;
+    if (floating || !onJob) return;
 
     const button = trackButton({ floating: true, onClick: () => open(fromPage()) });
     document.documentElement.append(button.host);
@@ -101,17 +101,33 @@
     register(fromPage().jobUrl, button);
   }
 
-  // Job lists load as you scroll and filter, so watch for new cards (batched to once per frame).
+  // Job lists load as you scroll and filter, and job sites change page without reloading, so the page
+  // is looked at again when it changes: at most once a second (this runs on every site, and many pages
+  // change all the time), straight away when the address changes, and once more after the last change.
+  let scanned = { url: null, at: -Infinity };
   let queued = false;
-  const update = () => {
+  let later = null;
+
+  function scan() {
+    scanned = { url: location.href, at: performance.now() };
+    decorateCards();
+    syncFloatingButton();
+  }
+
+  function update() {
     if (queued) return;
     queued = true;
     requestAnimationFrame(() => {
       queued = false;
-      decorateCards();
-      syncFloatingButton();
+      const wait = 1000 - (performance.now() - scanned.at);
+      if (scanned.url !== location.href || wait <= 0) scan();
+      else
+        later ??= setTimeout(() => {
+          later = null;
+          scan();
+        }, wait);
     });
-  };
+  }
   new MutationObserver(update).observe(document.body, { childList: true, subtree: true });
   update();
 })();

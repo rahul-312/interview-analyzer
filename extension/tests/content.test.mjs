@@ -1,4 +1,4 @@
-// The page scripts together (sites.js, ui.js, content.js) on a Naukri search page, with the
+// The page scripts together (sites.js, ui.js, content.js) on a job search page (Naukri markup), with the
 // background worker faked: "Saved" marks, saving, and carrying on after signing in elsewhere.
 
 import { test } from 'node:test';
@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 
 const read = (path) => readFileSync(new URL(`../src/content/${path}`, import.meta.url), 'utf8');
 const SCRIPTS = ['sites.js', 'ui.js', 'content.js'].map(read);
-const JOB_URL = 'https://www.naukri.com/job-listings-backend-engineer-acme-111';
+const JOB_URL = 'https://www.naukri.com/job-listings-backend-engineer-acme-091025000111';
 
 const CARD = `
   <div class="srp-jobtuple-wrapper"><div class="cust-job-tuple sjw__tuple">
@@ -17,15 +17,18 @@ const CARD = `
     <div class="row6"><span class="save-job-tag">Save</span></div>
   </div></div>`;
 
+// A list shows more than one job (pages linking to just one get no card buttons).
+const OTHER_CARD = CARD.replaceAll("091025000111", "091025000222").replaceAll("Backend Engineer", "SRE");
+
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * A Naukri search page with the extension's scripts running. `worker(message)` answers what the
  * background worker would. Shadow roots are opened so the test can look inside them.
  */
-function page(worker) {
-  const dom = new JSDOM(`<body>${CARD}</body>`, {
-    url: 'https://www.naukri.com/backend-jobs',
+function page(worker, { url = 'https://www.naukri.com/backend-jobs', body = CARD + OTHER_CARD } = {}) {
+  const dom = new JSDOM(`<body>${body}</body>`, {
+    url,
     runScripts: 'outside-only',
     pretendToBeVisual: true,
   });
@@ -103,4 +106,21 @@ test('a dialog waiting for sign-in carries on when told someone signed in, witho
   await tick(20);
   assert.equal(dialog().querySelector('h2').textContent, 'Add application');
   assert.equal(dialog().querySelector('input[name="company"]').value, 'Acme');
+});
+
+test('any site: a job page gets the floating "Save" button, other pages get none', async () => {
+  const description = `<div class="job-description"><h2>Responsibilities</h2><p>${'Build and run our services. '.repeat(20)}</p></div>`;
+  const job = page(async () => ({ ok: false }), {
+    url: 'https://careers.example.com/jobs/42',
+    body: `<main><h1>Platform Engineer</h1>${description}</main>`,
+  });
+  await tick(50);
+  assert.equal(job.button()?.textContent, '+ Save to Interview Analyzer');
+
+  const other = page(async () => ({ ok: false }), {
+    url: 'https://news.example.com/2026/10/markets',
+    body: `<main><h1>Markets today</h1>${description}</main>`,
+  });
+  await tick(50);
+  assert.equal(other.button(), undefined);
 });

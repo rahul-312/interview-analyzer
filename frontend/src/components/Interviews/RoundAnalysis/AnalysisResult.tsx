@@ -17,7 +17,7 @@ const AnalysisResult: React.FC<{ analysis: Analysis }> = ({ analysis }) => {
           <p className="text-charcoal-gray">{analysis.summary}</p>
           {analysis.source === 'rules' && (
             <p className="rounded-lg bg-amber-light px-2xl py-lg text-xs text-amber-dark">
-              This review used the rule-based analyzer (based on your confidence ratings). Add an Anthropic API key on the
+              This review used the rule-based analyzer (based on your confidence ratings). Add a Gemini API key on the
               server for a full AI review with stronger answers.
             </p>
           )}
