@@ -80,6 +80,8 @@ def usage(user):
         "plan": plan,
         # False with no API key: jobs use the free rule-based engine, so the limits are off.
         "ai_enabled": ai.ai_enabled(),
+        # Gemini's free tier: Google may use what's sent to improve its products, so the app says so.
+        "ai_free_tier": ai.ai_enabled() and settings.GEMINI_FREE_TIER,
         "analyses": _quota(user, plan, ANALYSIS, now),
         "prep_plans": _quota(user, plan, PREP_PLAN, now),
     }

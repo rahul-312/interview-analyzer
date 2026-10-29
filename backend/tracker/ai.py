@@ -3,10 +3,11 @@ Round analysis and prep-plan generation.
 
 Two layers:
 1. A rule-based fallback that always works (no API key needed).
-2. Claude, used only when ANTHROPIC_API_KEY is set. Structured output guarantees
-   the reply is valid JSON matching the schema.
+2. Gemini, used only when GEMINI_API_KEY is set. Structured output makes the reply
+   JSON matching the schema.
 """
 import json
+import logging
 import time
 
 from django.conf import settings
@@ -59,7 +60,7 @@ def advice_for(topic):
 
 
 def ai_enabled():
-    return bool(settings.ANTHROPIC_API_KEY)
+    return bool(settings.GEMINI_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +164,7 @@ def rule_based_plan(context):
 
 
 # ---------------------------------------------------------------------------
-# Layer 2: Claude
+# Layer 2: Gemini
 # ---------------------------------------------------------------------------
 
 ANALYSIS_SYSTEM = """You are an experienced interview coach reviewing a candidate's own debrief of a job interview round.
@@ -271,50 +272,125 @@ class Billing:
 
 
 
+# Generous, since there's a lot to write; a reply that arrives after this is lost but may still have
+# used up a request from the daily quota.
+TIMEOUT_SECONDS = 300
+
+# Why Gemini blocked content: the reply (finish reasons) or the prompt itself (block reasons). Only
+# these count against the user; anything else that stops a reply is our side's or Gemini's problem.
+BLOCKED = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}
+BLOCKED_PROMPT = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "JAILBREAK"}
+
+# Rejections that mean the server is set up wrong (bad key, unknown model, a schema Gemini won't
+# take), not that Gemini is down. Users are told it's a setup problem; the details are for the
+# server's admin, so they go to the log.
+SETUP_ERRORS = {400, 401, 403, 404}
+
+
+def _rejection_message(exc):
+    """What to tell the user when Gemini rejects the request (a 4xx other than 429). Every rejection is logged."""
+    logger.error("Gemini rejected the request; check GEMINI_API_KEY and GEMINI_MODEL: %s", exc)
+    detail = (exc.message or "").lower()
+    if "location is not supported" in detail:
+        return "The AI isn't available in the region this server runs in."
+    # Only what was sent: a limit on the reply's length (max_output_tokens) is a setup mistake, not the user's.
+    if ("input token" in detail or "prompt" in detail) and any(w in detail for w in ("exceed", "too long", "too large")):
+        return "This is too long for the AI to read. Try shortening your debrief or the job description."
+    return "The AI isn't set up correctly on the server. Try again later, or tell whoever runs this app."
+
+logger = logging.getLogger(__name__)
+
+
+def _name(value):
+    """An SDK enum's plain name ("RECITATION"), or the value as it is."""
+    return getattr(value, "value", value)
+
+
+def _out_of_daily_quota(exc):
+    """A 429 for the day's free-tier quota (as opposed to the per-minute one, which a retry can get past)."""
+    return exc.code == 429 and "PerDay" in json.dumps(getattr(exc, "details", None), default=str)
+
+
+def _http_errors(name):
+    """The `name` exception class from httpx and from httpx2: the SDK uses whichever is installed."""
+    import importlib.util
+
+    return tuple(
+        getattr(importlib.import_module(lib), name) for lib in ("httpx", "httpx2") if importlib.util.find_spec(lib)
+    )
+
+
 def get_client():
-    import anthropic
+    from google import genai
+    from google.genai import types
 
-    # No hidden SDK retries: a retry after a (possibly billed) timeout must not look "not charged".
-    return anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=0)
+    # No hidden SDK retries: a retry after a (possibly counted) timeout must not look "not charged".
+    return genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+        http_options=types.HttpOptions(
+            timeout=TIMEOUT_SECONDS * 1000,  # milliseconds
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+    )
 
 
-def call_claude(system, prompt, schema, billing=None):
-    import anthropic
+def call_gemini(system, prompt, schema, billing=None):
+    from google.genai import errors, types
 
     billing = billing or Billing()
     client = get_client()
+    timeouts = _http_errors("TimeoutException")
+    # Network failures other than timeouts (connect, read, protocol errors).
+    connection_errors = _http_errors("TransportError")
     # Unbilled failures are retried after these delays (none without a broker); never after a timeout.
     delays = settings.AI_RETRY_DELAYS
     for attempt in range(len(delays) + 1):
         billing.api_called = True  # from here on, an unexpected failure may have been billed
         try:
-            response = client.beta.messages.create(
-                model=settings.ANTHROPIC_MODEL,
-                max_tokens=16000,
-                system=system,
-                messages=[{"role": "user", "content": prompt}],
-                output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
+            response = client.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    max_output_tokens=16000,
+                    response_mime_type="application/json",
+                    response_json_schema=schema,
+                ),
             )
             break
-        except anthropic.APITimeoutError as exc:
-            # The server may have finished (and billed) after we stopped waiting: don't retry, it counts.
+        except timeouts as exc:
+            # The server may have finished (and counted it) after we stopped waiting: don't retry, it counts.
             raise RuntimeError("The AI took too long to respond. Try again.") from exc
-        except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
-            # Network failure, or the API rejected/failed the request (4xx, 429, 5xx, overloaded): nothing billed.
-            retryable = isinstance(exc, anthropic.APIConnectionError) or exc.status_code == 429 or exc.status_code >= 500
+        except (errors.APIError, *connection_errors) as exc:
+            # Network failure, or the API rejected/failed the request (4xx, 429 quota, 5xx): nothing billed.
+            if isinstance(exc, errors.APIError) and _out_of_daily_quota(exc):
+                raise NotCharged("The AI's free daily limit has been reached. Try again tomorrow.") from exc
+            if isinstance(exc, errors.APIError) and exc.code in SETUP_ERRORS:
+                raise NotCharged(_rejection_message(exc)) from exc
+            retryable = not isinstance(exc, errors.APIError) or exc.code == 429 or exc.code >= 500
             if retryable and attempt < len(delays):
                 time.sleep(delays[attempt])
                 continue
             raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
 
-    if response.stop_reason == "refusal":
+    feedback = response.prompt_feedback
+    if feedback and feedback.block_reason:
+        if _name(feedback.block_reason) in BLOCKED_PROMPT:
+            raise Refused("The AI declined to analyse this content.")
+        raise RuntimeError(f"The AI didn't answer ({_name(feedback.block_reason)}). Try again.")
+    candidate = response.candidates[0] if response.candidates else None
+    finish = _name(candidate.finish_reason) if candidate else None
+    if finish in BLOCKED:
         raise Refused("The AI declined to analyse this content.")
-    if response.stop_reason == "max_tokens":
+    if finish == "MAX_TOKENS":
         raise CutOff("The AI response was too long and got cut off.")
-    text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)
+    if finish != "STOP":
+        # RECITATION, LANGUAGE, OTHER…: what came back is only part of a reply.
+        raise RuntimeError(f"The AI stopped before finishing its reply ({finish or 'no reply'}). Try again.")
+    try:
+        return json.loads(response.text or "")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("The AI's reply couldn't be read. Try again.") from exc
 
 
 def _context_block(context):
@@ -330,7 +406,7 @@ def analyze_round(context, billing=None):
         f"<round>\n{_context_block(context)}\n</round>"
     )
     try:
-        result = call_claude(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA, billing)
+        result = call_gemini(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA, billing)
     except CutOff as exc:
         raise CutOff("The analysis came out too long and got cut off. Try shortening your debrief.") from exc
     result["score"] = max(0, min(100, int(result["score"])))
@@ -346,7 +422,7 @@ def generate_plan(context, billing=None):
         f"<context>\n{_context_block(context)}\n</context>"
     )
     try:
-        result = call_claude(PLAN_SYSTEM, prompt, PLAN_SCHEMA, billing)
+        result = call_gemini(PLAN_SYSTEM, prompt, PLAN_SCHEMA, billing)
     except CutOff as exc:
         # A plan's input is mostly ours (weak spots, round type, up to 14 days), and thinking counts
         # towards max_tokens, so a cut-off isn't the user's doing: a plain failure, refunded within the cap.

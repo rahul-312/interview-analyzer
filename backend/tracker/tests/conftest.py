@@ -10,7 +10,7 @@ from tracker.models import Application
 @pytest.fixture(autouse=True)
 def offline_settings(settings):
     """No real API calls and no broker: rule-based analyzer, tasks run inline."""
-    settings.ANTHROPIC_API_KEY = ""
+    settings.GEMINI_API_KEY = ""
     settings.CELERY_TASK_ALWAYS_EAGER = True
     from config.celery import app
     app.conf.task_always_eager = True

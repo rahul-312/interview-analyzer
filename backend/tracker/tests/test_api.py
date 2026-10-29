@@ -347,7 +347,7 @@ def test_prep_plan_needs_a_date(api, application):
     assert "interview_date" in res.data
 
 
-class _FakeAnthropic(BaseHTTPRequestHandler):
+class _FakeGemini(BaseHTTPRequestHandler):
     requests = []
 
     def do_POST(self):
@@ -362,10 +362,11 @@ class _FakeAnthropic(BaseHTTPRequestHandler):
             "answer_reviews": [],
         }
         payload = json.dumps({
-            "id": "msg_test", "type": "message", "role": "assistant", "model": body["model"],
-            "content": [{"type": "text", "text": json.dumps(result)}],
-            "stop_reason": "end_turn", "stop_sequence": None,
-            "usage": {"input_tokens": 10, "output_tokens": 10},
+            "candidates": [{
+                "content": {"role": "model", "parts": [{"text": json.dumps(result)}]},
+                "finishReason": "STOP",
+            }],
+            "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 10, "totalTokenCount": 20},
         }).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -377,20 +378,22 @@ class _FakeAnthropic(BaseHTTPRequestHandler):
         pass
 
 
-def test_claude_request_shape_against_mock_server(settings, monkeypatch):
-    server = HTTPServer(("127.0.0.1", 0), _FakeAnthropic)
+def test_gemini_request_shape_against_mock_server(settings, monkeypatch):
+    server = HTTPServer(("127.0.0.1", 0), _FakeGemini)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        monkeypatch.setenv("ANTHROPIC_BASE_URL", f"http://127.0.0.1:{server.server_port}")
-        settings.ANTHROPIC_API_KEY = "sk-ant-test"
+        monkeypatch.setenv("GOOGLE_GEMINI_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+        settings.GEMINI_API_KEY = "test-key"
         result, source = ai.analyze_round({"company": "Acme", "debrief": {"questions": []}})
     finally:
         server.shutdown()
 
     assert source == "ai"
     assert result["score"] == 100
-    req = _FakeAnthropic.requests[-1]
-    assert req["body"]["model"] == settings.ANTHROPIC_MODEL
-    assert req["body"]["output_config"]["format"]["type"] == "json_schema"
-    assert req["body"]["fallbacks"] == "default"
-    assert "server-side-fallback-2026-07-01" in req["headers"].get("anthropic-beta", "")
+    req = _FakeGemini.requests[-1]
+    assert req["path"].endswith(f"/models/{settings.GEMINI_MODEL}:generateContent")
+    assert req["headers"].get("x-goog-api-key") == "test-key"
+    config = req["body"]["generationConfig"]
+    assert config["responseMimeType"] == "application/json"
+    assert config["responseJsonSchema"] == ai.ANALYSIS_SCHEMA
+    assert "interview coach" in req["body"]["systemInstruction"]["parts"][0]["text"]
