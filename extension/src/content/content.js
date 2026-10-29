@@ -102,26 +102,50 @@
         }, { rootMargin: '100px' })
       : null;
 
-  /** Whether the card is what's on top at this point of the screen (not covered by a header or pop-up). */
-  // Whether a button can show at a point: "yes", "no" (the card isn't what's on top there), or
-  // "covered" (the button is already drawn there but under the card, whose list sits above the layer).
-  function onTop(card, host, x, y) {
+  let raised = false; // whether the layer had to go above the page (see below)
+
+  /**
+   * Whether something in the card at the button's spot is its own pop-up (a "⋯" menu, tooltip or
+   * badge): narrower than the card and positioned on its own. The card's background and wrappers, a
+   * link covering the whole card, and its plain text and logos aren't.
+   */
+  function popUpInCard(el, card, cardWidth) {
+    if (el === card || el.getBoundingClientRect().width >= cardWidth * 0.8) return false;
+    for (let node = el; node && node !== card; node = node.parentElement) {
+      if (getComputedStyle(node).position !== 'static') return true;
+    }
+    return false;
+  }
+
+  // Whether a button can show at a point: "yes", "no" (something other than the card is on top there),
+  // or "covered" (the button is already drawn there but under the card, whose list sits above the layer).
+  function onTop(card, host, x, y, cardWidth) {
     if (typeof document.elementsFromPoint !== 'function') return 'yes';
     const hits = document.elementsFromPoint(x, y);
     const site = hits.find((el) => !layer.contains(el));
     if (!site || !card.contains(site)) return 'no';
+    // Once the layer is above the page, the card's own pop-ups no longer cover the button by being drawn
+    // over it, so the button keeps off them instead.
+    if (raised && popUpInCard(site, card, cardWidth)) return 'no';
     const button = hits.indexOf(host);
     return button === -1 || button < hits.indexOf(site) ? 'yes' : 'covered';
   }
 
   /** The same, under the whole button (its two ends and its middle), not just part of it. */
-  function onTopUnder(card, host, x, y) {
-    const results = [x + 2, x + BUTTON.width / 2, x + BUTTON.width - 2].map((px) => onTop(card, host, px, y));
+  function onTopUnder(card, host, x, y, cardWidth) {
+    const results = [x + 2, x + BUTTON.width / 2, x + BUTTON.width - 2].map((px) => onTop(card, host, px, y, cardWidth));
     return results.includes('no') ? 'no' : results.includes('covered') ? 'covered' : 'yes';
   }
 
+  /** Back to the low layer, for a new page of a site that changes page without reloading. */
+  function lowerLayer() {
+    if (!raised) return;
+    raised = false;
+    layer.style.zIndex = '5';
+    placed.forEach((p) => (p.covered = null));
+  }
+
   let positioning = false;
-  let raised = false; // whether the layer had to go above the page (see below)
   function reposition() {
     if (positioning || !placed.size) return;
     positioning = true;
@@ -130,7 +154,8 @@
       // Measure every card first, then move every button: measuring after moving one would make the
       // browser lay the page out again for each button.
       const moves = [];
-      let coveredSeen = false;
+      let checked = 0;
+      let covered = 0;
       placed.forEach((p, card) => {
         if (!card.isConnected) {
           moves.push({ p, card, gone: true });
@@ -152,18 +177,21 @@
           moves.push({ p, at: null });
           return;
         }
-        const result = onTopUnder(card, p.host, x, middle);
+        const result = onTopUnder(card, p.host, x, middle, box.width);
+        checked += 1;
         if (result === 'covered') {
-          coveredSeen = true;
+          covered += 1;
           p.covered = spot; // drawn under its card: hidden there until the card moves or the page changes
         }
         moves.push({ p, at: result === 'yes' ? { x, y, spot } : null });
       });
 
-      // The site's list is drawn above the low layer, so every button would be hidden under it: raise the
-      // layer above the page instead, once. Menus and pop-ups still hide the buttons, by the on-top check
-      // (re-run when they open), though no longer by being drawn over them.
-      if (coveredSeen && !raised) {
+      // Most buttons drawn under their cards means the site's whole list sits above the low layer, so
+      // every button would stay hidden: raise the layer above the page instead (until the next page).
+      // One card's tooltip or badge covering its button isn't that, and doesn't raise it. After the
+      // raise, menus and pop-ups hide the buttons by the on-top check (re-run when they open) rather
+      // than by being drawn over them, so a menu opened by CSS :hover alone could have one drawn over it.
+      if (!raised && covered >= 2 && covered >= checked / 2) {
         raised = true;
         layer.style.zIndex = '2147483645';
         placed.forEach((q) => (q.covered = null));
@@ -250,6 +278,7 @@
   let later = null;
 
   function scan() {
+    if (scanned.url !== null && scanned.url !== location.href) lowerLayer(); // a new page: its list may not need it
     scanned = { url: location.href, at: performance.now() };
     decorateCards();
     syncFloatingButton();

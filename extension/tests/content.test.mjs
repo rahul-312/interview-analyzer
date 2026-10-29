@@ -147,61 +147,103 @@ test("other sites' jobs get card buttons but are never looked up", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// What's on top of a card. jsdom has no layout, so cards get a size and elementsFromPoint answers
-// with a set stack of elements (topmost first), the way a browser hit test would.
+// What's on top of a card. jsdom has no layout, so each card gets a box of its own (stacked down the
+// page) and elementsFromPoint answers with a stack of elements (topmost first) chosen by the test for
+// the card at that point, the way a browser hit test would.
 
-function stackedPage(stack) {
+const CARD_HEIGHT = 150;
+
+/** stackFor(w, { index, card, host, raised }) returns the elements at a point over card number index. */
+function stackedPage(stackFor) {
   return page(async () => ({ ok: false }), {
     setup: (w) => {
-      w.HTMLElement.prototype.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 0, right: 800, width: 800, height: 100 });
-      w.document.elementsFromPoint = () => stack(w);
+      w.HTMLElement.prototype.getBoundingClientRect = function () {
+        const cards = [...w.document.querySelectorAll('.srp-jobtuple-wrapper')];
+        const index = cards.indexOf(this);
+        const width = Number(this.dataset.width ?? 800);
+        const top = index === -1 ? 100 : 100 + index * CARD_HEIGHT;
+        return { top, bottom: top + 100, left: 0, right: width, width, height: 100 };
+      };
+      w.document.elementsFromPoint = (x, y) => {
+        const cards = [...w.document.querySelectorAll('.srp-jobtuple-wrapper')];
+        const index = Math.floor((y - 100) / CARD_HEIGHT);
+        const hosts = [...w.document.querySelectorAll('[data-interview-analyzer-layer] [data-interview-analyzer]')];
+        const layer = w.document.querySelector('[data-interview-analyzer-layer]');
+        return stackFor(w, { index, card: cards[index], host: hosts[index], raised: layer?.style.zIndex !== '5' });
+      };
     },
   });
 }
-const firstCard = (w) => w.document.querySelector('.srp-jobtuple-wrapper .row1');
-const firstHost = (w) => w.document.querySelector('[data-interview-analyzer-layer] [data-interview-analyzer]');
+const hostAt = (w, i) => w.document.querySelectorAll('[data-interview-analyzer-layer] [data-interview-analyzer]')[i];
 const layerOf = (w) => w.document.querySelector('[data-interview-analyzer-layer]');
+const inner = (card) => card.querySelector('.row1');
 
 test('a card button shows when its card is on top, and hides under something else', async () => {
   let covering = null;
-  const { w } = stackedPage((w) => [firstHost(w), covering ?? firstCard(w)].filter(Boolean));
+  const { w } = stackedPage((w, { card, host }) => [host, covering ?? inner(card)]);
   await tick(100);
-  assert.equal(firstHost(w).style.display, '');
-  assert.match(firstHost(w).style.transform, /^translate\(\d+px, \d+px\)$/);
+  assert.equal(hostAt(w, 0).style.display, '');
+  assert.match(hostAt(w, 0).style.transform, /^translate\(\d+px, \d+px\)$/);
 
-  covering = w.document.createElement('div'); // a menu opened over the card
+  covering = w.document.createElement('div'); // a site pop-up, outside the cards
   w.document.body.append(covering);
   await tick(100);
-  assert.equal(firstHost(w).style.display, 'none');
+  assert.equal(hostAt(w, 0).style.display, 'none');
 });
 
-test('buttons drawn under their list raise the layer above the page, once', async () => {
-  // At first the list is drawn over the layer (the button comes after the card in the stack).
-  const { w } = stackedPage((w) => (layerOf(w).style.zIndex === '5' ? [firstCard(w), firstHost(w)] : [firstHost(w), firstCard(w)]));
+test('a list drawn over the layer raises it above the page; one covered card does not', async () => {
+  // Only the first card has something over its button (a tooltip): no raise.
+  let wholeList = false;
+  const { w } = stackedPage((w, { index, card, host, raised }) =>
+    !raised && (wholeList || index === 0) ? [inner(card), host] : [host, inner(card)],
+  );
+  await tick(150);
+  assert.equal(layerOf(w).style.zIndex, '5');
+  assert.equal(hostAt(w, 1).style.display, '');
+
+  // The whole list is drawn over the layer: raised, and the buttons show.
+  wholeList = true;
+  w.document.body.setAttribute('class', 'x'); // the next check
+  await tick(400);
+  assert.equal(layerOf(w).style.zIndex, '2147483645');
+  assert.equal(hostAt(w, 0).style.display, '');
+  assert.equal(hostAt(w, 1).style.display, '');
+});
+
+test("after a raise, a button keeps off its card's own menu, and comes back when it closes", async () => {
+  let menu = null;
+  const { w } = stackedPage((w, { index, card, host, raised }) => {
+    if (!raised) return [inner(card), host]; // the list is above the layer: raise first
+    // Raised, the button is drawn over everything, including the card's open "⋯" menu.
+    return index === 0 && menu ? [host, menu] : [host, inner(card)];
+  });
   await tick(150);
   assert.equal(layerOf(w).style.zIndex, '2147483645');
-  assert.equal(firstHost(w).style.display, '');
+  assert.equal(hostAt(w, 0).style.display, '');
+
+  menu = w.document.createElement('ul'); // narrow, and positioned on its own
+  menu.dataset.width = '160';
+  menu.style.position = 'absolute';
+  w.document.querySelector('.srp-jobtuple-wrapper').append(menu);
+  await tick(300);
+  assert.equal(hostAt(w, 0).style.display, 'none');
+
+  menu.remove();
+  menu = null;
+  w.document.body.setAttribute('class', 'closed');
+  await tick(300);
+  assert.equal(hostAt(w, 0).style.display, '');
 });
 
-test("a button covered by its card's own menu shows again once the page changes", async () => {
-  let menuOpen = false;
-  const { w } = stackedPage((w) => {
-    if (!menuOpen) return [firstHost(w), firstCard(w)];
-    // The card's "⋯" menu, part of the card, drawn over the button.
-    return [firstCard(w).querySelector('a') ?? firstCard(w), firstHost(w)];
-  });
-  await tick(100);
-  assert.equal(firstHost(w).style.display, '');
-  // Raise first, so "covered" here means the card's own content and not the whole list.
-  w.document.querySelector('[data-interview-analyzer-layer]').style.zIndex = '2147483645';
+test('the raise is undone on a new page of a site that changes page without reloading', async () => {
+  let newPage = false;
+  const { w } = stackedPage((w, { card, host, raised }) => (!raised && !newPage ? [inner(card), host] : [host, inner(card)]));
+  await tick(150);
+  assert.equal(layerOf(w).style.zIndex, '2147483645');
 
-  menuOpen = true;
-  w.document.body.setAttribute('class', 'menu-open');
-  await tick(300);
-  assert.equal(firstHost(w).style.display, 'none');
-
-  menuOpen = false;
-  w.document.body.setAttribute('class', '');
-  await tick(300);
-  assert.equal(firstHost(w).style.display, '');
+  newPage = true;
+  w.history.pushState({}, '', '/other-jobs');
+  w.document.body.append(w.document.createElement('div')); // the new page's content
+  await tick(200);
+  assert.equal(layerOf(w).style.zIndex, '5');
 });
