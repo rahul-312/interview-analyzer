@@ -39,7 +39,7 @@ const Modal: React.FC<ModalProps> = ({ title, onClose, children, wide = false })
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-light-gray px-6xl py-4xl">
-          <h2 className="text-lg font-semibold">{title}</h2>
+          <h2 className="font-serif text-xl font-medium">{title}</h2>
           <Button
             onClick={onClose}
             aria-label="Close"

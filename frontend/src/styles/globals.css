@@ -1,39 +1,45 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   /* Colour */
-  --color-primary: #4F46E5;
-  --color-primary-dark: #4338CA;
-  --color-primary-light: #EEF2FF;
-  --color-primary-border: #C7D2FE;
-  --color-ink: #0F172A;
-  --color-charcoal-gray: #334155;
-  --color-dark-gray: #475569;
-  --color-medium-gray: #64748B;
-  --color-light-silver: #94A3B8;
-  --color-light-gray: #E2E8F0;
-  --color-input-border: #CBD5E1;
-  --color-smoke-white: #F1F5F9;
-  --color-page-bg: #F8FAFC;
+  --color-primary: #24412F;
+  --color-primary-dark: #18301F;
+  --color-primary-light: #E5EDE6;
+  --color-primary-border: #BFD2C3;
+  --color-ink: #1C201D;
+  --color-charcoal-gray: #363C37;
+  --color-dark-gray: #4B524C;
+  --color-medium-gray: #6B716B;
+  --color-light-silver: #A2A69E;
+  --color-light-gray: #E8E3D9;
+  --color-input-border: #D8D2C5;
+  --color-smoke-white: #F1EDE5;
+  --color-page-bg: #F6F3ED;
+  --color-sidebar: #EFEBE3;
   --color-emerald-green: #059669;
   --color-mint-cream: #D1FAE5;
   --color-pale-mint: #ECFDF5;
   --color-deep-green: #065F46;
   --color-amber: #D97706;
-  --color-amber-light: #FEF3C7;
+  --color-amber-light: #FEF0D9;
   --color-amber-dark: #92400E;
   --color-orange-light: #FFEDD5;
   --color-orange-dark: #9A3412;
   --color-crimson-red: #DC2626;
-  --color-rose-light: #FEE2E2;
+  --color-rose-light: #FDE4E4;
   --color-rose-pale: #FEF2F2;
   --color-rose-dark: #B91C1C;
-  --color-sky-light: #E0F2FE;
-  --color-sky-dark: #075985;
-  --color-overlay: rgba(15, 23, 42, 0.4);
+  --color-sky: #2563EB;
+  --color-sky-light: #E3ECFD;
+  --color-sky-dark: #1E40AF;
+  --color-violet-light: #EDE9FE;
+  --color-violet-dark: #5B21B6;
+  --color-overlay: rgba(28, 32, 29, 0.4);
 
-  --font-sans: 'Outfit', sans-serif;
+  --shadow-card: 0 1px 2px rgb(40 34 20 / 0.04), 0 6px 20px rgb(40 34 20 / 0.05);
+
+  --font-sans: 'Inter', sans-serif;
+  --font-serif: 'Fraunces', Georgia, serif;
 
   /* spacing */
   --spacing-xs: 0.125rem;   /* (2px) */
@@ -53,14 +59,18 @@
   --spacing-20xl: 3rem;     /* (48px) */
   --spacing-fab: 3.5rem;            /* (56px) */
   --spacing-score-ring: 6rem;       /* (96px) */
-  --spacing-search: 20rem;          /* (320px) */
+  --spacing-search: 36rem;          /* (576px) */
   --spacing-modal: 32rem;           /* (512px) */
   --spacing-modal-wide: 42rem;      /* (672px) */
   --spacing-auth-card: 24rem;       /* (384px) */
   --spacing-content: 64rem;         /* (1024px) */
+  --spacing-page: 76rem;            /* (1216px) */
+  --spacing-sidebar: 16rem;         /* (256px) */
 
   /* Font Sizes and Line Heights */
   --text-xxs: 0.625rem;           /* (10px) */
+  --text-title: 2.75rem;          /* (44px) */
+  --text-title--line-height: 1.1;
   --text-heading: 1.75rem;        /* (28px) */
   --text-heading--line-height: 1.286;
   --text-stat: 2rem;              /* (32px) */
@@ -69,4 +79,24 @@
 
 body {
   @apply bg-page-bg text-ink antialiased;
+  /* Soft colour behind the frosted panels */
+  background-image:
+    radial-gradient(55rem 38rem at 92% -8%, rgb(196 214 200 / 0.75), transparent 62%),
+    radial-gradient(45rem 40rem at -8% 105%, rgb(205 220 203 / 0.8), transparent 60%),
+    radial-gradient(40rem 30rem at 55% 55%, rgb(242 228 206 / 0.55), transparent 65%);
+  background-attachment: fixed;
+}
+
+/* Serif digits line up instead of dipping like old-style figures */
+.font-serif {
+  font-variant-numeric: lining-nums;
+}
+
+/* Frosted glass panel */
+@utility glass {
+  background-color: rgb(255 255 255 / 0.55);
+  border: 1px solid rgb(255 255 255 / 0.8);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 8px 30px rgb(40 34 20 / 0.06);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
 }

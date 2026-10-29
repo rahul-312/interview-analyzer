@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ChevronDown, LogOut } from "lucide-react";
 import Button from "../ui/Button";
 import { useAuth } from "@/context/AuthContext";
+import { useDismiss } from "@/hooks/useDismiss";
 
 /** "Rahul Siddappa" -> "RS", "rahul" -> "R". */
 const initialsOf = (name: string) =>
@@ -16,7 +17,7 @@ const initialsOf = (name: string) =>
 
 function Avatar({ initials }: { initials: string }) {
   return (
-    <span className="flex size-12xl shrink-0 items-center justify-center rounded-full bg-primary-light text-sm font-semibold text-primary-dark">
+    <span className="flex size-16xl shrink-0 items-center justify-center glass rounded-full font-serif text-base font-medium text-ink">
       {initials}
     </span>
   );
@@ -28,19 +29,8 @@ export default function UserMenu({ inline = false }: { inline?: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(ref, open, close);
 
   const name = user?.first_name || user?.username || "";
   const initials = initialsOf(name);
@@ -89,7 +79,7 @@ export default function UserMenu({ inline = false }: { inline?: boolean }) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-lg w-64 rounded-xl border border-light-gray bg-white p-lg shadow-lg"
+          className="absolute right-0 top-full z-50 mt-lg w-64 rounded-2xl border border-light-gray bg-white p-lg shadow-lg"
         >
           <div className="px-xl py-lg">{profile}</div>
           <div className="my-sm border-t border-light-gray" />

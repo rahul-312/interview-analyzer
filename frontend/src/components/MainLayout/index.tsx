@@ -4,6 +4,7 @@ import { useEffect, useState, ReactNode } from 'react';
 import { useRouter } from 'next/router';
 import { Plus } from 'lucide-react';
 import Navbar from '../Navbar';
+import Sidebar from '../Navbar/Sidebar';
 import Button from '../ui/Button';
 import { publicRoutes } from '@/config/navItems';
 import { useAuth } from '@/context/AuthContext';
@@ -21,7 +22,7 @@ const AddApplicationFab = () => {
     <Button
       onClick={addApplication}
       aria-label="Add application"
-      className="fixed right-6xl bottom-6xl z-40 flex h-fab w-fab items-center justify-center rounded-full bg-primary text-white shadow-lg hover:bg-primary-dark md:hidden"
+      className="fixed right-6xl bottom-6xl z-40 flex h-fab w-fab items-center justify-center rounded-2xl bg-primary text-white shadow-lg hover:bg-primary-dark md:hidden"
     >
       <Plus size={28} />
     </Button>
@@ -57,18 +58,20 @@ const MainLayout = ({ children }: LayoutProps) => {
 
   return (
     <DialogsProvider>
-      <div className="min-h-screen pb-20xl">
-        {/* Navbar */}
+      <div className="min-h-screen pb-20xl md:pl-sidebar">
+        <Sidebar />
+
+        {/* Top bar */}
         <div
-          className={`sticky top-0 z-40 border-b border-light-gray bg-white transition-shadow ${
-            isScrolled ? 'shadow-md' : ''
+          className={`sticky top-0 z-30 rounded-b-3xl transition-[background-color,box-shadow] before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:backdrop-blur-xl ${
+            isScrolled ? 'bg-white/40 shadow-card' : ''
           }`}
         >
           <Navbar />
         </div>
 
         {/* Page content */}
-        <main className="mx-auto max-w-content px-4xl py-8xl">{children}</main>
+        <main className="mx-auto max-w-page px-4xl pt-lg pb-8xl md:px-12xl">{children}</main>
 
         <AddApplicationFab />
       </div>
