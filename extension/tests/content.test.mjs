@@ -164,12 +164,32 @@ const CARD_HEIGHT = 150;
 
 /**
  * stackFor(w, { index, card, host, raised }) returns the elements at a point over card number index.
- * Styles read as a browser gives them: "static" unless an element sets its own position.
+ * Styles read as a browser gives them: "static" unless an element sets its own position. Cards are
+ * reported on screen by an IntersectionObserver a moment after they're watched, as in Chrome, where
+ * each button starts hidden until then (reportNear: false never reports them).
  */
-function stackedPage(stackFor, { cardHeight = CARD_HEIGHT } = {}) {
+function stackedPage(stackFor, { cardHeight = CARD_HEIGHT, reportNear = true } = {}) {
   return page(async () => ({ ok: false }), {
     setup: (w) => {
       w.getComputedStyle = (el) => ({ position: el.style.position || 'static' });
+      // Like Chrome, cards watched in the same task are reported together, in one callback.
+      w.IntersectionObserver = class {
+        constructor(callback) {
+          this.callback = callback;
+          this.queued = [];
+        }
+        observe(target) {
+          if (!reportNear) return;
+          this.queued.push(target);
+          if (this.queued.length > 1) return;
+          setTimeout(() => {
+            const entries = this.queued.map((t) => ({ target: t, isIntersecting: true }));
+            this.queued = [];
+            this.callback(entries);
+          }, 20);
+        }
+        unobserve() {}
+      };
       w.HTMLElement.prototype.getBoundingClientRect = function () {
         const cards = [...w.document.querySelectorAll('.srp-jobtuple-wrapper')];
         const index = cards.indexOf(this);
@@ -354,4 +374,14 @@ test("one card's own floating badge doesn't raise the layer, even with that card
   await eventually(() => assert.equal(hostAt(w, 0)?.style.display, 'none'));
   await tick(300);
   assert.equal(layerOf(w).style.zIndex, '5');
+});
+
+test('nothing is raised, and no button shows, before any card has been reported on screen', async () => {
+  // Every list is "above the layer" here, but no card has been checked yet: no evidence, no raise.
+  const { w } = stackedPage((w, { card, host }) => [inner(card), host], { reportNear: false });
+  await eventually(() => assert.ok(hostAt(w, 1)));
+  await tick(300);
+  assert.equal(layerOf(w).style.zIndex, '5');
+  assert.equal(hostAt(w, 0).style.display, 'none');
+  assert.equal(hostAt(w, 1).style.display, 'none');
 });
