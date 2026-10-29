@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import AiDataNotice from '../ui/AiDataNotice';
 import Button from '../ui/Button';
 import { Field, Label, TextArea } from '../ui/FormControls';
 import QuestionCard from './QuestionCard';
@@ -75,6 +76,8 @@ const DebriefSection: React.FC<DebriefSectionProps> = ({ debrief, onChange }) =>
         <Label>Overall feeling</Label>
         <Rating label="Overall feeling" value={debrief.overall_feeling} onChange={(n) => set('overall_feeling', n)} />
       </div>
+
+      <AiDataNotice what="your debrief, with the job's description" />
     </div>
   );
 };

@@ -158,9 +158,19 @@ def _reply(finish_reason="STOP", text=None, block_reason=None):
     )
 
 
-def _api_error(code, status):
+def _api_error(code, status, details=None):
     cls = errors.ClientError if code < 500 else errors.ServerError
-    return cls(code, {"error": {"code": code, "message": status.lower(), "status": status}})
+    error = {"code": code, "message": status.lower(), "status": status}
+    if details:
+        error["details"] = details
+    return cls(code, {"error": error})
+
+
+def _out_of_daily_quota():
+    return _api_error(429, "RESOURCE_EXHAUSTED", [{
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}],
+    }])
 
 
 def _fake_client(outcome):
@@ -474,7 +484,10 @@ def test_timeout_is_not_retried_and_is_a_billed_refund(api, application, run_job
 
 
 def test_client_has_sdk_retries_disabled(with_ai):
-    assert _real_get_client()._api_client._http_options.retry_options.attempts == 1
+    # Checked on what's passed to the SDK, not on its private attributes.
+    with mock.patch("google.genai.Client") as client:
+        _real_get_client()
+    assert client.call_args.kwargs["http_options"].retry_options.attempts == 1
 
 
 def test_job_queued_by_older_deploy_still_runs(api, application):
@@ -665,3 +678,53 @@ def test_migration_marks_older_rule_based_runs_free(api, application, run_jobs, 
     migration = importlib.import_module("tracker.migrations.0008_mark_rule_based_runs_free")
     migration.mark_rule_based_runs_free(apps, None)
     assert AnalysisRun.objects.filter(free=False).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Gemini replies and errors that need their own handling
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("finish_reason", ["RECITATION", "LANGUAGE", "OTHER"])
+def test_unfinished_reply_is_a_plain_failure_with_a_clear_message(api, application, run_jobs, with_ai, finish_reason):
+    # Partial text like '{"a"' must not reach json.loads, and isn't the user's doing.
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_reply(finish_reason=finish_reason, text='{"a"'))):
+        res = log_round(api, application, run_jobs)
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert analysis.status == JobStatus.FAILED and analysis.refunded is True
+    assert f"stopped before finishing its reply ({finish_reason})" in analysis.error
+
+
+def test_prompt_blocked_for_no_content_reason_is_not_counted(api, application, run_jobs, with_ai):
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_reply(block_reason="OTHER"))):
+        res = log_round(api, application, run_jobs)
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert analysis.status == JobStatus.FAILED and analysis.refunded is True
+    assert counted_runs() == 0
+
+
+def test_unreadable_json_gets_a_readable_message(api, application, run_jobs, with_ai):
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_reply(text='{"summary": '))):
+        res = log_round(api, application, run_jobs)
+    assert RoundAnalysis.objects.get(round_id=res.data["id"]).error == "The AI's reply couldn't be read. Try again."
+
+
+def test_daily_quota_is_not_retried_and_says_so(api, application, run_jobs, with_ai, settings):
+    settings.AI_RETRY_DELAYS = (1, 3)
+    client, calls = _sequence_client(_out_of_daily_quota(), _reply())
+    with mock.patch.object(ai, "get_client", return_value=client):
+        res = log_round(api, application, run_jobs)
+    assert len(calls) == 1
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert "daily limit" in analysis.error and analysis.refunded is True
+
+
+@pytest.mark.parametrize("code,status", [(404, "NOT_FOUND"), (400, "INVALID_ARGUMENT"), (403, "PERMISSION_DENIED")])
+def test_setup_mistakes_say_so_instead_of_looking_like_an_outage(api, application, run_jobs, with_ai, settings, code, status):
+    settings.AI_RETRY_DELAYS = (1, 3)
+    client, calls = _sequence_client(_api_error(code, status))
+    with mock.patch.object(ai, "get_client", return_value=client):
+        res = log_round(api, application, run_jobs)
+    assert len(calls) == 1
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert "isn't set up correctly" in analysis.error and "GEMINI_MODEL" in analysis.error
+    assert analysis.refunded is True

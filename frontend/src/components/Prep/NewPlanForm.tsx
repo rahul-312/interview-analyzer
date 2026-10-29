@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import AiDataNotice from '../ui/AiDataNotice';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
 import { ErrorMessage } from '../ui/Feedback';
@@ -104,6 +105,7 @@ const NewPlanForm: React.FC<NewPlanFormProps> = ({ initialApplication, initialRo
           The plan puts your recurring weak spots first, then the basics for the round type. Up to 14 days.
           {quota?.remaining != null && ` You have ${quota.remaining} of ${quota.limit} prep plans left.`}
         </p>
+        <AiDataNotice what="the job's description, with your weak spots" />
         {outOfPlans && (
           <p className="rounded-lg bg-amber-light px-2xl py-lg text-sm text-amber-dark">
             You&apos;ve used all {quota?.limit} prep plans allowed in 24 hours on the {planLabel(usage?.plan)} plan.

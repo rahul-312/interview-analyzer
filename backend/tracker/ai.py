@@ -7,6 +7,7 @@ Two layers:
    JSON matching the schema.
 """
 import json
+import logging
 import time
 
 from django.conf import settings
@@ -275,8 +276,26 @@ class Billing:
 # used up a request from the daily quota.
 TIMEOUT_SECONDS = 300
 
-# Finish reasons that mean Gemini blocked the content (the reply, or the prompt itself).
+# Why Gemini blocked content: the reply (finish reasons) or the prompt itself (block reasons). Only
+# these count against the user; anything else that stops a reply is our side's or Gemini's problem.
 BLOCKED = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}
+BLOCKED_PROMPT = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "JAILBREAK"}
+
+# Rejections that mean the server is set up wrong (bad key, unknown model, a schema Gemini won't
+# take), not that Gemini is down, so they say so instead of "try again".
+SETUP_ERRORS = {400, 401, 403, 404}
+
+logger = logging.getLogger(__name__)
+
+
+def _name(value):
+    """An SDK enum's plain name ("RECITATION"), or the value as it is."""
+    return getattr(value, "value", value)
+
+
+def _out_of_daily_quota(exc):
+    """A 429 for the day's free-tier quota (as opposed to the per-minute one, which a retry can get past)."""
+    return exc.code == 429 and "PerDay" in json.dumps(getattr(exc, "details", None), default=str)
 
 
 def _http_errors(name):
@@ -331,6 +350,14 @@ def call_gemini(system, prompt, schema, billing=None):
             raise RuntimeError("The AI took too long to respond. Try again.") from exc
         except (errors.APIError, *connection_errors) as exc:
             # Network failure, or the API rejected/failed the request (4xx, 429 quota, 5xx): nothing billed.
+            if isinstance(exc, errors.APIError) and _out_of_daily_quota(exc):
+                raise NotCharged("The AI's free daily limit has been reached. Try again tomorrow.") from exc
+            if isinstance(exc, errors.APIError) and exc.code in SETUP_ERRORS:
+                logger.error("Gemini rejected the request (check GEMINI_API_KEY and GEMINI_MODEL): %s", exc)
+                raise NotCharged(
+                    f"The AI isn't set up correctly on the server (Gemini said: {exc.code} {exc.status}). "
+                    "Check GEMINI_API_KEY and GEMINI_MODEL."
+                ) from exc
             retryable = not isinstance(exc, errors.APIError) or exc.code == 429 or exc.code >= 500
             if retryable and attempt < len(delays):
                 time.sleep(delays[attempt])
@@ -338,13 +365,23 @@ def call_gemini(system, prompt, schema, billing=None):
             raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
 
     feedback = response.prompt_feedback
+    if feedback and feedback.block_reason:
+        if _name(feedback.block_reason) in BLOCKED_PROMPT:
+            raise Refused("The AI declined to analyse this content.")
+        raise RuntimeError(f"The AI didn't answer ({_name(feedback.block_reason)}). Try again.")
     candidate = response.candidates[0] if response.candidates else None
-    finish = candidate.finish_reason if candidate else None
-    if (feedback and feedback.block_reason) or finish in BLOCKED:
+    finish = _name(candidate.finish_reason) if candidate else None
+    if finish in BLOCKED:
         raise Refused("The AI declined to analyse this content.")
     if finish == "MAX_TOKENS":
         raise CutOff("The AI response was too long and got cut off.")
-    return json.loads(response.text or "")
+    if finish != "STOP":
+        # RECITATION, LANGUAGE, OTHER…: what came back is only part of a reply.
+        raise RuntimeError(f"The AI stopped before finishing its reply ({finish or 'no reply'}). Try again.")
+    try:
+        return json.loads(response.text or "")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("The AI's reply couldn't be read. Try again.") from exc
 
 
 def _context_block(context):

@@ -3,10 +3,11 @@
 // injected into other pages when the toolbar button is clicked; it only sets itself up once.
 
 (() => {
-  if (globalThis.IAContent) return;
+  // Only ordinary web pages: https XML and SVG documents have no body to watch or put buttons on.
+  if (globalThis.IAContent || !document.body) return;
   globalThis.IAContent = true;
 
-  const { findCards, placeButton, fromCard, fromPage, isJobPage } = globalThis.IASites;
+  const { findCards, fromCard, fromPage, isJobPage } = globalThis.IASites;
   const { openSaveDialog, trackButton, ask } = globalThis.IAUi;
 
   // "✓ Saved" marks come from the app: the job links on screen are checked against it in batches, and
@@ -38,9 +39,18 @@
     refreshButtons();
   }
 
+  // At most this many different jobs are looked up from one page, so no page can make the browser
+  // flood the server (jobs past it can still be saved; they just don't show "✓ Saved").
+  const MAX_LOOKUPS = 500;
+  const asked = new Set();
+
   const queueLookup = (urls) => {
-    urls.forEach((url) => url && pending.add(url));
-    lookupTimer ??= setTimeout(lookUp, 400);
+    urls.forEach((url) => {
+      if (!url || (!asked.has(url) && asked.size >= MAX_LOOKUPS)) return;
+      asked.add(url);
+      pending.add(url);
+    });
+    if (pending.size) lookupTimer ??= setTimeout(lookUp, 400);
   };
 
   const register = (jobUrl, { host, setSaved }) => {
@@ -70,17 +80,66 @@
     if (message?.type === 'signed-in') recheckAll();
   });
 
-  const MARK = 'data-ia-tracked';
+  // "+ Track" buttons sit in a layer of their own over the page, each one over the right edge of its
+  // card, and are never put inside the site's lists: the site's own code (React and the like) manages
+  // those, and an element it didn't create can break the layout or the list's next re-render.
+  // The layer sits low (z-index 5), so the site's sticky headers and pop-ups still cover the buttons.
+  let layer = null;
+  const placed = new Map(); // card -> { host, shown }
+  const visibility =
+    typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver((entries) => {
+          // Cards scrolled out of a list's own scroll area count as hidden too, not just off screen.
+          entries.forEach((e) => {
+            const p = placed.get(e.target);
+            if (p) p.shown = e.intersectionRatio >= 0.5;
+          });
+          reposition();
+        }, { threshold: [0, 0.5, 1] })
+      : null;
 
-  /** "+ Track" on each job card, once: a card found again, or inside or around one, is skipped. */
+  let positioning = false;
+  function reposition() {
+    if (positioning || !placed.size) return;
+    positioning = true;
+    requestAnimationFrame(() => {
+      positioning = false;
+      placed.forEach((p, card) => {
+        if (!card.isConnected) {
+          p.host.remove();
+          visibility?.unobserve(card);
+          placed.delete(card);
+          return;
+        }
+        p.host.style.display = p.shown ? '' : 'none';
+        if (!p.shown) return;
+        const box = card.getBoundingClientRect();
+        // Vertically centred on the card's right edge, clear of corner icons (dismiss, save, logo).
+        p.host.style.transform = `translate(${Math.round(box.right - 96 - 12)}px, ${Math.round(box.top + box.height / 2 - 14)}px)`;
+      });
+    });
+  }
+  addEventListener('scroll', reposition, { capture: true, passive: true }); // any scroll area, not just the page
+  addEventListener('resize', reposition, { passive: true });
+
+  /** "+ Track" for each job card, once. */
   function decorateCards() {
     findCards().forEach((card) => {
-      if (card.hasAttribute(MARK) || card.closest(`[${MARK}]`) || card.querySelector(`[${MARK}]`)) return;
-      card.setAttribute(MARK, '');
+      if (placed.has(card)) return;
+      if (!layer) {
+        layer = document.createElement('div');
+        layer.setAttribute('data-interview-analyzer-layer', '');
+        layer.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 5; overflow: hidden;';
+        document.documentElement.append(layer);
+      }
       const button = trackButton({ onClick: () => open(fromCard(card)) });
-      placeButton(card, button.host);
+      button.host.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: auto;';
+      layer.append(button.host);
+      placed.set(card, { host: button.host, shown: !visibility });
+      visibility?.observe(card);
       register(fromCard(card).jobUrl, button);
     });
+    reposition();
   }
 
   let floating = null; // { host, url }
@@ -128,6 +187,10 @@
         }, wait);
     });
   }
-  new MutationObserver(update).observe(document.body, { childList: true, subtree: true });
+  // Card buttons follow their cards when the page's layout changes without scrolling.
+  new MutationObserver(() => {
+    update();
+    reposition();
+  }).observe(document.body ?? document.documentElement, { childList: true, subtree: true });
   update();
 })();

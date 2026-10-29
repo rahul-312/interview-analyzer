@@ -112,15 +112,24 @@ test('any site: a job page gets the floating "Save" button, other pages get none
   const description = `<div class="job-description"><h2>Responsibilities</h2><p>${'Build and run our services. '.repeat(20)}</p></div>`;
   const job = page(async () => ({ ok: false }), {
     url: 'https://careers.example.com/jobs/42',
-    body: `<main><h1>Platform Engineer</h1>${description}</main>`,
+    body: `<main><h1>Platform Engineer</h1>${description}<a href="/apply">Apply now</a></main>`,
   });
   await tick(50);
   assert.equal(job.button()?.textContent, '+ Save to Interview Analyzer');
 
   const other = page(async () => ({ ok: false }), {
     url: 'https://news.example.com/2026/10/markets',
-    body: `<main><h1>Markets today</h1>${description}</main>`,
+    body: `<main><h1>Markets today</h1>${description}<a href="/apply">Apply now</a></main>`,
   });
   await tick(50);
   assert.equal(other.button(), undefined);
+});
+
+test("card buttons go in a layer of their own, never inside the site's list", async () => {
+  const { w } = page(async () => ({ ok: false }));
+  await tick(50);
+  const layer = w.document.querySelector('[data-interview-analyzer-layer]');
+  assert.equal(layer.parentElement, w.document.documentElement);
+  assert.equal(layer.querySelectorAll('[data-interview-analyzer]').length, 2);
+  assert.equal(w.document.body.querySelector('[data-interview-analyzer]'), null);
 });

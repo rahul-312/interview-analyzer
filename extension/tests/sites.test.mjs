@@ -47,12 +47,9 @@ test('finds the job cards in a list (Naukri) and strips search tracking from the
   assert.equal(second.role, 'SRE');
   assert.equal(second.jobUrl, 'https://www.naukri.com/job-listings-x-091025000222');
 
-  const host = w.document.createElement('span');
-  w.IASites.placeButton(cards[0], host);
-  assert.equal(host.parentElement, cards[0]);
 });
 
-test('cards that are links themselves (LinkedIn) get the button beside them, not inside the link', () => {
+test('finds cards that are wrapped in a link to the job (LinkedIn)', () => {
   const card = (id, title, company) => `<li><div class="base-card">
     <a class="base-card__full-link" href="https://in.linkedin.com/jobs/view/${title.toLowerCase()}-${id}?position=1&refId=x&trackingId=y"><span>${title}</span></a>
     <h3 class="base-search-card__title">${title}</h3>
@@ -63,8 +60,9 @@ test('cards that are links themselves (LinkedIn) get the button beside them, not
   assert.deepEqual(
     plain(cards.map((c) => w.IASites.fromCard(c))).map((j) => [j.role, j.company, j.jobUrl]),
     [
-      ['Backend', 'Hitachi', 'https://in.linkedin.com/jobs/view/backend-4471319619'],
-      ['SDE', 'Amazon', 'https://in.linkedin.com/jobs/view/sde-4462829040'],
+      // refId and trackingId change on every visit and go; position might name a job on some site, so it stays.
+      ['Backend', 'Hitachi', 'https://in.linkedin.com/jobs/view/backend-4471319619?position=1'],
+      ['SDE', 'Amazon', 'https://in.linkedin.com/jobs/view/sde-4462829040?position=1'],
     ],
   );
 });
@@ -88,6 +86,7 @@ test('reads a job page (Naukri), without the company rating or review count', ()
         <a class="styles_amb-rating__4UyFL">4.1</a><span class="styles_amb-reviews__0J1e3">2.3k Reviews</span></div>
       <div class="styles_jhc__salary__jdfEC"><i></i><span>12-18 Lacs PA</span></div>
       <section class="styles_job-desc-container__txpYf">
+        <button class="styles_apply-button__uJI3A">Apply</button>
         <div class="styles_JDC__dang-inner-html__h0K4t"><p>Build APIs.</p><ul><li>Python</li><li>SQL</li></ul><p>${'We ship every day. '.repeat(20)}</p></div>
       </section>
     </body>`,
@@ -162,6 +161,7 @@ test('reads a job open beside a search list (LinkedIn-style), not the first card
       <div class="jobs-search__job-details">
         <h1 class="t-24 job-details-jobs-unified-top-card__job-title">Backend Engineer</h1>
         <div class="job-details-jobs-unified-top-card__company-name"><a href="#">Acme Corp</a></div>
+        <button class="jobs-apply-button">Easy Apply</button>
         <article class="jobs-description__container"><div id="job-details"><h2>About the job</h2><p>${LONG}</p>
           <ul><li>Go</li><li>Postgres</li></ul></div></article>
       </div></body>`,
@@ -183,6 +183,7 @@ test('reads a job page with no JobPosting (Indeed-style): company and salary fro
         <h1 data-testid="jobsearch-JobInfoHeader-title">Data Analyst</h1>
         <div data-testid="inlineHeader-companyName"><a href="#">Beta Analytics</a></div>
         <div id="salaryInfoAndJobType"><span>₹6,00,000 - ₹9,00,000 a year</span></div>
+        <button>Apply now</button>
         <div id="jobDescriptionText"><p>${LONG}</p></div>
       </div></body>`,
   );
@@ -260,4 +261,52 @@ test('pages that only look a bit like jobs get no button', () => {
   // A long article with a heading, but not at a job address.
   w = load('https://blog.example.com/posts/7', `<body><h1>My week</h1><h2>Requirements</h2><p>${LONG}</p></body>`);
   assert.equal(w.IASites.isJobPage(), false);
+});
+
+// ---------------------------------------------------------------------------
+// Review findings, kept fixed.
+
+test("links to another site's jobs are never read, so a page can't learn which of them are saved", () => {
+  const w = load(
+    'https://attacker.example/page',
+    `<body><a href="https://www.linkedin.com/jobs/view/1234567">A</a><a href="https://www.linkedin.com/jobs/view/7654321">B</a>
+     <script type="application/ld+json">{"@type":"JobPosting","title":"Bait","url":"https://www.linkedin.com/jobs/view/1234567"}</script>
+     <h1>Bait</h1></body>`,
+  );
+  assert.equal(w.IASites.findCards().length, 0);
+  assert.equal(w.IASites.fromPage().jobUrl, 'https://attacker.example/page'); // not the other site's link
+});
+
+test('finding cards stays fast on long lists', () => {
+  const cards = Array.from({ length: 1500 }, (_, i) => {
+    const href = `https://jobs.example.com/jobs/${100000 + i}`;
+    return `<li><a href="${href}">Job ${i}</a><a href="${href}"><img alt=""></a><span>Company ${i}</span></li>`;
+  }).join('');
+  const w = load('https://jobs.example.com/search', `<body><ul>${cards}</ul></body>`);
+  const started = performance.now();
+  assert.equal(w.IASites.findCards().length, 1500);
+  assert.ok(performance.now() - started < 2000, 'took too long');
+});
+
+test('news and blog pages about jobs get no buttons', () => {
+  const w = load(
+    'https://news.example.com/business',
+    `<body><a href="/business/jobs-report-october-1234567.html">Jobs report</a><a href="/tech/careers-in-ai-7654321.html">Careers in AI</a>
+     <a href="/news/jobs/1234567">Hiring slows</a><a href="/blog/careers/7654321">Our culture</a></body>`,
+  );
+  assert.equal(w.IASites.findCards().length, 0);
+
+  const article = load(
+    'https://news.example.com/business/jobs-report-october-1234567.html',
+    `<body><h1>Jobs report</h1><div class="article-description"><h2>Requirements</h2><p>${LONG}</p></div></body>`,
+  );
+  assert.equal(article.IASites.isJobPage(), false);
+});
+
+test('a JobPosting in the body still has to be on screen, not just in its own script', () => {
+  const w = load(
+    'https://www.linkedin.com/jobs/search/?currentJobId=2',
+    `<body><script type="application/ld+json">{"@type":"JobPosting","title":"Old Stale Role"}</script><h1>New Job</h1></body>`,
+  );
+  assert.equal(w.IASites.fromPage().role, 'New Job');
 });

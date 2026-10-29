@@ -20,6 +20,15 @@
   "content_scripts": [
     {
       "matches": ["https://*/*"],
+      "exclude_matches": [
+        "https://mail.google.com/*", "https://outlook.live.com/*", "https://outlook.office.com/*", "https://outlook.office365.com/*",
+        "https://mail.yahoo.com/*", "https://*.proton.me/*", "https://web.whatsapp.com/*", "https://*.slack.com/*",
+        "https://docs.google.com/*", "https://drive.google.com/*", "https://accounts.google.com/*", "https://login.microsoftonline.com/*",
+        "https://*.paypal.com/*", "https://dashboard.stripe.com/*", "https://*.razorpay.com/*", "https://*.paytm.com/*",
+        "https://*.onlinesbi.sbi/*", "https://*.hdfcbank.com/*", "https://*.icicibank.com/*", "https://*.axisbank.com/*",
+        "https://*.kotak.com/*", "https://*.bankofamerica.com/*", "https://*.chase.com/*", "https://*.wellsfargo.com/*",
+        "https://*.1password.com/*", "https://*.bitwarden.com/*", "https://*.lastpass.com/*"
+      ],
       "js": ["content/sites.js", "content/ui.js", "content/content.js"],
       "run_at": "document_idle"
     }

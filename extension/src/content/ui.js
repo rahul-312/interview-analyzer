@@ -69,14 +69,15 @@
 
   const BUTTON_CSS = `
     :host { all: initial; display: inline-block; vertical-align: middle; ${TOKENS} }
-    button { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 12px; border-radius: 999px;
+    /* One width whatever it says, so a page can't tell "✓ Saved" from "+ Track" by measuring the button. */
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: 96px; height: 28px; padding: 0 12px; border-radius: 999px;
       border: 1px solid var(--primary-border); background: var(--primary-light); color: var(--primary-dark);
       font-family: inherit; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; white-space: nowrap; }
     button:hover { background: var(--primary); border-color: var(--primary); color: #fff; }
     button.saved { border-color: #A7F3D0; background: var(--green-light); color: var(--green); }
     button.saved:hover { background: var(--green-light); color: var(--green); }
     :host(.floating) { position: fixed; right: 24px; bottom: 24px; z-index: 2147483646; }
-    :host(.floating) button { height: 44px; padding: 0 18px; font-size: 14px; border: 0; background: var(--primary);
+    :host(.floating) button { width: 240px; height: 44px; padding: 0 18px; font-size: 14px; border: 0; background: var(--primary);
       color: #fff; box-shadow: 0 8px 24px rgba(79, 70, 229, 0.35); }
     :host(.floating) button:hover { background: var(--primary-dark); }
     :host(.floating) button.saved { background: var(--green); color: #fff; }

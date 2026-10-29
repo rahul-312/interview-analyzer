@@ -339,7 +339,10 @@ response = genai.Client(api_key=settings.GEMINI_API_KEY).models.generate_content
         response_json_schema=ANALYSIS_SCHEMA,
     ),
 )
-if response.candidates[0].finish_reason == "SAFETY": raise RuntimeError("The AI declined to analyse this content.")
+if response.prompt_feedback and response.prompt_feedback.block_reason:  # the prompt itself was blocked: no candidates
+    raise RuntimeError("The AI declined to analyse this content.")
+if response.candidates[0].finish_reason != "STOP":  # blocked, cut off, or unfinished: the text is partial
+    raise RuntimeError("The AI didn't finish its reply. Try again.")
 return json.loads(response.text)
 ```
 

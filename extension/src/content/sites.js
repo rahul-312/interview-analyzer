@@ -26,9 +26,28 @@
   }
 
   // Search and ad tracking that job sites add to links, and that never says which job it is
-  // (Naukri's src/sid/xp/px, LinkedIn's refId/trackingId/position/pageNum, ad click ids). Names
-  // like ref, from or currentJobId identify the job on some sites, so they stay.
-  const TRACKING = new Set(['src', 'sid', 'xp', 'px', 'refid', 'trackingid', 'position', 'pagenum', 'gclid', 'fbclid', 'msclkid']);
+  // (Naukri's src/sid/xp/px, LinkedIn's refId/trackingId/pageNum, which change on every visit, and ad
+  // click ids). Names like ref, from, position or currentJobId identify the job on some sites, so they stay.
+  const TRACKING = new Set(['src', 'sid', 'xp', 'px', 'refid', 'trackingid', 'pagenum', 'gclid', 'fbclid', 'msclkid']);
+
+  /** The site a host belongs to: in.linkedin.com and www.linkedin.com are both linkedin.com, www.naukri.co.in is naukri.co.in. */
+  function siteOf(hostname) {
+    const labels = hostname.toLowerCase().split('.');
+    const twoPart = labels.length >= 3 && labels.at(-1).length === 2 && /^(co|com|org|net|ac|gov|edu)$/.test(labels.at(-2));
+    return labels.slice(twoPart ? -3 : -2).join('.');
+  }
+
+  /**
+   * Whether a link is on the site this page is on. Only those are read or looked up: any page can
+   * link to any job, and a page linking to other sites' jobs could otherwise learn which ones are saved.
+   */
+  const sameSite = (url) => {
+    try {
+      return siteOf(new URL(url, location.href).hostname) === siteOf(location.hostname);
+    } catch {
+      return false;
+    }
+  };
 
   /**
    * Absolute link without tracking parameters, so the same job always has the same link. '' if unusable.
@@ -74,7 +93,17 @@
     return [base.currency, amount, value.unitText && `per ${value.unitText.toLowerCase()}`].filter(Boolean).join(' ');
   }
 
-  const pageText = () => clean(document.body?.textContent).toLowerCase();
+  /** The page's text, without scripts and styles (a JobPosting's own script would otherwise always "show" its title). */
+  function pageText() {
+    if (!document.body) return '';
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) =>
+        node.parentElement?.closest('script, style, noscript, template') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    const parts = [];
+    while (walker.nextNode()) parts.push(walker.currentNode.nodeValue);
+    return clean(parts.join(' ')).toLowerCase();
+  }
 
   /** Some sites (LinkedIn) escape the description's HTML a second time: "&lt;p&gt;" instead of "<p>". */
   const unescapeHtml = (s) =>
@@ -93,7 +122,7 @@
       company: clean(typeof org === 'string' ? org : org?.name),
       description: htmlToText(unescapeHtml(job.description)),
       salary: usableSalary(salaryFromJsonLd(job.baseSalary)),
-      jobUrl: typeof job.url === 'string' ? job.url : '',
+      jobUrl: typeof job.url === 'string' && sameSite(job.url) ? job.url : '',
     };
   }
 
@@ -115,9 +144,19 @@
   // Any site: what's on screen. Single-page job sites (LinkedIn, Indeed, Workday…) switch jobs without
   // reloading and often carry no JobPosting at all, so the page itself is read the same way everywhere.
 
-  // Words in a job page's address: /jobs/123, /careers/…, ?currentJobId=, ?jk=, ?gh_jid=…
-  const JOB_URL =
-    /(^|[^a-z])(jobs?|careers?|positions?|openings?|vacanc(y|ies)|requisitions?|job-listings?|viewjob|job-details?|opportunit(y|ies))([^a-z]|$)|[?&](jk|vjk|jl|gh_jid|currentjobid|jobid|job_id)=/i;
+  // A job word as a whole part of an address: a host name label (jobs.lever.co, careers.acme.com) or a
+  // path segment (/jobs/, /careers/…), or /job-listings-… and /viewjob. Never inside a slug, so news
+  // like /business/jobs-report-october-1234567.html doesn't count.
+  const JOB_WORD = String.raw`(?:^|\.)(?:jobs?|careers?)\.|\/(?:jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|postings?|requisitions?|opportunit(?:y|ies))(?:\/|$)|\/(?:job-listings?|viewjob)\b`;
+  const JOB_ID_PARAM = /^(jk|vjk|gh_jid|currentjobid|jobid|job_id)$/i;
+  // Sections of a site that write about jobs rather than offer them.
+  const NOT_JOBS = /\/(news|blogs?|articles?|story|stories|opinion|press|insights|guides?|advice)(\/|$)/i;
+
+  /** Whether an address could be a job page: a job word in it, or a job id in its query, and not in a news or blog section. */
+  function jobAddress({ hostname, pathname, searchParams }) {
+    if (NOT_JOBS.test(pathname)) return false;
+    return new RegExp(JOB_WORD, 'i').test(hostname + pathname) || [...searchParams.keys()].some((key) => JOB_ID_PARAM.test(key));
+  }
 
   // Headings that start the description on almost every job page.
   const DESCRIPTION_HEADING =
@@ -294,22 +333,30 @@
     };
   }
 
-  /** A page showing one job: it carries a visible JobPosting, or has a job-like address, a role and a description. */
+  // A button or link to apply, which every job page has and articles about jobs don't.
+  const APPLY = /^(easy\s+)?apply\b|\bapply\s+(now|for (this|the) (job|role|position)|on (the )?company)/i;
+
+  /**
+   * A page showing one job: it carries a visible JobPosting, or it has a job address, a role, a
+   * description and an apply button.
+   */
   function looksLikeJobPage() {
     if (fromJsonLd().role || fromMicrodata().role) return true;
-    if (!JOB_URL.test(location.hostname + location.pathname + location.search)) return false;
+    if (!jobAddress(new URL(location.href))) return false;
     const block = descriptionBlock();
-    return Boolean(block && block.textContent.length >= 300 && roleHeading(block));
+    if (!block || block.textContent.length < 300 || !roleHeading(block)) return false;
+    return [...document.querySelectorAll('a, button, [role="button"], input[type="submit"]')].some(
+      (el) => APPLY.test(text(el) || el.value || '') && !hidden(el),
+    );
   }
 
   // ---------------------------------------------------------------------------
   // Job lists, on any site: each link to a single job, in the card around it.
 
-  // A link to one job: a job word and then an id in its path (/job-listings-…-091025012345,
-  // /jobs/view/…-4471319619, jobs.lever.co/acme/<uuid>), or a job id in its query (?jk=, ?gh_jid=…).
-  const JOB_PATH =
-    /(^|[/.-])(jobs?|job-listings?|viewjob|positions?|careers?|openings?|vacanc(y|ies)|postings?|requisitions?)[/.-][^?#]*?(\d{5,}|[0-9a-f]{8}-[0-9a-f]{4})/i;
-  const JOB_ID_PARAM = /^(jk|vjk|gh_jid|currentjobid|jobid|job_id)$/i;
+  // A link to one job: a job address with an id after the job word (/job-listings-…-091025012345,
+  // /jobs/view/…-4471319619, jobs.lever.co/acme/<uuid>, /job/Pune/Engineer_JR1234567), or a job id
+  // in its query (?jk=, ?gh_jid=…).
+  const JOB_PATH = new RegExp(`(?:${JOB_WORD})[^?#]*?(?:\\d{5,}|[0-9a-f]{8}-[0-9a-f]{4})`, 'i');
 
   /**
    * The job a link points to: its cleaned address, and a key that's the same for every link to that
@@ -319,38 +366,53 @@
   function jobOf(href) {
     const url = cleanUrl(href ?? '');
     if (!url) return null;
-    const { hostname, pathname, searchParams } = new URL(url);
+    const address = new URL(url);
+    const { hostname, pathname, searchParams } = address;
+    if (!jobAddress(address)) return null;
     const param = [...searchParams.keys()].find((key) => JOB_ID_PARAM.test(key) && searchParams.get(key));
     if (param) return { url, key: `${hostname} ${param.toLowerCase()}=${searchParams.get(param)}` };
     return JOB_PATH.test(hostname + pathname) ? { url, key: url } : null;
   }
 
+  /** Links to jobs on this page's own site inside root. */
   const jobLinks = (root) =>
     [...(root.matches?.('a[href]') ? [root] : []), ...root.querySelectorAll('a[href]')]
       .map((link) => ({ link, job: jobOf(link.getAttribute('href')) }))
-      .filter(({ job }) => job);
+      .filter(({ job }) => job && sameSite(job.url));
+
+  const MANY = Symbol('several jobs');
 
   /**
    * Job cards: for each job linked on the page, the largest block around its link that links to no
    * other job. Only on pages listing at least two jobs, and never for the job this page shows.
+   *
+   * One walk up the page from each link records which job each block holds, or that it holds
+   * several. A walk stops at a block already known to hold its job or several, since everything
+   * above that is known too, so the whole page is looked at about once.
    */
   function findCards() {
     const here = jobOf(location.href)?.key;
     const links = jobLinks(document).filter(({ link, job }) => job.key !== here && !hidden(link));
     if (new Set(links.map((l) => l.job.key)).size < 2) return [];
 
+    const holds = new Map(); // block -> the one job key it links to, or MANY
+    for (const { link, job } of links) {
+      for (let node = link; node && node !== document.body; node = node.parentElement) {
+        const was = holds.get(node);
+        if (was === job.key || was === MANY) break;
+        holds.set(node, was === undefined ? job.key : MANY);
+      }
+    }
+
     const cards = new Set();
     for (const { link, job } of links) {
-      const others = links.filter((l) => l.job.key !== job.key);
       let card = link;
-      for (let up = card.parentElement; up && up !== document.body; up = up.parentElement) {
-        if (others.some((o) => up.contains(o.link))) break;
-        card = up;
+      while (card.parentElement && card.parentElement !== document.body && holds.get(card.parentElement) === job.key) {
+        card = card.parentElement;
       }
-      if (card.textContent.length <= 3000) cards.add(card);
+      cards.add(card);
     }
-    // A card can hold several links to its job (title, logo…): one card each, the outermost.
-    return [...cards].filter((card) => ![...cards].some((other) => other !== card && other.contains(card)));
+    return [...cards].filter((card) => card.textContent.length <= 3000);
   }
 
   // Link and heading texts that are actions, not a job's title.
@@ -412,14 +474,6 @@
     };
   }
 
-  /** Puts the button at the end of the card, or just after it when the card is itself a link. */
-  function placeButton(card, host) {
-    host.style.cssText = 'display: inline-block; margin: 8px 0;';
-    const link = card.closest('a');
-    if (link) link.after(host);
-    else card.append(host);
-  }
-
   /** Combines sources field by field: the first source with a value wins. */
   const merge = (...sources) =>
     sources.reduce((acc, src) => {
@@ -443,7 +497,6 @@
 
   globalThis.IASites = {
     findCards,
-    placeButton,
     fromCard: (card) => finish(fromCard(card)),
 
     /** Whether this page shows one job, so it gets the floating "Save" button. */
