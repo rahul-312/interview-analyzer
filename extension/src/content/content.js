@@ -84,8 +84,9 @@
   // "+ Track" buttons sit in a layer of their own over the page, each one over the right edge of its
   // card, and are never put inside the site's lists: the site's own code (React and the like) manages
   // those, and an element it didn't create can break the layout or the list's next re-render.
-  // A button only shows where its card is what's on top, so the site's sticky headers, pop-ups and
-  // scroll areas still hide it, whatever their z-index.
+  // The layer sits low (z-index 5), so the site's own menus, pop-ups and headers cover the buttons by
+  // themselves, including ones opened by CSS alone (:hover). As well, a button only shows where its card
+  // is what's on top, which hides it under overlays with a lower z-index and outside scroll areas.
   const BUTTON = { width: 96, height: 28, inset: 12 };
   let layer = null;
   const placed = new Map(); // card -> { host, near }
@@ -107,6 +108,10 @@
     const hit = document.elementsFromPoint(x, y).find((el) => !layer.contains(el));
     return Boolean(hit && card.contains(hit));
   }
+
+  /** Whether the card is on top under the whole button (its two ends and its middle), not just part of it. */
+  const onTopUnder = (card, x, y) =>
+    [x + 2, x + BUTTON.width / 2, x + BUTTON.width - 2].every((px) => onTop(card, px, y));
 
   let positioning = false;
   function reposition() {
@@ -133,7 +138,7 @@
         const middle = (top + bottom) / 2;
         const x = box.right - BUTTON.width - BUTTON.inset;
         const fits = bottom - top >= BUTTON.height && x >= box.left;
-        moves.push({ p, at: fits && onTop(card, x + BUTTON.width / 2, middle) ? { x, y: middle - BUTTON.height / 2 } : null });
+        moves.push({ p, at: fits && onTopUnder(card, x, middle) ? { x, y: middle - BUTTON.height / 2 } : null });
       });
       moves.forEach(({ p, card, gone, at }) => {
         if (gone) {
@@ -157,7 +162,7 @@
       if (!layer) {
         layer = document.createElement('div');
         layer.setAttribute('data-interview-analyzer-layer', '');
-        layer.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 2147483645; overflow: hidden;';
+        layer.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 5; overflow: hidden;';
         document.documentElement.append(layer);
       }
       const button = trackButton({ onClick: () => open(fromCard(card)) });
@@ -220,5 +225,12 @@
     update();
     reposition();
   }).observe(document.body ?? document.documentElement, { childList: true, subtree: true });
+  // Menus, drawers and pop-ups already in the page open by changing a class, style or attribute: check
+  // again what's on top of each card then (at most once a frame).
+  new MutationObserver(reposition).observe(document.body ?? document.documentElement, {
+    attributes: true,
+    subtree: true,
+    attributeFilter: ['class', 'style', 'open', 'hidden', 'aria-hidden', 'aria-expanded'],
+  });
   update();
 })();

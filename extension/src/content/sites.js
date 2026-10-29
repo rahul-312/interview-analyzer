@@ -30,11 +30,15 @@
   // click ids). Names like ref, from, position or currentJobId identify the job on some sites, so they stay.
   const TRACKING = new Set(['src', 'sid', 'xp', 'px', 'refid', 'trackingid', 'pagenum', 'gclid', 'fbclid', 'msclkid']);
 
-  // Hosts where anyone can have a subdomain: each subdomain there is a site of its own.
+  // Hosts where anyone can have a subdomain: each subdomain there is a site of its own. The common ones
+  // only; the full Public Suffix List would cover the rest.
   const SHARED_HOSTS = new Set([
     'github.io', 'gitlab.io', 'vercel.app', 'netlify.app', 'pages.dev', 'workers.dev', 'web.app', 'firebaseapp.com',
     'herokuapp.com', 'onrender.com', 'fly.dev', 'azurewebsites.net', 'cloudfront.net', 'appspot.com', 'blogspot.com',
-    'wordpress.com', 'notion.site', 'myshopify.com', 'glitch.me', 'replit.app', 'surge.sh',
+    'wordpress.com', 'notion.site', 'myshopify.com', 'glitch.me', 'replit.app', 'surge.sh', 'wixsite.com',
+    'webflow.io', 'squarespace.com', 'weebly.com', 'carrd.co', 'framer.website', 'framer.app', 'ngrok-free.app',
+    'ngrok.io', 'ngrok.app', 'loca.lt', 'trycloudflare.com', 'repl.co', 'deno.dev', 'railway.app', 'up.railway.app',
+    's3.amazonaws.com', 'elasticbeanstalk.com', 'azurestaticapps.net', 'readthedocs.io', 'substack.com', 'medium.com',
   ]);
 
   /**
@@ -43,9 +47,11 @@
    */
   function siteOf(hostname) {
     const labels = hostname.toLowerCase().split('.');
-    const twoPart =
-      (labels.length >= 3 && labels.at(-1).length === 2 && /^(co|com|org|net|ac|gov|edu)$/.test(labels.at(-2))) ||
-      SHARED_HOSTS.has(labels.slice(-2).join('.'));
+    // A shared host's own name can have two parts (github.io) or three (s3.amazonaws.com): the site is one more.
+    for (const parts of [3, 2]) {
+      if (labels.length > parts && SHARED_HOSTS.has(labels.slice(-parts).join('.'))) return labels.slice(-parts - 1).join('.');
+    }
+    const twoPart = labels.length >= 3 && labels.at(-1).length === 2 && /^(co|com|org|net|ac|gov|edu)$/.test(labels.at(-2));
     return labels.slice(twoPart ? -3 : -2).join('.');
   }
 
@@ -159,9 +165,10 @@
 
   // A job word as a whole part of an address: a host name label (jobs.lever.co, careers.acme.com) or a
   // path segment (/jobs/, /careers/, /job-openings/…), /job-listings-… and /viewjob, or a job id right
-  // after "job-" (/job-1234567-backend-engineer). Never a word inside a slug, so news like
+  // after "job-" (/job-1234567-backend-engineer) or in a /j/ path (/j/backend-engineer-1234567.html).
+  // Never a word inside a slug, so news like
   // /business/jobs-report-october-1234567.html doesn't count.
-  const JOB_WORD = String.raw`(?:^|\.)(?:jobs?|careers?)\.|\/(?:jobs?|job-openings?|careers?|positions?|openings?|vacanc(?:y|ies)|postings?|requisitions?|opportunit(?:y|ies))(?:\/|$)|\/(?:job-listings?|viewjob)\b|\/job-(?=\d{5,})`;
+  const JOB_WORD = String.raw`(?:^|\.)(?:jobs?|careers?)\.|\/(?:jobs?|job-openings?|careers?|positions?|openings?|vacanc(?:y|ies)|postings?|requisitions?|opportunit(?:y|ies))(?:\/|$)|\/(?:job-listings?|viewjob)\b|\/job-(?=\d{5,})|\/j\/(?=[^/?#]*\d{5,})`;
   const JOB_WORD_RE = new RegExp(JOB_WORD, 'i');
   const JOB_ID_PARAM = /^(jk|vjk|gh_jid|currentjobid|jobid|job_id)$/i;
   // Sections of a site that write about jobs rather than offer them.

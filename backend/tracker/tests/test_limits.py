@@ -735,12 +735,15 @@ def test_setup_mistakes_say_so_and_log_the_details(api, application, run_jobs, w
 @pytest.mark.parametrize("message,expected", [
     ("User location is not supported for the API use.", "isn't available in the region"),
     ("The input token count exceeds the maximum number of tokens allowed.", "too long for the AI"),
+    # A limit on the reply's own length is a setup mistake, not something the user can shorten.
+    ("max_output_tokens exceeds the limit for this model.", "isn't set up correctly"),
 ])
-def test_rejections_users_can_act_on_get_their_own_message(api, application, run_jobs, with_ai, message, expected):
+def test_rejections_users_can_act_on_get_their_own_message(api, application, run_jobs, with_ai, caplog, message, expected):
     error = errors.ClientError(400, {"error": {"code": 400, "message": message, "status": "FAILED_PRECONDITION"}})
-    with mock.patch.object(ai, "get_client", return_value=_fake_client(error)):
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(error)), caplog.at_level("ERROR", logger="tracker.ai"):
         res = log_round(api, application, run_jobs)
     assert expected in RoundAnalysis.objects.get(round_id=res.data["id"]).error
+    assert message in caplog.text  # every rejection is logged for the admin
 
 
 def test_usage_says_whether_the_key_is_on_the_free_tier(api, settings):

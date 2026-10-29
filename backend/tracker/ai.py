@@ -288,13 +288,14 @@ SETUP_ERRORS = {400, 401, 403, 404}
 
 
 def _rejection_message(exc):
-    """What to tell the user when Gemini rejects the request (a 4xx other than 429)."""
+    """What to tell the user when Gemini rejects the request (a 4xx other than 429). Every rejection is logged."""
+    logger.error("Gemini rejected the request; check GEMINI_API_KEY and GEMINI_MODEL: %s", exc)
     detail = (exc.message or "").lower()
     if "location is not supported" in detail:
         return "The AI isn't available in the region this server runs in."
-    if "token" in detail and any(word in detail for word in ("exceed", "too long", "too large", "limit")):
+    # Only what was sent: a limit on the reply's length (max_output_tokens) is a setup mistake, not the user's.
+    if ("input token" in detail or "prompt" in detail) and any(w in detail for w in ("exceed", "too long", "too large")):
         return "This is too long for the AI to read. Try shortening your debrief or the job description."
-    logger.error("Gemini rejected the request; check GEMINI_API_KEY and GEMINI_MODEL: %s", exc)
     return "The AI isn't set up correctly on the server. Try again later, or tell whoever runs this app."
 
 logger = logging.getLogger(__name__)

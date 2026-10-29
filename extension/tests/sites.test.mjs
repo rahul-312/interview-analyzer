@@ -284,14 +284,21 @@ test('subdomains of shared hosts are sites of their own', () => {
   const w = load('https://evil.github.io/', '<body></body>');
   assert.equal(w.IASites.sameSite('https://victim.github.io/jobs/1234567'), false);
   assert.equal(w.IASites.sameSite('https://evil.github.io/jobs/1234567'), true);
+  for (const [page, other] of [
+    ['https://evil.wixsite.com/', 'https://victim.wixsite.com/jobs/1234567'],
+    ['https://evil.s3.amazonaws.com/', 'https://victim.s3.amazonaws.com/jobs/1234567'],
+  ]) {
+    assert.equal(load(page, '<body></body>').IASites.sameSite(other), false, page);
+  }
   const li = load('https://www.linkedin.com/jobs/search', '<body></body>');
   assert.equal(li.IASites.sameSite('https://in.linkedin.com/jobs/view/1234567'), true);
 });
 
-test('job boards with job-openings and job-<id> addresses (Monster, Instahyre) get cards', () => {
+test('job boards with job-openings, job-<id> and /j/ addresses (Monster, Instahyre, Hirist) get cards', () => {
   for (const [url, a, b] of [
     ['https://www.foundit.in/srp', '/job-openings/java-developer-bengaluru-1234567', '/job-openings/sre-pune-7654321'],
     ['https://www.instahyre.com/search-jobs/', '/job-1234567-backend-engineer-at-acme-bangalore/', '/job-7654321-sre-at-beta-pune/'],
+    ['https://www.hirist.tech/', '/j/backend-engineer-acme-3-to-5-yrs-1234567.html', '/j/sre-beta-2-to-4-yrs-7654321.html'],
   ]) {
     const w = load(url, `<body><ul><li><a href="${a}">One</a></li><li><a href="${b}">Two</a></li></ul></body>`);
     assert.equal(w.IASites.findCards().length, 2, url);
