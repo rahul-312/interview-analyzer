@@ -10,9 +10,11 @@ import Card from '../../ui/Card';
 import { ErrorMessage, Loading } from '../../ui/Feedback';
 import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
+import { useRefreshUsageWhenDone } from '@/hooks/useUsage';
 import { applicationService } from '@/services/ApplicationService';
 import { roundService } from '@/services/RoundService';
 import { anyAnalysing } from '@/utils/analysis';
+import { dateChangeNotice } from '@/utils/application';
 import { errorText } from '@/utils/errorText';
 
 interface ApplicationDetailProps {
@@ -21,12 +23,13 @@ interface ApplicationDetailProps {
 
 const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id }) => {
   const router = useRouter();
-  const { bump } = useDialogs();
+  const { notify, bump } = useDialogs();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
 
   const { data: app, error: loadError, setData } = useApi(`application-${id}`, () => applicationService.get(id));
   const { data: rounds } = useApi(`rounds-${id}`, () => roundService.list(id), anyAnalysing);
+  useRefreshUsageWhenDone(anyAnalysing(rounds ?? []));
 
   const handleDelete = async () => {
     if (!app || !confirm(`Delete ${app.company} and all its rounds? This can't be undone.`)) return;
@@ -53,7 +56,9 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id }) => {
           <ApplicationForm
             initial={app}
             onCancel={() => setEditing(false)}
-            onSaved={(saved) => {
+            onSaved={(saved, sent) => {
+              const notice = dateChangeNotice(app, saved, sent.date_applied);
+              if (notice) notify(notice);
               setData(saved);
               setEditing(false);
               bump();

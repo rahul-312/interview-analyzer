@@ -45,3 +45,8 @@ export function inDays(n: number): string {
 export function isPast(value: string): boolean {
   return new Date(value).getTime() < Date.now();
 }
+
+/** "free" → "Free", "pro" → "Pro". */
+export function planLabel(plan: string | null | undefined): string {
+  return plan === "pro" ? "Pro" : "Free";
+}

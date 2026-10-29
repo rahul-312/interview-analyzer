@@ -8,6 +8,7 @@ import { ErrorMessage, Loading } from '../ui/Feedback';
 import PageHeader from '../ui/PageHeader';
 import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
+import { useRefreshUsageWhenDone } from '@/hooks/useUsage';
 import { roundService } from '@/services/RoundService';
 import { anyAnalysing } from '@/utils/analysis';
 import { isPast } from '@/utils/format';
@@ -18,6 +19,7 @@ const Interviews = () => {
   const { data, loading, error } = useApi('rounds', () => roundService.list(), anyAnalysing);
 
   const rounds = data ?? [];
+  useRefreshUsageWhenDone(anyAnalysing(rounds));
   const upcoming = rounds
     .filter((r) => !isPast(r.scheduled_at))
     .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));

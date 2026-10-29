@@ -5,16 +5,18 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import AnalysisResult from './AnalysisResult';
 import DebriefSummary from './DebriefSummary';
+import NotAnalysed from './NotAnalysed';
 import { OutcomeBadge } from '../../Badges';
 import Button from '../../ui/Button';
 import Card from '../../ui/Card';
 import { ErrorMessage, Loading, Working } from '../../ui/Feedback';
 import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
+import { useRefreshUsageWhenDone, useUsage } from '@/hooks/useUsage';
 import { roundService } from '@/services/RoundService';
 import { isAnalysing } from '@/utils/analysis';
 import { errorText } from '@/utils/errorText';
-import { formatDateTime } from '@/utils/format';
+import { formatDateTime, planLabel } from '@/utils/format';
 
 interface RoundAnalysisProps {
   id: string;
@@ -26,15 +28,21 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
   const [error, setError] = useState('');
   // Poll until the analysis is done
   const { data: round, error: loadError, reload } = useApi(`round-${id}`, () => roundService.get(id), isAnalysing);
+  const { usage, reloadUsage } = useUsage();
+  const outOfAnalyses = usage?.analyses.remaining === 0;
+  // A refunded (failed) analysis changes the count, so refresh it when the job finishes
+  useRefreshUsageWhenDone(round ? isAnalysing(round) : false);
 
-  const handleReanalyse = async () => {
+  const handleAnalyse = async () => {
     setError('');
     try {
       await roundService.analyze(id);
-      reload();
     } catch (err) {
       setError(errorText(err));
     }
+    // Reload either way: a 409/429 means the round or usage changed elsewhere
+    reload();
+    reloadUsage();
   };
 
   const handleDelete = async () => {
@@ -75,8 +83,13 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
           </p>
         </div>
         <div className="flex flex-wrap gap-lg">
-          {round.debrief && (
-            <Button variant="secondary" onClick={handleReanalyse} disabled={analysing}>
+          {round.debrief && analysis && !analysis.stale && (
+            <Button
+              variant="secondary"
+              onClick={handleAnalyse}
+              disabled={analysing || outOfAnalyses}
+              title={outOfAnalyses ? `No analyses left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined}
+            >
               Re-analyse
             </Button>
           )}
@@ -94,18 +107,37 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
       {/* Analysis */}
       {!round.debrief ? (
         <Card className="text-sm text-medium-gray">No debrief yet. Write one to get an analysis of this round.</Card>
-      ) : !analysis || analysing ? (
+      ) : !analysis ? (
+        <NotAnalysed usage={usage} onAnalyse={handleAnalyse} />
+      ) : analysing ? (
         <Card>
-          <Working text={analysis?.status === 'running' ? 'Analysing your debrief…' : 'Queued for analysis…'} />
+          <Working text={analysis.status === 'running' ? 'Analysing your debrief…' : 'Queued for analysis…'} />
         </Card>
       ) : analysis.status === 'failed' ? (
         <Card className="flex flex-col items-start gap-lg text-sm">
           <p className="font-medium text-rose-dark">The analysis failed.</p>
           <p className="text-dark-gray">{analysis.error}</p>
-          <Button variant="primary" onClick={handleReanalyse}>
+          {analysis.refunded && (
+            <p className="rounded-lg bg-pale-mint px-2xl py-lg text-deep-green">
+              This one didn&apos;t count towards your limit.
+            </p>
+          )}
+          <Button variant="primary" onClick={handleAnalyse} disabled={outOfAnalyses}>
             Try again
           </Button>
         </Card>
+      ) : analysis.stale ? (
+        <>
+          <NotAnalysed usage={usage} stale onAnalyse={handleAnalyse} />
+          <details className="flex flex-col gap-8xl">
+            <summary className="cursor-pointer text-sm font-medium text-medium-gray">
+              Show the previous analysis (before your last edit)
+            </summary>
+            <div className="mt-6xl flex flex-col gap-8xl opacity-75">
+              <AnalysisResult analysis={analysis} />
+            </div>
+          </details>
+        </>
       ) : (
         <AnalysisResult analysis={analysis} />
       )}

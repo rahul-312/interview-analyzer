@@ -9,7 +9,7 @@ const ScoreRing: React.FC<{ score: number }> = ({ score }) => {
 
   return (
     <svg viewBox="0 0 88 88" className="h-score-ring w-score-ring shrink-0" role="img" aria-label={`Score ${score} out of 100`}>
-      <circle cx="44" cy="44" r={RADIUS} fill="none" stroke="#E2E8F0" strokeWidth="8" />
+      <circle cx="44" cy="44" r={RADIUS} fill="none" stroke="var(--color-light-gray)" strokeWidth="8" />
       <circle
         cx="44"
         cy="44"

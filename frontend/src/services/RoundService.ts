@@ -1,4 +1,4 @@
-import type { InterviewRound, RoundInput } from "@/models/Interview";
+import type { InterviewRound, RoundInput, RoundSaveResult } from "@/models/Interview";
 import ApiClient, { apiClient } from "./ApiClient";
 
 export default class RoundService {
@@ -18,18 +18,18 @@ export default class RoundService {
 
   // Sending `debrief` saves it and queues an analysis
   create(input: RoundInput) {
-    return this.client.post<InterviewRound>("/rounds/", input);
+    return this.client.post<RoundSaveResult>("/rounds/", input);
   }
 
   update(id: number, input: Partial<RoundInput>) {
-    return this.client.patch<InterviewRound>(`/rounds/${id}/`, input);
+    return this.client.patch<RoundSaveResult>(`/rounds/${id}/`, input);
   }
 
   remove(id: number | string) {
     return this.client.delete(`/rounds/${id}/`);
   }
 
-  // Re-run the analysis for a round that has a debrief
+  // Run the analysis for a round that has a debrief (counts against the daily limit)
   analyze(id: number | string) {
     return this.client.post(`/rounds/${id}/analyze/`);
   }

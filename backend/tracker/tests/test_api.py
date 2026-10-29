@@ -50,6 +50,30 @@ def test_list_filters(api, application):
     assert [a["company"] for a in api.get("/api/applications/?search=acm").data] == ["Acme"]
 
 
+def test_find_application_by_job_url(api, application):
+    url = "https://www.naukri.com/job-listings-backend-engineer-acme-bengaluru-3-to-5-years-091025012345"
+    application.job_url = url
+    application.save()
+
+    assert [a["id"] for a in api.get("/api/applications/", {"job_url": url}).data] == [application.id]
+    assert api.get("/api/applications/", {"job_url": url + "9"}).data == []
+
+
+def test_lookup_many_job_urls(api, application, other_user):
+    url = "https://www.naukri.com/job-listings-a-091025012345"
+    application.job_url = url
+    application.save()
+    Application.objects.create(user=other_user, company="Theirs", role="x", date_applied=date.today(),
+                               job_url="https://www.naukri.com/job-listings-b-091025099999")
+
+    res = api.post("/api/applications/lookup/", {"job_urls": [url, "https://www.naukri.com/job-listings-b-091025099999", ""]},
+                   format="json")
+    assert res.data == {"matches": {url: application.id}}  # not other users' jobs
+    assert api.post("/api/applications/lookup/", {"job_urls": "nope"}, format="json").status_code == 400
+    assert api.post("/api/applications/lookup/", [url], format="json").status_code == 400  # not an object
+    assert api.post("/api/applications/lookup/", {"job_urls": ["x"] * 101}, format="json").status_code == 400
+
+
 def test_other_users_cannot_see_or_use_data(api, application, other_user):
     from rest_framework.test import APIClient
 
@@ -115,7 +139,8 @@ def test_same_topic_in_two_rounds_ranks_first(api, application, run_jobs):
 
 
 def test_funnel_and_pass_rates(api, user):
-    for status, source in [("applied", "cold"), ("screening", "cold"), ("interview", "referral"), ("offer", "referral")]:
+    for status, source in [("saved", "referral"), ("applied", "cold"), ("screening", "cold"), ("interview", "referral"),
+                           ("offer", "referral")]:
         Application.objects.create(user=user, company=status, role="x", date_applied=date.today(),
                                    status=status, source=source)
     app = Application.objects.get(company="interview")
@@ -128,6 +153,166 @@ def test_funnel_and_pass_rates(api, user):
     referral = next(s for s in data["funnel"]["by_source"] if s["source"] == "referral")
     assert referral == {"source": "referral", "label": "Referral", "total": 2, "interviews": 2, "offers": 1}
     assert data["round_outcomes"]["weakest"] == "Technical"
+    # The saved job isn't an application yet, so it's in none of the numbers.
+    assert data["funnel"]["total"] == 4 and "saved" not in data["funnel"]["status_counts"]
+
+
+def test_logging_a_round_moves_a_saved_job_forward(api, user, run_jobs):
+    app = Application.objects.create(user=user, company="Acme", role="x", date_applied=date.today(), status="saved")
+    with run_jobs():
+        api.post("/api/rounds/", {"application": app.id, "round_type": "phone_screen", "scheduled_at": past()}, format="json")
+    app.refresh_from_db()
+    assert app.status == "screening"
+    assert app.applied_at == date.today()
+
+
+def test_applied_at_records_when_a_job_was_really_applied_to(api, user):
+    old = date(2026, 9, 1)
+    added = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": old, "status": "rejected"},
+                     format="json").data
+    assert added["applied_at"] == "2026-09-01"  # added after the fact: applied on its date
+
+    saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": old, "status": "saved"},
+                     format="json").data
+    assert saved["applied_at"] is None
+    applied = api.patch(f"/api/applications/{saved['id']}/", {"status": "applied"}, format="json").data
+    assert applied["applied_at"] == applied["date_applied"] == date.today().isoformat()
+
+    # Saved, then rejected without applying: never applied, so not in the funnel.
+    skipped = api.post("/api/applications/", {"company": "C", "role": "x", "date_applied": old, "status": "saved"},
+                       format="json").data
+    assert api.patch(f"/api/applications/{skipped['id']}/", {"status": "withdrawn"}, format="json").data["applied_at"] is None
+    funnel = api.get("/api/insights/").data["funnel"]
+    assert funnel["total"] == 2 and "withdrawn" not in funnel["status_counts"]
+
+
+def test_setting_a_job_back_to_saved_takes_it_out_of_the_funnel(api, user):
+    # Picked Applied by mistake, then corrected to Saved.
+    app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
+                   format="json").data
+    corrected = api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json").data
+    assert corrected["applied_at"] is None and corrected["saved_at"] == date.today().isoformat()
+    funnel = api.get("/api/insights/").data["funnel"]
+    assert funnel["total"] == 0 and funnel["status_counts"] == {}
+
+
+def test_saved_at_keeps_the_date_a_job_was_saved(api, user):
+    saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
+                     format="json").data
+    assert saved["saved_at"] == "2026-09-01"
+    applied = api.patch(f"/api/applications/{saved['id']}/", {"status": "interview"}, format="json").data
+    assert applied["saved_at"] == "2026-09-01"
+    assert applied["date_applied"] == applied["applied_at"] == date.today().isoformat()
+
+
+def test_undoing_a_mistaken_saved_keeps_the_real_applied_date(api, user):
+    app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
+                   format="json").data
+    saved = api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json").data
+    # Dated as saved today, not with the applied date.
+    assert saved["date_applied"] == saved["saved_at"] == date.today().isoformat()
+    assert saved["applied_at"] is None and "previous_applied_at" not in saved
+
+    back = api.patch(f"/api/applications/{app['id']}/", {"status": "applied"}, format="json").data
+    assert back["date_applied"] == back["applied_at"] == "2026-09-01"
+    assert back["saved_at"] is None  # it was never really saved for later
+
+
+def test_editing_a_mistakenly_saved_job_leaves_its_dates_alone(api, user):
+    app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
+                   format="json").data
+    saved = api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json").data
+    edited = api.patch(f"/api/applications/{app['id']}/", {"notes": "call recruiter"}, format="json").data
+    for field in ("status", "date_applied", "applied_at", "saved_at"):
+        assert edited[field] == saved[field], field
+
+    # The applied date is still there to restore once it leaves Saved.
+    back = api.patch(f"/api/applications/{app['id']}/", {"status": "applied"}, format="json").data
+    assert back["date_applied"] == back["applied_at"] == "2026-09-01"
+
+
+def test_refreshing_keeps_the_remembered_status_current(user):
+    app = Application.objects.create(user=user, company="A", role="x", date_applied=date(2026, 9, 1), status="applied")
+    elsewhere = Application.objects.get(pk=app.pk)
+    elsewhere.status = "saved"  # set to Saved by mistake, through another instance
+    elsewhere.save()
+
+    app.refresh_from_db()
+    app.status = "applied"  # undoing it
+    app.save()
+    # Judged against the refreshed values (Saved, dated today), so the real date comes back. Against
+    # the stale ones (Applied, Sep 1) the date would look edited and today would stick.
+    assert app.date_applied == app.applied_at == date(2026, 9, 1)
+
+
+def test_undoing_a_mistaken_saved_to_rejected_keeps_the_application(api, user):
+    app = api.post("/api/applications/", {"company": "A", "role": "x", "date_applied": "2026-09-01", "status": "applied"},
+                   format="json").data
+    api.patch(f"/api/applications/{app['id']}/", {"status": "saved"}, format="json")
+    rejected = api.patch(f"/api/applications/{app['id']}/", {"status": "rejected"}, format="json").data
+    assert rejected["date_applied"] == rejected["applied_at"] == "2026-09-01"
+    assert api.get("/api/insights/").data["funnel"]["total"] == 1
+
+
+def test_saving_an_edit_does_not_query_the_old_values_again(api, user, django_assert_num_queries):
+    app = Application.objects.create(user=user, company="A", role="x", date_applied=date(2026, 9, 1), status="saved")
+    app = Application.objects.get(pk=app.pk)
+    app.status = "applied"
+    with django_assert_num_queries(1):  # just the UPDATE
+        app.save()
+    app.status = "saved"  # values remembered from that save, not the original load
+    with django_assert_num_queries(1):
+        app.save()
+    assert app.previous_applied_at == date.today()
+
+
+def test_today_is_the_users_day_not_the_servers(user):
+    from django.test import RequestFactory
+    from django.utils import timezone
+
+    from config.middleware import ClientTimezoneMiddleware
+
+    seen = []
+    middleware = ClientTimezoneMiddleware(lambda request: seen.append(timezone.get_current_timezone_name()))
+    middleware(RequestFactory().get("/", HTTP_X_TIMEZONE="Asia/Kolkata"))
+    for bad in ["../../etc/passwd", "/etc/passwd", "Asia", "Asia/Kolkata\n", "x" * 500]:
+        middleware(RequestFactory().get("/", HTTP_X_TIMEZONE=bad))  # not a zone: ignored, no error
+    middleware(RequestFactory().get("/"))
+    assert seen == ["Asia/Kolkata"] + ["UTC"] * 6
+    assert timezone.get_current_timezone_name() == "UTC"  # nothing left active afterwards
+
+
+def test_changing_a_saved_jobs_date_changes_its_saved_date(api, user):
+    saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
+                     format="json").data
+    moved = api.patch(f"/api/applications/{saved['id']}/", {"date_applied": "2026-08-28"}, format="json").data
+    assert moved["date_applied"] == moved["saved_at"] == "2026-08-28"
+    applied = api.patch(f"/api/applications/{saved['id']}/", {"status": "applied"}, format="json").data
+    assert applied["saved_at"] == "2026-08-28"
+
+
+def test_a_date_set_while_moving_back_to_saved_is_the_saved_date(api, user):
+    app = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
+                   format="json").data
+    api.patch(f"/api/applications/{app['id']}/", {"status": "applied", "date_applied": "2026-09-05"}, format="json")
+    back = api.patch(f"/api/applications/{app['id']}/", {"status": "saved", "date_applied": "2026-09-03"},
+                     format="json").data
+    assert back["date_applied"] == back["saved_at"] == "2026-09-03"
+
+
+def test_refresh_from_db_takes_fields_by_position_too(user):
+    app = Application.objects.create(user=user, company="A", role="x", date_applied=date(2026, 9, 1), status="applied")
+    Application.objects.filter(pk=app.pk).update(status="saved", date_applied=date(2026, 9, 5))
+    app.date_applied = date(2026, 9, 9)  # unsaved local change
+    app.refresh_from_db(None, ["status"])
+    assert app._loaded == {"status": "saved", "date_applied": date(2026, 9, 1)}  # date not refreshed: kept as loaded
+
+
+def test_moving_to_applied_keeps_a_date_changed_in_the_same_edit(api, user):
+    saved = api.post("/api/applications/", {"company": "B", "role": "x", "date_applied": "2026-09-01", "status": "saved"},
+                     format="json").data
+    res = api.patch(f"/api/applications/{saved['id']}/", {"status": "applied", "date_applied": "2026-09-03"}, format="json")
+    assert res.data["date_applied"] == res.data["applied_at"] == "2026-09-03"
 
 
 def test_prep_plan_targets_weak_spots_and_ends_with_review(api, application, run_jobs):
@@ -162,7 +347,7 @@ def test_prep_plan_needs_a_date(api, application):
     assert "interview_date" in res.data
 
 
-class _FakeAnthropic(BaseHTTPRequestHandler):
+class _FakeGemini(BaseHTTPRequestHandler):
     requests = []
 
     def do_POST(self):
@@ -177,10 +362,11 @@ class _FakeAnthropic(BaseHTTPRequestHandler):
             "answer_reviews": [],
         }
         payload = json.dumps({
-            "id": "msg_test", "type": "message", "role": "assistant", "model": body["model"],
-            "content": [{"type": "text", "text": json.dumps(result)}],
-            "stop_reason": "end_turn", "stop_sequence": None,
-            "usage": {"input_tokens": 10, "output_tokens": 10},
+            "candidates": [{
+                "content": {"role": "model", "parts": [{"text": json.dumps(result)}]},
+                "finishReason": "STOP",
+            }],
+            "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 10, "totalTokenCount": 20},
         }).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -192,20 +378,22 @@ class _FakeAnthropic(BaseHTTPRequestHandler):
         pass
 
 
-def test_claude_request_shape_against_mock_server(settings, monkeypatch):
-    server = HTTPServer(("127.0.0.1", 0), _FakeAnthropic)
+def test_gemini_request_shape_against_mock_server(settings, monkeypatch):
+    server = HTTPServer(("127.0.0.1", 0), _FakeGemini)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        monkeypatch.setenv("ANTHROPIC_BASE_URL", f"http://127.0.0.1:{server.server_port}")
-        settings.ANTHROPIC_API_KEY = "sk-ant-test"
+        monkeypatch.setenv("GOOGLE_GEMINI_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+        settings.GEMINI_API_KEY = "test-key"
         result, source = ai.analyze_round({"company": "Acme", "debrief": {"questions": []}})
     finally:
         server.shutdown()
 
     assert source == "ai"
     assert result["score"] == 100
-    req = _FakeAnthropic.requests[-1]
-    assert req["body"]["model"] == settings.ANTHROPIC_MODEL
-    assert req["body"]["output_config"]["format"]["type"] == "json_schema"
-    assert req["body"]["fallbacks"] == "default"
-    assert "server-side-fallback-2026-07-01" in req["headers"].get("anthropic-beta", "")
+    req = _FakeGemini.requests[-1]
+    assert req["path"].endswith(f"/models/{settings.GEMINI_MODEL}:generateContent")
+    assert req["headers"].get("x-goog-api-key") == "test-key"
+    config = req["body"]["generationConfig"]
+    assert config["responseMimeType"] == "application/json"
+    assert config["responseJsonSchema"] == ai.ANALYSIS_SCHEMA
+    assert "interview coach" in req["body"]["systemInstruction"]["parts"][0]["text"]

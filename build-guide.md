@@ -4,7 +4,7 @@ A step-by-step guide for building the MVP from an empty folder. Each step ends w
 
 There's a working reference copy of every file in [interview-analyzer-reference.zip](/mnt/project-files/plan/interview-analyzer-reference.zip). Write the code yourself, and open the matching file from the zip when you get stuck. The paths in this guide match the zip.
 
-**Stack:** Django + DRF + SimpleJWT + PostgreSQL, Celery + Redis, Next.js 15 + TypeScript + Tailwind CSS 4 + Recharts, and the Anthropic API for analysis.
+**Stack:** Django + DRF + SimpleJWT + PostgreSQL, Celery + Redis, Next.js 15 + TypeScript + Tailwind CSS 4 + Recharts, and the Gemini API for analysis.
 
 **Time:** roughly 2 to 4 evenings. The backend is steps 1 to 9, the frontend is steps 10 to 17.
 
@@ -33,7 +33,7 @@ interview-analyzer/
 │   │   ├── serializers.py
 │   │   ├── views.py
 │   │   ├── urls.py
-│   │   ├── ai.py          Claude calls + rule-based fallback
+│   │   ├── ai.py          Gemini calls + rule-based fallback
 │   │   ├── insights.py    weak spots, pass rates, funnel
 │   │   ├── tasks.py       Celery tasks
 │   │   └── tests/
@@ -63,7 +63,7 @@ mkdir backend && cd backend
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install "django>=5.2,<6" djangorestframework djangorestframework-simplejwt django-cors-headers \
-  "psycopg[binary]" dj-database-url python-dotenv celery redis anthropic pytest pytest-django
+  "psycopg[binary]" dj-database-url python-dotenv celery redis google-genai pytest pytest-django
 pip freeze > requirements.txt
 django-admin startproject config .
 python manage.py startapp accounts
@@ -100,8 +100,8 @@ Edit `config/settings.py`. Reference: `backend/config/settings.py` in the zip.
    ```
 7. AI:
    ```python
-   ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-   ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
+   GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+   GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
    ```
 
 Next, create `config/celery.py` (the standard Django Celery setup) and import the app in `config/__init__.py`:
@@ -323,21 +323,27 @@ Build it in two layers, so the app works before you have an API key.
 - Score = average confidence × 20.
 - `rule_based_plan(context)`: take the weak-spot topics first, then a few basics for the round type. Put one topic on each day, and make the last day "light review and mock run-through".
 
-**Layer 2: Claude.** Call it only when `ANTHROPIC_API_KEY` is set. Use structured output, so the reply is always valid JSON matching a schema:
+**Layer 2: Gemini.** Call it only when `GEMINI_API_KEY` is set. Use structured output, so the reply is JSON matching a schema:
 
 ```python
-response = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY).beta.messages.create(
-    model=settings.ANTHROPIC_MODEL,
-    max_tokens=16000,
-    system=ANALYSIS_SYSTEM,
-    messages=[{"role": "user", "content": prompt}],
-    output_config={"effort": "medium", "format": {"type": "json_schema", "schema": ANALYSIS_SCHEMA}},
-    betas=["server-side-fallback-2026-07-01"],
-    fallbacks="default",
+from google import genai
+from google.genai import types
+
+response = genai.Client(api_key=settings.GEMINI_API_KEY).models.generate_content(
+    model=settings.GEMINI_MODEL,
+    contents=prompt,
+    config=types.GenerateContentConfig(
+        system_instruction=ANALYSIS_SYSTEM,
+        max_output_tokens=16000,
+        response_mime_type="application/json",
+        response_json_schema=ANALYSIS_SCHEMA,
+    ),
 )
-if response.stop_reason == "refusal": raise RuntimeError("The AI declined to analyse this content.")
-text = next(b.text for b in response.content if b.type == "text")
-return json.loads(text)
+if response.prompt_feedback and response.prompt_feedback.block_reason:  # the prompt itself was blocked: no candidates
+    raise RuntimeError("The AI declined to analyse this content.")
+if response.candidates[0].finish_reason != "STOP":  # blocked, cut off, or unfinished: the text is partial
+    raise RuntimeError("The AI didn't finish its reply. Try again.")
+return json.loads(response.text)
 ```
 
 The schemas are plain JSON Schema objects with `"additionalProperties": False` and every field in `"required"`. Copy `ANALYSIS_SCHEMA`, `PLAN_SCHEMA` and the two system prompts from the reference `ai.py`.
@@ -375,7 +381,7 @@ Write tests for:
 - the funnel counts
 - a prep plan targets weak spots, and its last day is a review day
 
-The reference has 10 tests, including one that sends a real Anthropic SDK request to a mocked HTTP server.
+The reference has 10 tests, including one that sends a real Gemini SDK request to a mocked HTTP server.
 
 **Checkpoint:** `pytest -q` passes. The backend is done.
 
@@ -511,11 +517,11 @@ celery -A config worker -l info          # in a second VS Code terminal
 
 Now analysis runs in the worker. You'll briefly see a "Queued" or "Analysing" badge in the UI before the result appears.
 
-## 19. Turn on Claude
+## 19. Turn on Gemini
 
-Get a key at console.anthropic.com and put it in `backend/.env`:
+Get a free key at aistudio.google.com/apikey and put it in `backend/.env`:
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=...
 ```
 Restart the server and worker. New analyses will show the full AI review, and the "rule-based" note disappears. Never commit `.env`: add it to `.gitignore` on day one.
 
@@ -537,4 +543,4 @@ Restart the server and worker. New analyses will show the full AI review, and th
 6. AppShell and shared dialogs
 7. Applications and Interviews tabs
 8. Analysis and Prep tabs
-9. Celery and Postgres config, Claude integration, CI
+9. Celery and Postgres config, Gemini integration, CI

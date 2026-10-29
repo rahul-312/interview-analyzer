@@ -4,13 +4,15 @@ import type { Analysis, Outcome, Severity } from '@/models/Interview';
 
 const base = 'inline-flex items-center whitespace-nowrap rounded-full px-lg py-xs text-xs font-medium';
 
-const statusStyles: Record<AppStatus, string> = {
-  applied: 'bg-smoke-white text-charcoal-gray',
-  screening: 'bg-sky-light text-sky-dark',
-  interview: 'bg-primary-light text-primary-dark',
-  offer: 'bg-mint-cream text-deep-green',
+/** Background and text colour for each status, shared by the badge and the status picker. */
+export const statusStyles: Record<AppStatus, string> = {
+  saved: 'bg-white text-medium-gray ring-1 ring-inset ring-light-gray',
+  applied: 'bg-primary-light text-primary-dark',
+  screening: 'bg-violet-light text-violet-dark',
+  interview: 'bg-amber-light text-amber-dark',
+  offer: 'bg-sky-light text-sky-dark',
   rejected: 'bg-rose-light text-rose-dark',
-  withdrawn: 'bg-amber-light text-amber-dark',
+  withdrawn: 'bg-smoke-white text-dark-gray',
 };
 
 export const StatusBadge: React.FC<{ status: AppStatus; label: string }> = ({ status, label }) => (
@@ -37,13 +39,16 @@ export const SeverityBadge: React.FC<{ severity: Severity }> = ({ severity }) =>
   <span className={`${base} ${severityStyles[severity]}`}>{severity}</span>
 );
 
-/** Shows where an analysis is: queued, analysing, failed or its score. */
-export const AnalysisBadge: React.FC<{ analysis: Analysis | null }> = ({ analysis }) => {
-  if (!analysis) return null;
+/** Shows where an analysis is: not analysed, queued, analysing, failed, out of date or its score. */
+export const AnalysisBadge: React.FC<{ analysis: Analysis | null; hasDebrief?: boolean }> = ({ analysis, hasDebrief }) => {
+  if (!analysis) {
+    return hasDebrief ? <span className={`${base} bg-amber-light text-amber-dark`}>Not analysed</span> : null;
+  }
   if (analysis.status === 'pending') return <span className={`${base} bg-smoke-white text-dark-gray`}>Queued</span>;
   if (analysis.status === 'running')
     return <span className={`${base} animate-pulse bg-primary-light text-primary-dark`}>Analysing…</span>;
   if (analysis.status === 'failed') return <span className={`${base} bg-rose-light text-rose-dark`}>Analysis failed</span>;
+  if (analysis.stale) return <span className={`${base} bg-amber-light text-amber-dark`}>Out of date</span>;
 
   const score = analysis.score ?? 0;
   const tone =

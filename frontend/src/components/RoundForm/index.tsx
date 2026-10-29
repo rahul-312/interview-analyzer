@@ -7,7 +7,7 @@ import { Field, Input, Select } from '../ui/FormControls';
 import DebriefSection, { emptyQuestion } from './DebriefSection';
 import { outcomeOptions, roundTypeOptions } from '@/config/options';
 import { useApi } from '@/hooks/useApi';
-import type { Debrief, InterviewRound, Outcome, RoundInput, RoundType } from '@/models/Interview';
+import type { Debrief, InterviewRound, Outcome, RoundInput, RoundSaveResult, RoundType } from '@/models/Interview';
 import { applicationService } from '@/services/ApplicationService';
 import { roundService } from '@/services/RoundService';
 import { errorText } from '@/utils/errorText';
@@ -17,7 +17,7 @@ interface RoundFormProps {
   applicationId?: number;
   round?: InterviewRound;
   withDebrief?: boolean;
-  onSaved: (round: InterviewRound) => void;
+  onSaved: (round: RoundSaveResult) => void;
   onCancel?: () => void;
 }
 

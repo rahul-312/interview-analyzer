@@ -19,7 +19,15 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    usage = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name"]
+        fields = ["id", "username", "email", "first_name", "usage"]
         read_only_fields = ["id", "username"]
+
+    def get_usage(self, user):
+        """The user's plan and how many analyses and prep plans they have left in the last 24 hours."""
+        from tracker.usage import usage
+
+        return usage(user)

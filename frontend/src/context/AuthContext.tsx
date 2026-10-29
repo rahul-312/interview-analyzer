@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { RegisterInput, User } from '@/models/Auth';
 import { authService } from '@/services/AuthService';
 
@@ -10,6 +10,8 @@ interface AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => void;
+  /** Refetches the user, including plan usage. */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -37,6 +39,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .finally(() => setReady(true));
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    if (!authService.hasToken()) return;
+    try {
+      const next = await authService.me();
+      // Keep the same object when nothing changed, so consumers don't re-render
+      setUser((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    } catch {
+      // Keep the current user; a 401 is already handled by the API client.
+    }
+  }, []);
+
+  // Out of something: refresh when the next one frees up, so buttons re-enable by themselves
+  const nextAvailableAt =
+    [user?.usage.analyses, user?.usage.prep_plans]
+      .filter((q) => q?.remaining === 0 && q.next_available_at)
+      .map((q) => q!.next_available_at as string)
+      .sort()[0] ?? null;
+  useEffect(() => {
+    if (!nextAvailableAt) return;
+    const delay = Math.max(0, new Date(nextAvailableAt).getTime() - Date.now()) + 1000;
+    const timer = setTimeout(refreshUser, Math.min(delay, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [nextAvailableAt, refreshUser]);
+
   const login = useCallback(async (username: string, password: string) => {
     setUser(await authService.login(username, password));
   }, []);
@@ -51,5 +77,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.href = '/login';
   }, []);
 
-  return <AuthContext.Provider value={{ user, ready, login, register, logout }}>{children}</AuthContext.Provider>;
+  // Stable value: consumers only re-render when the user or ready state actually changes
+  const value = useMemo(
+    () => ({ user, ready, login, register, logout, refreshUser }),
+    [user, ready, login, register, logout, refreshUser]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

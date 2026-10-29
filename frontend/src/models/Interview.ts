@@ -53,6 +53,10 @@ export interface Analysis {
   weaknesses: Weakness[];
   answer_reviews: AnswerReview[];
   error: string;
+  /** The debrief changed after this ran and no new analysis could start. */
+  stale: boolean;
+  /** Failed for a reason that wasn't the user's, so it was given back. */
+  refunded: boolean;
   updated_at: string;
 }
 
@@ -69,6 +73,12 @@ export interface InterviewRound {
   debrief: Debrief | null;
   analysis: Analysis | null;
   created_at: string;
+}
+
+/** What saving a round returns: the round, plus whether the daily analysis limit stopped an analysis. */
+export interface RoundSaveResult extends InterviewRound {
+  analysis_limited: boolean;
+  analysis_limit_message?: string;
 }
 
 export interface RoundInput {

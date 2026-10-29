@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
@@ -14,21 +15,38 @@ from .serializers import (
     PrepTaskSerializer,
 )
 from .tasks import analyze_round_task, generate_plan_task, queue
+from .usage import (
+    BUSY,
+    LIMITED,
+    PREP_PLAN,
+    QUEUED,
+    limit_message,
+    mark_stale,
+    reserve_analysis,
+    reserve_prep_plan,
+)
 
 
-def queue_analysis(rnd):
-    """Mark the round's analysis as pending and run it after the transaction commits."""
-    RoundAnalysis.objects.update_or_create(
-        round=rnd, defaults={"status": JobStatus.PENDING, "error": ""}
-    )
-    queue(analyze_round_task, rnd.id)
+def queue_analysis(rnd, user):
+    """
+    Starts an analysis of the round if the user's plan allows it, and runs it after the
+    transaction commits. Returns QUEUED, LIMITED (no analyses left) or BUSY (already running).
+    """
+    result, run = reserve_analysis(user, rnd)
+    if result == QUEUED:
+        queue(analyze_round_task, rnd.id, run.id)
+    return result
 
 
-def queue_plan(plan):
-    plan.status = JobStatus.PENDING
-    plan.error = ""
-    plan.save(update_fields=["status", "error"])
-    queue(generate_plan_task, plan.id)
+def queue_plan(plan, user):
+    """
+    Starts generating the plan if the user's plan allows it, and runs it after the transaction
+    commits. Returns QUEUED, LIMITED (no prep plans left) or BUSY (already generating).
+    """
+    result, run = reserve_prep_plan(user, plan)
+    if result == QUEUED:
+        queue(generate_plan_task, plan.id, run.id)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +61,7 @@ class ApplicationQuerysetMixin:
 
 class ApplicationListCreateView(ApplicationQuerysetMixin, generics.ListCreateAPIView):
     """
-    GET: list the user's applications (supports ?status= and ?search=).
+    GET: list the user's applications (supports ?status=, ?search= and ?job_url=, an exact match).
     POST: create an application. Only company, role and date_applied are required.
     """
     serializer_class = ApplicationSerializer
@@ -56,10 +74,33 @@ class ApplicationListCreateView(ApplicationQuerysetMixin, generics.ListCreateAPI
             qs = qs.filter(status=params["status"])
         if params.get("search"):
             qs = qs.filter(Q(company__icontains=params["search"]) | Q(role__icontains=params["search"]))
+        # The browser extension uses this to tell whether a job was already saved.
+        if params.get("job_url"):
+            qs = qs.filter(job_url=params["job_url"])
         return qs
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+
+class ApplicationLookupView(APIView):
+    """
+    POST {"job_urls": [...]}: which of these job links the user has saved, as {"matches": {url: id}}.
+    The browser extension asks once per page of job cards, so its "Saved" marks follow the app.
+    """
+    permission_classes = [IsAuthenticated]
+    MAX_URLS = 100
+
+    def post(self, request):
+        if not isinstance(request.data, dict):
+            return Response({"job_urls": ["Send a JSON object with a list of links."]}, status=status.HTTP_400_BAD_REQUEST)
+        urls = request.data.get("job_urls")
+        if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
+            return Response({"job_urls": ["Send a list of links."]}, status=status.HTTP_400_BAD_REQUEST)
+        if len(urls) > self.MAX_URLS:
+            return Response({"job_urls": [f"Send at most {self.MAX_URLS} links."]}, status=status.HTTP_400_BAD_REQUEST)
+        found = Application.objects.filter(user=request.user, job_url__in=[u for u in urls if u])
+        return Response({"matches": dict(found.values_list("job_url", "id"))})
 
 
 class ApplicationDetailView(ApplicationQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
@@ -80,7 +121,34 @@ class RoundQuerysetMixin:
         )
 
 
-class RoundListCreateView(RoundQuerysetMixin, generics.ListCreateAPIView):
+class AnalysisLimitMixin:
+    """
+    Queues an analysis after a debrief is saved, within the user's daily limit.
+    At the limit the round and debrief are still saved; the response says
+    `analysis_limited: true` with a message, and the analysis can be run later.
+    """
+    analysis_limited = False
+
+    def queue_if_debrief_saved(self, serializer, rnd):
+        if not serializer.debrief_saved:
+            return
+        result = queue_analysis(rnd, self.request.user)
+        if result == LIMITED:
+            self.analysis_limited = True
+            mark_stale(rnd)
+        # BUSY: an analysis is already queued or running. A queued one reads the new debrief when it
+        # starts; a running one notices the debrief changed and saves its result as out of date.
+        # Re-read so the response shows the new analysis status, not a cached one.
+        serializer.instance = self.get_queryset().get(pk=rnd.pk)
+
+    def add_limit_info(self, response):
+        response.data["analysis_limited"] = self.analysis_limited
+        if self.analysis_limited:
+            response.data["analysis_limit_message"] = limit_message(self.request.user)
+        return response
+
+
+class RoundListCreateView(RoundQuerysetMixin, AnalysisLimitMixin, generics.ListCreateAPIView):
     """
     GET: list the user's rounds (supports ?application=).
     POST: log a round. Send `debrief` to save one and queue an analysis.
@@ -97,30 +165,38 @@ class RoundListCreateView(RoundQuerysetMixin, generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         rnd = serializer.save()
-        if serializer.debrief_saved:
-            queue_analysis(rnd)
+        self.queue_if_debrief_saved(serializer, rnd)
+
+    def create(self, request, *args, **kwargs):
+        return self.add_limit_info(super().create(request, *args, **kwargs))
 
 
-class RoundDetailView(RoundQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
-    """GET, PUT, PATCH and DELETE a single round. Saving a debrief re-queues the analysis."""
+class RoundDetailView(RoundQuerysetMixin, AnalysisLimitMixin, generics.RetrieveUpdateDestroyAPIView):
+    """GET, PUT, PATCH and DELETE a single round. A changed debrief re-queues the analysis."""
     serializer_class = InterviewRoundSerializer
     permission_classes = [IsAuthenticated]
 
     def perform_update(self, serializer):
         rnd = serializer.save()
-        if serializer.debrief_saved:
-            queue_analysis(rnd)
+        self.queue_if_debrief_saved(serializer, rnd)
+
+    def update(self, request, *args, **kwargs):
+        return self.add_limit_info(super().update(request, *args, **kwargs))
 
 
 class RoundAnalyzeView(APIView):
-    """Re-runs the analysis for a round that has a debrief."""
+    """Runs (or re-runs) the analysis for a round that has a debrief. Counts against the daily limit."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         rnd = get_object_or_404(InterviewRound, pk=pk, application__user=request.user)
         if not hasattr(rnd, "debrief"):
             return Response({"detail": "Write a debrief first."}, status=status.HTTP_400_BAD_REQUEST)
-        queue_analysis(rnd)
+        result = queue_analysis(rnd, request.user)
+        if result == BUSY:
+            return Response({"detail": "This round is already being analysed."}, status=status.HTTP_409_CONFLICT)
+        if result == LIMITED:
+            return Response({"detail": limit_message(request.user)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
 
 
@@ -143,9 +219,18 @@ class PrepPlanListCreateView(PrepPlanQuerysetMixin, generics.ListCreateAPIView):
     serializer_class = PrepPlanSerializer
     permission_classes = [IsAuthenticated]
 
-    def perform_create(self, serializer):
-        plan = serializer.save(user=self.request.user)
-        queue(generate_plan_task, plan.id)
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            plan = serializer.save(user=request.user)
+            if queue_plan(plan, request.user) == LIMITED:
+                message = limit_message(request.user, PREP_PLAN)
+                # At the limit: don't keep an empty plan that can never be generated.
+                transaction.set_rollback(True)
+                return Response({"detail": message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        plan = self.get_queryset().get(pk=plan.pk)
+        return Response(self.get_serializer(plan).data, status=status.HTTP_201_CREATED)
 
 
 class PrepPlanDetailView(PrepPlanQuerysetMixin, generics.RetrieveDestroyAPIView):
@@ -155,12 +240,16 @@ class PrepPlanDetailView(PrepPlanQuerysetMixin, generics.RetrieveDestroyAPIView)
 
 
 class PrepPlanRegenerateView(APIView):
-    """Throws away the plan's tasks and generates new ones."""
+    """Throws away the plan's tasks and generates new ones. Counts against the prep-plan limit."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         plan = get_object_or_404(PrepPlan, pk=pk, user=request.user)
-        queue_plan(plan)
+        result = queue_plan(plan, request.user)
+        if result == BUSY:
+            return Response({"detail": "This plan is already being generated."}, status=status.HTTP_409_CONFLICT)
+        if result == LIMITED:
+            return Response({"detail": limit_message(request.user, PREP_PLAN)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Plan regeneration queued."}, status=status.HTTP_202_ACCEPTED)
 
 

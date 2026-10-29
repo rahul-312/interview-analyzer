@@ -9,8 +9,8 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Application
-        exclude = ["user"]
-        read_only_fields = ["created_at", "updated_at"]
+        exclude = ["user", "previous_applied_at"]
+        read_only_fields = ["applied_at", "saved_at", "created_at", "updated_at"]
 
 
 class DebriefQuestionSerializer(serializers.Serializer):
@@ -32,7 +32,7 @@ class DebriefSerializer(serializers.ModelSerializer):
 class RoundAnalysisSerializer(serializers.ModelSerializer):
     class Meta:
         model = RoundAnalysis
-        exclude = ["id", "round"]
+        exclude = ["id", "round", "run"]
         read_only_fields = [f.name for f in RoundAnalysis._meta.fields]
 
 
@@ -40,7 +40,7 @@ def advance_status(rnd):
     """Logging a round moves the application forward so the funnel stays accurate."""
     app = rnd.application
     is_screen = rnd.round_type == InterviewRound.RoundType.PHONE_SCREEN
-    if app.status == Application.Status.APPLIED:
+    if app.status in (Application.Status.SAVED, Application.Status.APPLIED):
         app.status = Application.Status.SCREENING if is_screen else Application.Status.INTERVIEW
     elif app.status == Application.Status.SCREENING and not is_screen:
         app.status = Application.Status.INTERVIEW
@@ -75,6 +75,10 @@ class InterviewRoundSerializer(serializers.ModelSerializer):
 
     def _save_debrief(self, rnd, debrief_data):
         if debrief_data is None:
+            return
+        existing = Debrief.objects.filter(round=rnd).first()
+        # Only a changed debrief needs a new analysis (the edit form re-sends it on every save).
+        if existing and all(getattr(existing, field) == value for field, value in debrief_data.items()):
             return
         Debrief.objects.update_or_create(round=rnd, defaults=debrief_data)
         self.debrief_saved = True
@@ -113,9 +117,9 @@ class PrepPlanSerializer(serializers.ModelSerializer):
         model = PrepPlan
         fields = [
             "id", "application", "company", "role", "target_round", "target_round_label",
-            "interview_date", "status", "source", "summary", "error", "tasks", "created_at",
+            "interview_date", "status", "source", "summary", "error", "refunded", "tasks", "created_at",
         ]
-        read_only_fields = ["status", "source", "summary", "error", "created_at"]
+        read_only_fields = ["status", "source", "summary", "error", "refunded", "created_at"]
 
     def validate(self, attrs):
         user = self.context["request"].user

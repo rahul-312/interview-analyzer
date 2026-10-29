@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Interview Analyzer: Save jobs",
+  "short_name": "Interview Analyzer",
+  "version": "1.0.0",
+  "description": "Save a job to Interview Analyzer from any job site or company careers page, without leaving it.",
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Save this job to Interview Analyzer",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+    "default_popup": "popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*"],
+      "exclude_matches": [
+        "https://mail.google.com/*", "https://outlook.live.com/*", "https://outlook.office.com/*", "https://outlook.office365.com/*",
+        "https://mail.yahoo.com/*", "https://*.proton.me/*", "https://web.whatsapp.com/*", "https://*.slack.com/*",
+        "https://docs.google.com/*", "https://drive.google.com/*", "https://accounts.google.com/*", "https://login.microsoftonline.com/*",
+        "https://*.paypal.com/*", "https://dashboard.stripe.com/*", "https://*.razorpay.com/*", "https://*.paytm.com/*",
+        "https://*.onlinesbi.sbi/*", "https://*.hdfcbank.com/*", "https://*.icicibank.com/*", "https://*.axisbank.com/*",
+        "https://*.kotak.com/*", "https://*.bankofamerica.com/*", "https://*.chase.com/*", "https://*.wellsfargo.com/*",
+        "https://*.1password.com/*", "https://*.bitwarden.com/*", "https://*.lastpass.com/*"
+      ],
+      "js": ["content/sites.js", "content/ui.js", "content/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

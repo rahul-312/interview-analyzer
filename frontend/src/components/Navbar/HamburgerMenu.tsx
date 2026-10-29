@@ -7,6 +7,7 @@ import { ArrowLeft, Menu } from "lucide-react";
 import Button from "../ui/Button";
 import NavButton from "./NavButton";
 import UserMenu from "./UserMenu";
+import UsageBadge from "./UsageBadge";
 import { navItems } from "@/config/navItems";
 
 const HamburgerMenu = () => {
@@ -27,7 +28,7 @@ const HamburgerMenu = () => {
 
       {/* Fullscreen menu */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page-bg">
           {/* Back button */}
           <div className="border-b border-light-gray px-6xl py-lg">
             <Button
@@ -41,24 +42,26 @@ const HamburgerMenu = () => {
 
           {/* Scrollable menu links */}
           <div className="mt-6xl flex flex-1 flex-col gap-3xl overflow-y-auto px-6xl">
-            {navItems.map((item) => (
+            {navItems.map(({ href, label, icon: Icon }) => (
               <Link
-                key={item.href}
-                href={item.href}
+                key={href}
+                href={href}
                 onClick={closeMenu}
-                className={`text-base font-medium ${
-                  router.pathname.startsWith(item.href) ? "text-primary" : "text-ink"
+                className={`flex items-center gap-2xl text-base font-medium ${
+                  router.pathname.startsWith(href) ? "text-primary" : "text-ink"
                 }`}
               >
-                {item.label}
+                <Icon size={20} strokeWidth={1.75} />
+                {label}
               </Link>
             ))}
           </div>
 
           {/* Bottom section */}
-          <div className="flex flex-col items-start gap-4xl px-6xl pb-8xl">
+          <div className="flex flex-col items-start gap-4xl border-t border-light-gray px-6xl pt-6xl pb-8xl">
+            <UsageBadge />
             <NavButton onClick={closeMenu} />
-            <UserMenu />
+            <UserMenu inline />
           </div>
         </div>
       )}

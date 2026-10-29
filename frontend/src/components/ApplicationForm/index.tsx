@@ -8,13 +8,15 @@ import MoreDetails from './MoreDetails';
 import { statusOptions } from '@/config/options';
 import type { Application, ApplicationInput, AppStatus } from '@/models/Application';
 import { applicationService } from '@/services/ApplicationService';
+import { datesApplied } from '@/utils/application';
 import { errorText } from '@/utils/errorText';
 import { today } from '@/utils/format';
 
 interface ApplicationFormProps {
   initial?: Application;
   quick?: boolean;
-  onSaved: (app: Application) => void;
+  /** Gets the saved application and what was sent, which the server may have adjusted (e.g. dates). */
+  onSaved: (app: Application, sent: ApplicationInput) => void;
   onCancel?: () => void;
 }
 
@@ -60,7 +62,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({ initial, quick = fals
       const saved = initial
         ? await applicationService.update(initial.id, form)
         : await applicationService.create(form);
-      onSaved(saved);
+      onSaved(saved, form);
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -78,7 +80,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({ initial, quick = fals
         <Field id="role" label="Role">
           <Input id="role" required value={form.role} onChange={(e) => setField('role', e.target.value)} />
         </Field>
-        <Field id="date_applied" label="Date applied">
+        <Field id="date_applied" label={datesApplied(form.status, initial) ? 'Date applied' : 'Date saved'}>
           <Input
             id="date_applied"
             type="date"
