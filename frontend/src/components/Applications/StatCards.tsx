@@ -1,11 +1,12 @@
 import React from 'react';
 import { CircleCheck, CircleX, FileCheck2, FileText, TrendingUp, UsersRound, type LucideIcon } from 'lucide-react';
 import type { Application, AppStatus } from '@/models/Application';
+import { countByStatus } from '@/utils/application';
 import { today } from '@/utils/format';
 
 interface StatCardsProps {
+  /** Every application, whatever is being searched for. */
   applications: Application[];
-  counts: Partial<Record<AppStatus, number>>;
 }
 
 interface Share {
@@ -40,18 +41,20 @@ const Figure: React.FC<{ icon: LucideIcon; tile: string; value: number; label: s
   </div>
 );
 
-/** Headline numbers: the total, how many were added this month, and each stage's share of the total. */
-const StatCards: React.FC<StatCardsProps> = ({ applications, counts }) => {
+/** Headline numbers: the total, how many were applied to this month, and each stage's share of the total. */
+const StatCards: React.FC<StatCardsProps> = ({ applications }) => {
   const total = applications.length;
   const month = today().slice(0, 7);
-  const thisMonth = applications.filter((a) => a.date_applied.startsWith(month)).length;
+  // Saved jobs carry the date they were saved, so only count the ones applied to
+  const thisMonth = applications.filter((a) => a.applied_at && a.date_applied.startsWith(month)).length;
+  const counts = countByStatus(applications);
 
   return (
     <div className="grid grid-cols-2 gap-2xl sm:grid-cols-3 xl:grid-cols-5">
       <div className={`${cardClasses} col-span-2 from-white/60 sm:col-span-1`}>
         <Figure icon={FileText} tile="bg-white/80 text-primary" value={total} label="Total applications" />
         <p className="flex items-center gap-sm text-xs text-medium-gray">
-          <TrendingUp size={14} className="text-primary" />+{thisMonth} this month
+          <TrendingUp size={14} className="text-primary" />+{thisMonth} applied this month
         </p>
       </div>
 

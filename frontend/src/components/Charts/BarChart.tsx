@@ -29,7 +29,7 @@ const BarChart: React.FC<BarChartProps> = ({
     <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
         <RechartsBarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-          <CartesianGrid vertical={false} stroke="#E2E8F0" />
+          <CartesianGrid vertical={false} stroke="var(--color-light-gray)" />
           <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: 'var(--color-medium-gray)' }} interval={0} />
           <YAxis
             allowDecimals={false}

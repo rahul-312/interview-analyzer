@@ -102,11 +102,15 @@ const ActionsMenu: React.FC<{ app: Application; onDelete: () => void }> = ({ app
 
   const item = 'flex w-full items-center gap-lg rounded-lg px-xl py-lg text-sm text-charcoal-gray hover:bg-smoke-white';
 
+  // Escape closes it (via useDismiss) and puts focus back on the button
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape' && open) ref.current?.querySelector('button')?.focus();
+  };
+
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative" onKeyDown={onKeyDown}>
       <Button
         onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`More for ${app.company}`}
         className="rounded-lg p-sm text-medium-gray hover:bg-smoke-white hover:text-ink"
@@ -116,14 +120,12 @@ const ActionsMenu: React.FC<{ app: Application; onDelete: () => void }> = ({ app
 
       {open && (
         <div
-          role="menu"
           className="absolute right-0 top-full z-20 mt-sm w-48 rounded-xl border border-light-gray bg-white p-sm shadow-lg"
         >
-          <Link role="menuitem" href={`/applications/${app.id}`} className={item}>
+          <Link href={`/applications/${app.id}`} className={item}>
             <ExternalLink size={16} /> Open
           </Link>
           <Button
-            role="menuitem"
             onClick={() => {
               close();
               onDelete();

@@ -1,6 +1,14 @@
 import type { Application, AppStatus } from "@/models/Application";
 import { formatDate, today } from "./format";
 
+/** How many applications have each status. */
+export function countByStatus(applications: Application[]): Partial<Record<AppStatus, number>> {
+  return applications.reduce<Partial<Record<AppStatus, number>>>(
+    (acc, a) => ({ ...acc, [a.status]: (acc[a.status] ?? 0) + 1 }),
+    {}
+  );
+}
+
 /** Moving a saved job to one of these means it was applied to (as the server decides). */
 const APPLIED_STATUSES: AppStatus[] = ["applied", "screening", "interview", "offer"];
 

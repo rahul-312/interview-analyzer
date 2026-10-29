@@ -16,7 +16,7 @@ import { useApi } from '@/hooks/useApi';
 import type { Application, AppStatus } from '@/models/Application';
 import type { Option } from '@/models/Common';
 import { applicationService } from '@/services/ApplicationService';
-import { dateChangeNotice } from '@/utils/application';
+import { countByStatus, dateChangeNotice } from '@/utils/application';
 import { errorText } from '@/utils/errorText';
 
 type SortKey = 'newest' | 'oldest' | 'company' | 'updated';
@@ -56,12 +56,12 @@ const Applications = () => {
   const { data, loading, error: loadError, setData } = useApi(`applications?${query}`, () =>
     applicationService.list({ search: query })
   );
+  // The stat cards cover every application, so while searching they need the unfiltered list too
+  const { data: everything } = useApi(query ? 'applications' : null, () => applicationService.list());
   const all = data ?? [];
   const shown = (status ? all.filter((a) => a.status === status) : [...all]).sort(sorters[sort]);
-  const counts = all.reduce<Partial<Record<AppStatus, number>>>(
-    (acc, a) => ({ ...acc, [a.status]: (acc[a.status] ?? 0) + 1 }),
-    {}
-  );
+  const counts = countByStatus(all);
+  const totals = query ? everything ?? [] : all;
 
   const handleStatusChange = async (app: Application, next: AppStatus) => {
     setError('');
@@ -96,7 +96,7 @@ const Applications = () => {
     <div className="flex flex-col gap-8xl">
       <PageHeader title="Applications" subtitle="Track every job you've applied for, and where it stands." />
 
-      {all.length > 0 && <StatCards applications={all} counts={counts} />}
+      {totals.length > 0 && <StatCards applications={totals} />}
 
       <div className="flex flex-wrap items-center justify-between gap-4xl">
         <StatusFilters value={status} counts={counts} total={all.length} onChange={setStatus} />

@@ -22,7 +22,7 @@ function QuotaRow({ label, quota }: { label: string; quota: Quota }) {
       <div className="mt-sm h-sm overflow-hidden rounded-full bg-white/70">
         <div
           className={`h-full rounded-full ${remaining ? "bg-primary" : "bg-amber"}`}
-          style={{ width: `${(remaining / quota.limit) * 100}%` }}
+          style={{ width: `${quota.limit > 0 ? (remaining / quota.limit) * 100 : 0}%` }}
         />
       </div>
     </div>
