@@ -21,7 +21,7 @@ const BarChart: React.FC<BarChartProps> = ({
   yKey,
   name,
   unit = '',
-  color = '#4F46E5',
+  color = 'var(--color-primary)',
   height = 240,
   maxY,
 }) => {
@@ -29,20 +29,20 @@ const BarChart: React.FC<BarChartProps> = ({
     <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
         <RechartsBarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-          <CartesianGrid vertical={false} stroke="#E2E8F0" />
-          <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: '#64748B' }} interval={0} />
+          <CartesianGrid vertical={false} stroke="var(--color-light-gray)" />
+          <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: 'var(--color-medium-gray)' }} interval={0} />
           <YAxis
             allowDecimals={false}
             tickLine={false}
             axisLine={false}
-            tick={{ fontSize: 12, fill: '#64748B' }}
+            tick={{ fontSize: 12, fill: 'var(--color-medium-gray)' }}
             domain={[0, maxY ?? 'auto']}
             unit={unit}
           />
           <Tooltip
-            cursor={{ fill: '#EEF2FF' }}
+            cursor={{ fill: 'var(--color-primary-light)' }}
             formatter={(value) => [`${value}${unit}`, name]}
-            contentStyle={{ borderRadius: 8, borderColor: '#E2E8F0', fontSize: 13 }}
+            contentStyle={{ borderRadius: 8, borderColor: 'var(--color-light-gray)', fontSize: 13 }}
           />
           <Bar dataKey={yKey} name={name} fill={color} radius={[6, 6, 0, 0]} maxBarSize={56} />
         </RechartsBarChart>

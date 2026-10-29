@@ -4,14 +4,15 @@ import type { Analysis, Outcome, Severity } from '@/models/Interview';
 
 const base = 'inline-flex items-center whitespace-nowrap rounded-full px-lg py-xs text-xs font-medium';
 
-const statusStyles: Record<AppStatus, string> = {
+/** Background and text colour for each status, shared by the badge and the status picker. */
+export const statusStyles: Record<AppStatus, string> = {
   saved: 'bg-white text-medium-gray ring-1 ring-inset ring-light-gray',
-  applied: 'bg-smoke-white text-charcoal-gray',
-  screening: 'bg-sky-light text-sky-dark',
-  interview: 'bg-primary-light text-primary-dark',
-  offer: 'bg-mint-cream text-deep-green',
+  applied: 'bg-primary-light text-primary-dark',
+  screening: 'bg-violet-light text-violet-dark',
+  interview: 'bg-amber-light text-amber-dark',
+  offer: 'bg-sky-light text-sky-dark',
   rejected: 'bg-rose-light text-rose-dark',
-  withdrawn: 'bg-amber-light text-amber-dark',
+  withdrawn: 'bg-smoke-white text-dark-gray',
 };
 
 export const StatusBadge: React.FC<{ status: AppStatus; label: string }> = ({ status, label }) => (

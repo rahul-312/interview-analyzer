@@ -25,13 +25,21 @@ const StatusFilters: React.FC<StatusFiltersProps> = ({ value, counts, total, onC
           <Button
             key={chip.value || 'all'}
             onClick={() => onChange(chip.value)}
-            className={`rounded-full border px-2xl py-sm text-sm transition-colors ${
+            aria-pressed={active}
+            className={`flex items-center gap-lg rounded-full px-3xl py-md text-sm font-medium transition-colors ${
               active
-                ? 'border-primary bg-primary text-white'
-                : 'border-input-border bg-white text-dark-gray hover:bg-page-bg'
+                ? 'border border-primary bg-primary text-white shadow-card'
+                : 'glass text-charcoal-gray hover:bg-white/80'
             }`}
           >
-            {chip.label} <span className={active ? 'text-primary-light' : 'text-light-silver'}>{count}</span>
+            {chip.label}
+            <span
+              className={`min-w-5xl rounded-full px-md text-xs tabular-nums ${
+                active ? 'bg-white/15 text-white' : 'bg-white/80 text-medium-gray'
+              }`}
+            >
+              {count}
+            </span>
           </Button>
         );
       })}

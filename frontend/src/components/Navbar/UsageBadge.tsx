@@ -19,7 +19,7 @@ export default function UsageBadge() {
     return (
       <span
         title="AI analysis is off, so rounds and prep plans use the basic rule-based engine, with no limits."
-        className="inline-flex items-center gap-sm whitespace-nowrap rounded-full bg-smoke-white px-xl py-sm text-xs font-medium text-dark-gray"
+        className="inline-flex items-center gap-sm whitespace-nowrap glass rounded-full px-2xl py-md text-xs font-medium text-dark-gray"
       >
         <Sparkles size={14} />
         {planLabel(usage.plan)} · Basic analysis

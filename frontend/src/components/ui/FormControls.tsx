@@ -3,7 +3,7 @@
 import React from 'react';
 
 export const inputClasses =
-  'block w-full rounded-lg border border-input-border bg-white px-2xl py-lg text-sm shadow-sm placeholder:text-light-silver focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-border disabled:bg-smoke-white';
+  'block w-full rounded-xl border border-input-border bg-white px-2xl py-lg text-sm shadow-sm placeholder:text-light-silver focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-border disabled:bg-smoke-white';
 
 export const Label: React.FC<React.LabelHTMLAttributes<HTMLLabelElement>> = ({ className = '', ...props }) => (
   <label className={`mb-sm block text-sm font-medium text-charcoal-gray ${className}`} {...props} />
