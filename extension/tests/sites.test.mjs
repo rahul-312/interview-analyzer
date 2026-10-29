@@ -258,6 +258,12 @@ test('pages that only look a bit like jobs get no button', () => {
   // A job-like address, but a list of results with no job open.
   let w = load('https://jobs.example.com/search?q=engineer', '<body><h1>42 engineer jobs</h1><ul><li>One</li></ul></body>');
   assert.equal(w.IASites.isJobPage(), false);
+  // Zoom meeting links (/j/<number>) on a calendar or course page.
+  w = load(
+    'https://calendar.google.com/calendar/u/0/r',
+    '<body><a href="https://us02web.zoom.us/j/81234567890?pwd=abc">Standup</a><a href="https://us02web.zoom.us/j/89876543210?pwd=def">Retro</a></body>',
+  );
+  assert.equal(w.IASites.findCards().length, 0);
   // A long article with a heading, but not at a job address.
   w = load('https://blog.example.com/posts/7', `<body><h1>My week</h1><h2>Requirements</h2><p>${LONG}</p></body>`);
   assert.equal(w.IASites.isJobPage(), false);
@@ -287,6 +293,7 @@ test('subdomains of shared hosts are sites of their own', () => {
   for (const [page, other] of [
     ['https://evil.wixsite.com/', 'https://victim.wixsite.com/jobs/1234567'],
     ['https://evil.s3.amazonaws.com/', 'https://victim.s3.amazonaws.com/jobs/1234567'],
+    ['https://a.s3.us-east-1.amazonaws.com/', 'https://b.s3.us-east-1.amazonaws.com/jobs/1234567'],
   ]) {
     assert.equal(load(page, '<body></body>').IASites.sameSite(other), false, page);
   }

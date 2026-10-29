@@ -38,7 +38,7 @@
     'wordpress.com', 'notion.site', 'myshopify.com', 'glitch.me', 'replit.app', 'surge.sh', 'wixsite.com',
     'webflow.io', 'squarespace.com', 'weebly.com', 'carrd.co', 'framer.website', 'framer.app', 'ngrok-free.app',
     'ngrok.io', 'ngrok.app', 'loca.lt', 'trycloudflare.com', 'repl.co', 'deno.dev', 'railway.app', 'up.railway.app',
-    's3.amazonaws.com', 'elasticbeanstalk.com', 'azurestaticapps.net', 'readthedocs.io', 'substack.com', 'medium.com',
+    'elasticbeanstalk.com', 'azurestaticapps.net', 'readthedocs.io', 'substack.com', 'medium.com',
   ]);
 
   /**
@@ -46,8 +46,10 @@
    * www.naukri.co.in is naukri.co.in, and acme.github.io is acme.github.io (not github.io).
    */
   function siteOf(hostname) {
+    // AWS gives out names at many depths (bucket.s3.us-east-1.amazonaws.com): each whole name is its own site.
+    if (/(^|\.)amazonaws\.com$/i.test(hostname)) return hostname.toLowerCase();
     const labels = hostname.toLowerCase().split('.');
-    // A shared host's own name can have two parts (github.io) or three (s3.amazonaws.com): the site is one more.
+    // A shared host's own name can have two parts (github.io) or three: the site is one more.
     for (const parts of [3, 2]) {
       if (labels.length > parts && SHARED_HOSTS.has(labels.slice(-parts).join('.'))) return labels.slice(-parts - 1).join('.');
     }
@@ -165,10 +167,11 @@
 
   // A job word as a whole part of an address: a host name label (jobs.lever.co, careers.acme.com) or a
   // path segment (/jobs/, /careers/, /job-openings/…), /job-listings-… and /viewjob, or a job id right
-  // after "job-" (/job-1234567-backend-engineer) or in a /j/ path (/j/backend-engineer-1234567.html).
+  // after "job-" (/job-1234567-backend-engineer) or after a job's slug in a /j/ path
+  // (/j/backend-engineer-1234567.html; a bare /j/<number> is a Zoom meeting, not a job).
   // Never a word inside a slug, so news like
   // /business/jobs-report-october-1234567.html doesn't count.
-  const JOB_WORD = String.raw`(?:^|\.)(?:jobs?|careers?)\.|\/(?:jobs?|job-openings?|careers?|positions?|openings?|vacanc(?:y|ies)|postings?|requisitions?|opportunit(?:y|ies))(?:\/|$)|\/(?:job-listings?|viewjob)\b|\/job-(?=\d{5,})|\/j\/(?=[^/?#]*\d{5,})`;
+  const JOB_WORD = String.raw`(?:^|\.)(?:jobs?|careers?)\.|\/(?:jobs?|job-openings?|careers?|positions?|openings?|vacanc(?:y|ies)|postings?|requisitions?|opportunit(?:y|ies))(?:\/|$)|\/(?:job-listings?|viewjob)\b|\/job-(?=\d{5,})|\/j\/(?=[a-z][a-z0-9-]*-\d{5,})`;
   const JOB_WORD_RE = new RegExp(JOB_WORD, 'i');
   const JOB_ID_PARAM = /^(jk|vjk|gh_jid|currentjobid|jobid|job_id)$/i;
   // Sections of a site that write about jobs rather than offer them.

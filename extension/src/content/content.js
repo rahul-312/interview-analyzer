@@ -103,15 +103,22 @@
       : null;
 
   /** Whether the card is what's on top at this point of the screen (not covered by a header or pop-up). */
-  function onTop(card, x, y) {
-    if (typeof document.elementsFromPoint !== 'function') return true;
-    const hit = document.elementsFromPoint(x, y).find((el) => !layer.contains(el));
-    return Boolean(hit && card.contains(hit));
+  // Whether a button can show at a point: "yes", "no" (the card isn't what's on top there), or
+  // "covered" (the button is already drawn there but under the card, whose list sits above the layer).
+  function onTop(card, host, x, y) {
+    if (typeof document.elementsFromPoint !== 'function') return 'yes';
+    const hits = document.elementsFromPoint(x, y);
+    const site = hits.find((el) => !layer.contains(el));
+    if (!site || !card.contains(site)) return 'no';
+    const button = hits.indexOf(host);
+    return button === -1 || button < hits.indexOf(site) ? 'yes' : 'covered';
   }
 
-  /** Whether the card is on top under the whole button (its two ends and its middle), not just part of it. */
-  const onTopUnder = (card, x, y) =>
-    [x + 2, x + BUTTON.width / 2, x + BUTTON.width - 2].every((px) => onTop(card, px, y));
+  /** The same, under the whole button (its two ends and its middle), not just part of it. */
+  function onTopUnder(card, host, x, y) {
+    const results = [x + 2, x + BUTTON.width / 2, x + BUTTON.width - 2].map((px) => onTop(card, host, px, y));
+    return results.includes('no') ? 'no' : results.includes('covered') ? 'covered' : 'yes';
+  }
 
   let positioning = false;
   function reposition() {
@@ -136,10 +143,20 @@
         const top = Math.max(box.top, 0);
         const bottom = Math.min(box.bottom, innerHeight);
         const middle = (top + bottom) / 2;
-        const x = box.right - BUTTON.width - BUTTON.inset;
-        const fits = bottom - top >= BUTTON.height && x >= box.left;
-        moves.push({ p, at: fits && onTopUnder(card, x, middle) ? { x, y: middle - BUTTON.height / 2 } : null });
+        const x = Math.round(box.right - BUTTON.width - BUTTON.inset);
+        const y = Math.round(middle - BUTTON.height / 2);
+        const spot = `${x},${y}`;
+        if (bottom - top < BUTTON.height || x < box.left || p.covered === spot) {
+          moves.push({ p, at: null });
+          return;
+        }
+        const result = onTopUnder(card, p.host, x, middle);
+        // Found drawn under its card: stays hidden until the card moves.
+        if (result === 'covered') p.covered = spot;
+        moves.push({ p, at: result === 'yes' ? { x, y, spot } : null });
       });
+
+      let moved = false;
       moves.forEach(({ p, card, gone, at }) => {
         if (gone) {
           p.host.remove();
@@ -148,10 +165,25 @@
           return;
         }
         p.host.style.display = at ? '' : 'none';
-        if (at) p.host.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(at.y)}px)`;
+        if (!at) return;
+        if (p.spot !== at.spot) moved = true;
+        p.spot = at.spot;
+        p.host.style.transform = `translate(${at.x}px, ${at.y}px)`;
       });
+      // A button just put somewhere can only be checked for being drawn under its card once it's there.
+      if (moved) reposition();
     });
   }
+
+  // Attribute changes (menus opening, but also carousels and animations, which change all the time)
+  // check again at most every 200 ms.
+  let attributeCheck = null;
+  const repositionSoon = () => {
+    attributeCheck ??= setTimeout(() => {
+      attributeCheck = null;
+      reposition();
+    }, 200);
+  };
   addEventListener('scroll', reposition, { capture: true, passive: true }); // any scroll area, not just the page
   addEventListener('resize', reposition, { passive: true });
 
@@ -226,8 +258,8 @@
     reposition();
   }).observe(document.body ?? document.documentElement, { childList: true, subtree: true });
   // Menus, drawers and pop-ups already in the page open by changing a class, style or attribute: check
-  // again what's on top of each card then (at most once a frame).
-  new MutationObserver(reposition).observe(document.body ?? document.documentElement, {
+  // again what's on top of each card then.
+  new MutationObserver(repositionSoon).observe(document.body ?? document.documentElement, {
     attributes: true,
     subtree: true,
     attributeFilter: ['class', 'style', 'open', 'hidden', 'aria-hidden', 'aria-expanded'],
