@@ -26,7 +26,7 @@ const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
  * A Naukri search page with the extension's scripts running. `worker(message)` answers what the
  * background worker would. Shadow roots are opened so the test can look inside them.
  */
-function page(worker, { url = 'https://www.naukri.com/backend-jobs', body = CARD + OTHER_CARD } = {}) {
+function page(worker, { url = 'https://www.naukri.com/backend-jobs', body = CARD + OTHER_CARD, setup } = {}) {
   const dom = new JSDOM(`<body>${body}</body>`, {
     url,
     runScripts: 'outside-only',
@@ -45,6 +45,7 @@ function page(worker, { url = 'https://www.naukri.com/backend-jobs', body = CARD
   w.Element.prototype.attachShadow = function () {
     return attach.call(this, { mode: 'open' });
   };
+  setup?.(w);
   SCRIPTS.forEach((script) => w.eval(script));
 
   const button = () => w.document.querySelector('[data-interview-analyzer]')?.shadowRoot?.querySelector('button');
@@ -143,4 +144,64 @@ test("other sites' jobs get card buttons but are never looked up", async () => {
   });
   await tick(600);
   assert.deepEqual(asked, []);
+});
+
+// ---------------------------------------------------------------------------
+// What's on top of a card. jsdom has no layout, so cards get a size and elementsFromPoint answers
+// with a set stack of elements (topmost first), the way a browser hit test would.
+
+function stackedPage(stack) {
+  return page(async () => ({ ok: false }), {
+    setup: (w) => {
+      w.HTMLElement.prototype.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 0, right: 800, width: 800, height: 100 });
+      w.document.elementsFromPoint = () => stack(w);
+    },
+  });
+}
+const firstCard = (w) => w.document.querySelector('.srp-jobtuple-wrapper .row1');
+const firstHost = (w) => w.document.querySelector('[data-interview-analyzer-layer] [data-interview-analyzer]');
+const layerOf = (w) => w.document.querySelector('[data-interview-analyzer-layer]');
+
+test('a card button shows when its card is on top, and hides under something else', async () => {
+  let covering = null;
+  const { w } = stackedPage((w) => [firstHost(w), covering ?? firstCard(w)].filter(Boolean));
+  await tick(100);
+  assert.equal(firstHost(w).style.display, '');
+  assert.match(firstHost(w).style.transform, /^translate\(\d+px, \d+px\)$/);
+
+  covering = w.document.createElement('div'); // a menu opened over the card
+  w.document.body.append(covering);
+  await tick(100);
+  assert.equal(firstHost(w).style.display, 'none');
+});
+
+test('buttons drawn under their list raise the layer above the page, once', async () => {
+  // At first the list is drawn over the layer (the button comes after the card in the stack).
+  const { w } = stackedPage((w) => (layerOf(w).style.zIndex === '5' ? [firstCard(w), firstHost(w)] : [firstHost(w), firstCard(w)]));
+  await tick(150);
+  assert.equal(layerOf(w).style.zIndex, '2147483645');
+  assert.equal(firstHost(w).style.display, '');
+});
+
+test("a button covered by its card's own menu shows again once the page changes", async () => {
+  let menuOpen = false;
+  const { w } = stackedPage((w) => {
+    if (!menuOpen) return [firstHost(w), firstCard(w)];
+    // The card's "⋯" menu, part of the card, drawn over the button.
+    return [firstCard(w).querySelector('a') ?? firstCard(w), firstHost(w)];
+  });
+  await tick(100);
+  assert.equal(firstHost(w).style.display, '');
+  // Raise first, so "covered" here means the card's own content and not the whole list.
+  w.document.querySelector('[data-interview-analyzer-layer]').style.zIndex = '2147483645';
+
+  menuOpen = true;
+  w.document.body.setAttribute('class', 'menu-open');
+  await tick(300);
+  assert.equal(firstHost(w).style.display, 'none');
+
+  menuOpen = false;
+  w.document.body.setAttribute('class', '');
+  await tick(300);
+  assert.equal(firstHost(w).style.display, '');
 });

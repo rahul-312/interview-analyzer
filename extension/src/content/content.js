@@ -121,6 +121,7 @@
   }
 
   let positioning = false;
+  let raised = false; // whether the layer had to go above the page (see below)
   function reposition() {
     if (positioning || !placed.size) return;
     positioning = true;
@@ -129,6 +130,7 @@
       // Measure every card first, then move every button: measuring after moving one would make the
       // browser lay the page out again for each button.
       const moves = [];
+      let coveredSeen = false;
       placed.forEach((p, card) => {
         if (!card.isConnected) {
           moves.push({ p, card, gone: true });
@@ -151,10 +153,23 @@
           return;
         }
         const result = onTopUnder(card, p.host, x, middle);
-        // Found drawn under its card: stays hidden until the card moves.
-        if (result === 'covered') p.covered = spot;
+        if (result === 'covered') {
+          coveredSeen = true;
+          p.covered = spot; // drawn under its card: hidden there until the card moves or the page changes
+        }
         moves.push({ p, at: result === 'yes' ? { x, y, spot } : null });
       });
+
+      // The site's list is drawn above the low layer, so every button would be hidden under it: raise the
+      // layer above the page instead, once. Menus and pop-ups still hide the buttons, by the on-top check
+      // (re-run when they open), though no longer by being drawn over them.
+      if (coveredSeen && !raised) {
+        raised = true;
+        layer.style.zIndex = '2147483645';
+        placed.forEach((q) => (q.covered = null));
+        reposition();
+        return;
+      }
 
       let moved = false;
       moves.forEach(({ p, card, gone, at }) => {
@@ -181,6 +196,8 @@
   const repositionSoon = () => {
     attributeCheck ??= setTimeout(() => {
       attributeCheck = null;
+      // Whatever covered a button (a card's own "⋯" menu, say) may have closed: look again everywhere.
+      placed.forEach((p) => (p.covered = null));
       reposition();
     }, 200);
   };
