@@ -53,15 +53,16 @@ const Applications = () => {
   // The search box in the top bar keeps its query in the URL
   const query = typeof router.query.q === 'string' ? router.query.q.trim() : '';
 
-  const { data, loading, error: loadError, setData } = useApi(`applications?${query}`, () =>
-    applicationService.list({ search: query })
-  );
-  // The stat cards cover every application, so while searching they need the unfiltered list too
-  const { data: everything } = useApi(query ? 'applications' : null, () => applicationService.list());
+  // Load everything once and search here (company or role, like the API's ?search=), so the stat
+  // cards always cover every application and typing doesn't refetch
+  const { data, loading, error: loadError, setData } = useApi('applications', () => applicationService.list());
   const all = data ?? [];
-  const shown = (status ? all.filter((a) => a.status === status) : [...all]).sort(sorters[sort]);
-  const counts = countByStatus(all);
-  const totals = query ? everything ?? [] : all;
+  const needle = query.toLowerCase();
+  const matches = needle
+    ? all.filter((a) => a.company.toLowerCase().includes(needle) || a.role.toLowerCase().includes(needle))
+    : all;
+  const shown = (status ? matches.filter((a) => a.status === status) : [...matches]).sort(sorters[sort]);
+  const counts = countByStatus(matches);
 
   const handleStatusChange = async (app: Application, next: AppStatus) => {
     setError('');
@@ -96,10 +97,10 @@ const Applications = () => {
     <div className="flex flex-col gap-8xl">
       <PageHeader title="Applications" subtitle="Track every job you've applied for, and where it stands." />
 
-      {totals.length > 0 && <StatCards applications={totals} />}
+      {all.length > 0 && <StatCards applications={all} />}
 
       <div className="flex flex-wrap items-center justify-between gap-4xl">
-        <StatusFilters value={status} counts={counts} total={all.length} onChange={setStatus} />
+        <StatusFilters value={status} counts={counts} total={matches.length} onChange={setStatus} />
 
         <div className="ml-auto flex items-center gap-lg">
           {/* List or grid */}
@@ -143,7 +144,7 @@ const Applications = () => {
 
       {loading && !data ? (
         <Loading />
-      ) : all.length === 0 && !query ? (
+      ) : all.length === 0 ? (
         // Empty state
         <Card className="py-16xl text-center">
           <p className="font-serif text-xl font-medium">No applications yet</p>

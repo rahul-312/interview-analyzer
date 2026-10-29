@@ -48,16 +48,23 @@ export default function SearchBox() {
         router.replace(url, undefined, { shallow: true });
       } else {
         jumping.current = true;
-        router.push(url).then((ok) => {
-          if (!ok) jumping.current = false;
-        });
+        // A cancelled or failed jump must not leave searching paused
+        router
+          .push(url)
+          .then((ok) => {
+            if (!ok) jumping.current = false;
+          })
+          .catch(() => {
+            jumping.current = false;
+          });
       }
     }, 250);
     return () => clearTimeout(timer);
   }, [value, urlQuery, router]);
 
   useEffect(() => {
-    setMac(/Mac|iPhone|iPad/.test(navigator.platform));
+    const nav = navigator as Navigator & { userAgentData?: { platform: string } };
+    setMac(/mac|iphone|ipad/i.test(nav.userAgentData?.platform || navigator.userAgent));
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
