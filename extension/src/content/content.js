@@ -104,15 +104,20 @@
 
   let raised = false; // whether the layer had to go above the page (see below)
 
+  // Positions that lift an element out of the card's flow, as menus, tooltips and badges are. Not
+  // "relative": cards often use it on a full-width wrapper, to anchor their own icons.
+  const FLOATING = new Set(['absolute', 'fixed', 'sticky']);
+
   /**
    * Whether something in the card at the button's spot is its own pop-up (a "⋯" menu, tooltip or
-   * badge): narrower than the card and positioned on its own. The card's background and wrappers, a
-   * link covering the whole card, and its plain text and logos aren't.
+   * badge): it, or something narrow around it, floats on its own. Only narrow elements are looked at,
+   * up to the first one nearly as wide as the card, so the card's wrappers, a link covering the whole
+   * card, and its plain text, tags and logos aren't pop-ups.
    */
   function popUpInCard(el, card, cardWidth) {
-    if (el === card || el.getBoundingClientRect().width >= cardWidth * 0.8) return false;
     for (let node = el; node && node !== card; node = node.parentElement) {
-      if (getComputedStyle(node).position !== 'static') return true;
+      if (node.getBoundingClientRect().width >= cardWidth * 0.8) return false;
+      if (FLOATING.has(getComputedStyle(node).position)) return true;
     }
     return false;
   }
@@ -186,12 +191,13 @@
         moves.push({ p, at: result === 'yes' ? { x, y, spot } : null });
       });
 
-      // Most buttons drawn under their cards means the site's whole list sits above the low layer, so
-      // every button would stay hidden: raise the layer above the page instead (until the next page).
+      // Most buttons drawn under their cards (at least two, or the one card on screen) means the site's
+      // whole list sits above the low layer, so every button would stay hidden: raise the layer above
+      // the page instead (until the next page).
       // One card's tooltip or badge covering its button isn't that, and doesn't raise it. After the
       // raise, menus and pop-ups hide the buttons by the on-top check (re-run when they open) rather
       // than by being drawn over them, so a menu opened by CSS :hover alone could have one drawn over it.
-      if (!raised && covered >= 2 && covered >= checked / 2) {
+      if (!raised && covered >= Math.min(2, checked) && covered >= checked / 2) {
         raised = true;
         layer.style.zIndex = '2147483645';
         placed.forEach((q) => (q.covered = null));
@@ -273,13 +279,15 @@
   // Job lists load as you scroll and filter, and job sites change page without reloading, so the page
   // is looked at again when it changes: at most once a second (this runs on every site, and many pages
   // change all the time), straight away when the address changes, and once more after the last change.
-  let scanned = { url: null, at: -Infinity };
+  let scanned = { url: null, path: null, at: -Infinity };
   let queued = false;
   let later = null;
 
   function scan() {
-    if (scanned.url !== null && scanned.url !== location.href) lowerLayer(); // a new page: its list may not need it
-    scanned = { url: location.href, at: performance.now() };
+    // A new page may have a list that doesn't need the raise. Only a new path counts: list sites change
+    // the query with each job clicked (?currentJobId=…), and lowering then would make the buttons flicker.
+    if (scanned.path !== null && scanned.path !== location.pathname) lowerLayer();
+    scanned = { url: location.href, path: location.pathname, at: performance.now() };
     decorateCards();
     syncFloatingButton();
   }
