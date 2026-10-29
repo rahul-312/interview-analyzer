@@ -335,3 +335,23 @@ test("a button drawn under its card's own badge shows again once the badge goes"
   w.document.body.setAttribute('class', 'badge-gone'); // the page changes; the card itself doesn't move
   await eventually(() => assert.equal(hostAt(w, 0).style.display, ''));
 });
+
+test("one card's own floating badge doesn't raise the layer, even with that card alone on screen", async () => {
+  // Tall cards: only the first is on screen. Its own badge (narrow, positioned) is drawn over its button.
+  let badge = null;
+  const { w } = stackedPage(
+    (w, { card, host }) => {
+      if (!badge) {
+        badge = w.document.createElement('span');
+        badge.dataset.width = '90';
+        badge.style.position = 'absolute';
+        card.querySelector('.cust-job-tuple').append(badge);
+      }
+      return [badge, host];
+    },
+    { cardHeight: 1000 },
+  );
+  await eventually(() => assert.equal(hostAt(w, 0)?.style.display, 'none'));
+  await tick(300);
+  assert.equal(layerOf(w).style.zIndex, '5');
+});

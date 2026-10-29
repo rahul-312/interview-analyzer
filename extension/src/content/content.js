@@ -123,7 +123,9 @@
   }
 
   // Whether a button can show at a point: "yes", "no" (something other than the card is on top there),
-  // or "covered" (the button is already drawn there but under the card, whose list sits above the layer).
+  // "covered" (the button is already drawn there but under the card's plain content: its list sits above
+  // the layer), or "under-pop-up" (drawn under one of the card's own badges or menus, which says nothing
+  // about the list).
   function onTop(card, host, x, y, cardWidth) {
     if (typeof document.elementsFromPoint !== 'function') return 'yes';
     const hits = document.elementsFromPoint(x, y);
@@ -133,13 +135,14 @@
     // over it, so the button keeps off them instead.
     if (raised && popUpInCard(site, card, cardWidth)) return 'no';
     const button = hits.indexOf(host);
-    return button === -1 || button < hits.indexOf(site) ? 'yes' : 'covered';
+    if (button === -1 || button < hits.indexOf(site)) return 'yes';
+    return popUpInCard(site, card, cardWidth) ? 'under-pop-up' : 'covered';
   }
 
   /** The same, under the whole button (its two ends and its middle), not just part of it. */
   function onTopUnder(card, host, x, y, cardWidth) {
     const results = [x + 2, x + BUTTON.width / 2, x + BUTTON.width - 2].map((px) => onTop(card, host, px, y, cardWidth));
-    return results.includes('no') ? 'no' : results.includes('covered') ? 'covered' : 'yes';
+    return ['no', 'covered', 'under-pop-up'].find((r) => results.includes(r)) ?? 'yes';
   }
 
   /** Back to the low layer, for a new page of a site that changes page without reloading. */
@@ -184,20 +187,23 @@
         }
         const result = onTopUnder(card, p.host, x, middle, box.width);
         checked += 1;
-        if (result === 'covered') {
-          covered += 1;
+        if (result === 'covered' || result === 'under-pop-up') {
           p.covered = spot; // drawn under its card: hidden there until the card moves or the page changes
         }
+        if (result === 'covered') covered += 1; // only plain content over the button counts towards a raise
         moves.push({ p, at: result === 'yes' ? { x, y, spot } : null });
       });
 
       // Most buttons drawn under their cards (at least two, or the one card on screen) means the site's
       // whole list sits above the low layer, so every button would stay hidden: raise the layer above
       // the page instead (until the next page).
-      // One card's tooltip or badge covering its button isn't that, and doesn't raise it. After the
+      // One card's own tooltip or badge covering its button isn't that (it's "under-pop-up", not
+      // counted), so it doesn't raise it, even when that card is the only one on screen. After the
       // raise, menus and pop-ups hide the buttons by the on-top check (re-run when they open) rather
       // than by being drawn over them, so a menu opened by CSS :hover alone could have one drawn over it.
-      if (!raised && covered >= Math.min(2, checked) && covered >= checked / 2) {
+      // Counts only cards checked in this pass: one already marked covered isn't, so a pass that checked
+      // nothing (covered 0 of 0) never raises it.
+      if (!raised && covered > 0 && covered >= Math.min(2, checked) && covered >= checked / 2) {
         raised = true;
         layer.style.zIndex = '2147483645';
         placed.forEach((q) => (q.covered = null));
