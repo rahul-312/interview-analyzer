@@ -1,5 +1,6 @@
 {
   "name": "interview-analyzer-extension",
+  "version": "1.0.0",
   "private": true,
   "description": "Only for tests: the extension itself has no build step and loads straight from this folder.",
   "scripts": {
