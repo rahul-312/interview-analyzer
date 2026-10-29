@@ -7,7 +7,7 @@
   if (globalThis.IAContent || !document.body) return;
   globalThis.IAContent = true;
 
-  const { findCards, fromCard, fromPage, isJobPage } = globalThis.IASites;
+  const { findCards, fromCard, fromPage, isJobPage, sameSite } = globalThis.IASites;
   const { openSaveDialog, trackButton, ask } = globalThis.IAUi;
 
   // "✓ Saved" marks come from the app: the job links on screen are checked against it in batches, and
@@ -39,14 +39,15 @@
     refreshButtons();
   }
 
-  // At most this many different jobs are looked up from one page, so no page can make the browser
-  // flood the server (jobs past it can still be saved; they just don't show "✓ Saved").
+  // Only jobs on this page's own site are looked up (a page linking to other sites' jobs could otherwise
+  // learn which ones are saved), and at most this many from one page, so no page can make the browser
+  // flood the server. Jobs not looked up can still be saved; they just don't show "✓ Saved" until then.
   const MAX_LOOKUPS = 500;
   const asked = new Set();
 
   const queueLookup = (urls) => {
     urls.forEach((url) => {
-      if (!url || (!asked.has(url) && asked.size >= MAX_LOOKUPS)) return;
+      if (!url || !sameSite(url) || (!asked.has(url) && asked.size >= MAX_LOOKUPS)) return;
       asked.add(url);
       pending.add(url);
     });
@@ -83,20 +84,29 @@
   // "+ Track" buttons sit in a layer of their own over the page, each one over the right edge of its
   // card, and are never put inside the site's lists: the site's own code (React and the like) manages
   // those, and an element it didn't create can break the layout or the list's next re-render.
-  // The layer sits low (z-index 5), so the site's sticky headers and pop-ups still cover the buttons.
+  // A button only shows where its card is what's on top, so the site's sticky headers, pop-ups and
+  // scroll areas still hide it, whatever their z-index.
+  const BUTTON = { width: 96, height: 28, inset: 12 };
   let layer = null;
-  const placed = new Map(); // card -> { host, shown }
-  const visibility =
+  const placed = new Map(); // card -> { host, near }
+  // Only cards on or near the screen are measured when the page scrolls.
+  const nearScreen =
     typeof IntersectionObserver === 'function'
       ? new IntersectionObserver((entries) => {
-          // Cards scrolled out of a list's own scroll area count as hidden too, not just off screen.
           entries.forEach((e) => {
             const p = placed.get(e.target);
-            if (p) p.shown = e.intersectionRatio >= 0.5;
+            if (p) p.near = e.isIntersecting;
           });
           reposition();
-        }, { threshold: [0, 0.5, 1] })
+        }, { rootMargin: '100px' })
       : null;
+
+  /** Whether the card is what's on top at this point of the screen (not covered by a header or pop-up). */
+  function onTop(card, x, y) {
+    if (typeof document.elementsFromPoint !== 'function') return true;
+    const hit = document.elementsFromPoint(x, y).find((el) => !layer.contains(el));
+    return Boolean(hit && card.contains(hit));
+  }
 
   let positioning = false;
   function reposition() {
@@ -104,18 +114,36 @@
     positioning = true;
     requestAnimationFrame(() => {
       positioning = false;
+      // Measure every card first, then move every button: measuring after moving one would make the
+      // browser lay the page out again for each button.
+      const moves = [];
       placed.forEach((p, card) => {
         if (!card.isConnected) {
+          moves.push({ p, card, gone: true });
+          return;
+        }
+        if (!p.near) {
+          moves.push({ p, at: null });
+          return;
+        }
+        const box = card.getBoundingClientRect();
+        // Centred on the part of the card that's on screen, so a card taller than the screen still gets one.
+        const top = Math.max(box.top, 0);
+        const bottom = Math.min(box.bottom, innerHeight);
+        const middle = (top + bottom) / 2;
+        const x = box.right - BUTTON.width - BUTTON.inset;
+        const fits = bottom - top >= BUTTON.height && x >= box.left;
+        moves.push({ p, at: fits && onTop(card, x + BUTTON.width / 2, middle) ? { x, y: middle - BUTTON.height / 2 } : null });
+      });
+      moves.forEach(({ p, card, gone, at }) => {
+        if (gone) {
           p.host.remove();
-          visibility?.unobserve(card);
+          nearScreen?.unobserve(card);
           placed.delete(card);
           return;
         }
-        p.host.style.display = p.shown ? '' : 'none';
-        if (!p.shown) return;
-        const box = card.getBoundingClientRect();
-        // Vertically centred on the card's right edge, clear of corner icons (dismiss, save, logo).
-        p.host.style.transform = `translate(${Math.round(box.right - 96 - 12)}px, ${Math.round(box.top + box.height / 2 - 14)}px)`;
+        p.host.style.display = at ? '' : 'none';
+        if (at) p.host.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(at.y)}px)`;
       });
     });
   }
@@ -129,14 +157,14 @@
       if (!layer) {
         layer = document.createElement('div');
         layer.setAttribute('data-interview-analyzer-layer', '');
-        layer.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 5; overflow: hidden;';
+        layer.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 2147483645; overflow: hidden;';
         document.documentElement.append(layer);
       }
       const button = trackButton({ onClick: () => open(fromCard(card)) });
       button.host.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: auto;';
       layer.append(button.host);
-      placed.set(card, { host: button.host, shown: !visibility });
-      visibility?.observe(card);
+      placed.set(card, { host: button.host, near: !nearScreen });
+      nearScreen?.observe(card);
       register(fromCard(card).jobUrl, button);
     });
     reposition();

@@ -266,15 +266,46 @@ test('pages that only look a bit like jobs get no button', () => {
 // ---------------------------------------------------------------------------
 // Review findings, kept fixed.
 
-test("links to another site's jobs are never read, so a page can't learn which of them are saved", () => {
+test("another site's jobs: cards still, but marked as not this site's (never looked up), and never the page's own link", () => {
+  // A company careers page often links to its jobs on Greenhouse or Lever.
   const w = load(
     'https://attacker.example/page',
-    `<body><a href="https://www.linkedin.com/jobs/view/1234567">A</a><a href="https://www.linkedin.com/jobs/view/7654321">B</a>
+    `<body><ul><li><a href="https://www.linkedin.com/jobs/view/1234567">A</a></li><li><a href="https://www.linkedin.com/jobs/view/7654321">B</a></li></ul>
      <script type="application/ld+json">{"@type":"JobPosting","title":"Bait","url":"https://www.linkedin.com/jobs/view/1234567"}</script>
      <h1>Bait</h1></body>`,
   );
-  assert.equal(w.IASites.findCards().length, 0);
+  const cards = w.IASites.findCards();
+  assert.equal(cards.length, 2);
+  assert.equal(w.IASites.sameSite(w.IASites.fromCard(cards[0]).jobUrl), false);
   assert.equal(w.IASites.fromPage().jobUrl, 'https://attacker.example/page'); // not the other site's link
+});
+
+test('subdomains of shared hosts are sites of their own', () => {
+  const w = load('https://evil.github.io/', '<body></body>');
+  assert.equal(w.IASites.sameSite('https://victim.github.io/jobs/1234567'), false);
+  assert.equal(w.IASites.sameSite('https://evil.github.io/jobs/1234567'), true);
+  const li = load('https://www.linkedin.com/jobs/search', '<body></body>');
+  assert.equal(li.IASites.sameSite('https://in.linkedin.com/jobs/view/1234567'), true);
+});
+
+test('job boards with job-openings and job-<id> addresses (Monster, Instahyre) get cards', () => {
+  for (const [url, a, b] of [
+    ['https://www.foundit.in/srp', '/job-openings/java-developer-bengaluru-1234567', '/job-openings/sre-pune-7654321'],
+    ['https://www.instahyre.com/search-jobs/', '/job-1234567-backend-engineer-at-acme-bangalore/', '/job-7654321-sre-at-beta-pune/'],
+  ]) {
+    const w = load(url, `<body><ul><li><a href="${a}">One</a></li><li><a href="${b}">Two</a></li></ul></body>`);
+    assert.equal(w.IASites.findCards().length, 2, url);
+  }
+});
+
+test('a job you have already applied to is still a job page', () => {
+  for (const label of ['Applied', 'Applied 3 days ago', 'Application submitted', 'Withdraw application']) {
+    const w = load(
+      'https://careers.example.com/jobs/42',
+      `<body><h1>Platform Engineer</h1><div class="job-description"><h2>Responsibilities</h2><p>${LONG}</p></div><button>${label}</button></body>`,
+    );
+    assert.equal(w.IASites.isJobPage(), true, label);
+  }
 });
 
 test('finding cards stays fast on long lists', () => {

@@ -12,6 +12,8 @@ export interface Usage {
   plan: Plan;
   /** False with no API key on the server: jobs use the free rule-based engine and nothing is limited. */
   ai_enabled: boolean;
+  /** AI on with a free-tier Gemini key: Google may use what's sent to improve its products. */
+  ai_free_tier: boolean;
   analyses: Quota;
   prep_plans: Quota;
 }

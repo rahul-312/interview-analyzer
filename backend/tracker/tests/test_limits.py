@@ -86,7 +86,7 @@ def test_free_plan_gets_two_analyses_then_round_is_saved_without_one(api, applic
 def test_usage_is_reported_on_me(api, application, run_jobs):
     fresh = {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None}
     assert api.get("/api/auth/me/").data["usage"] == {
-        "plan": "free", "ai_enabled": True, "analyses": fresh, "prep_plans": fresh
+        "plan": "free", "ai_enabled": True, "ai_free_tier": True, "analyses": fresh, "prep_plans": fresh
     }
 
     log_round(api, application, run_jobs)
@@ -719,12 +719,31 @@ def test_daily_quota_is_not_retried_and_says_so(api, application, run_jobs, with
 
 
 @pytest.mark.parametrize("code,status", [(404, "NOT_FOUND"), (400, "INVALID_ARGUMENT"), (403, "PERMISSION_DENIED")])
-def test_setup_mistakes_say_so_instead_of_looking_like_an_outage(api, application, run_jobs, with_ai, settings, code, status):
+def test_setup_mistakes_say_so_and_log_the_details(api, application, run_jobs, with_ai, settings, caplog, code, status):
+    # Not "unavailable right now": that looks like an outage. The details are for the admin, in the log.
     settings.AI_RETRY_DELAYS = (1, 3)
     client, calls = _sequence_client(_api_error(code, status))
-    with mock.patch.object(ai, "get_client", return_value=client):
+    with mock.patch.object(ai, "get_client", return_value=client), caplog.at_level("ERROR", logger="tracker.ai"):
         res = log_round(api, application, run_jobs)
     assert len(calls) == 1
     analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
-    assert "isn't set up correctly" in analysis.error and "GEMINI_MODEL" in analysis.error
+    assert "isn't set up correctly" in analysis.error and "GEMINI" not in analysis.error
     assert analysis.refunded is True
+    assert "GEMINI_MODEL" in caplog.text and str(code) in caplog.text
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("User location is not supported for the API use.", "isn't available in the region"),
+    ("The input token count exceeds the maximum number of tokens allowed.", "too long for the AI"),
+])
+def test_rejections_users_can_act_on_get_their_own_message(api, application, run_jobs, with_ai, message, expected):
+    error = errors.ClientError(400, {"error": {"code": 400, "message": message, "status": "FAILED_PRECONDITION"}})
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(error)):
+        res = log_round(api, application, run_jobs)
+    assert expected in RoundAnalysis.objects.get(round_id=res.data["id"]).error
+
+
+def test_usage_says_whether_the_key_is_on_the_free_tier(api, settings):
+    assert api.get("/api/auth/me/").data["usage"]["ai_free_tier"] is True
+    settings.GEMINI_FREE_TIER = False
+    assert api.get("/api/auth/me/").data["usage"]["ai_free_tier"] is False

@@ -282,8 +282,20 @@ BLOCKED = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}
 BLOCKED_PROMPT = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "JAILBREAK"}
 
 # Rejections that mean the server is set up wrong (bad key, unknown model, a schema Gemini won't
-# take), not that Gemini is down, so they say so instead of "try again".
+# take), not that Gemini is down. Users are told it's a setup problem; the details are for the
+# server's admin, so they go to the log.
 SETUP_ERRORS = {400, 401, 403, 404}
+
+
+def _rejection_message(exc):
+    """What to tell the user when Gemini rejects the request (a 4xx other than 429)."""
+    detail = (exc.message or "").lower()
+    if "location is not supported" in detail:
+        return "The AI isn't available in the region this server runs in."
+    if "token" in detail and any(word in detail for word in ("exceed", "too long", "too large", "limit")):
+        return "This is too long for the AI to read. Try shortening your debrief or the job description."
+    logger.error("Gemini rejected the request; check GEMINI_API_KEY and GEMINI_MODEL: %s", exc)
+    return "The AI isn't set up correctly on the server. Try again later, or tell whoever runs this app."
 
 logger = logging.getLogger(__name__)
 
@@ -353,11 +365,7 @@ def call_gemini(system, prompt, schema, billing=None):
             if isinstance(exc, errors.APIError) and _out_of_daily_quota(exc):
                 raise NotCharged("The AI's free daily limit has been reached. Try again tomorrow.") from exc
             if isinstance(exc, errors.APIError) and exc.code in SETUP_ERRORS:
-                logger.error("Gemini rejected the request (check GEMINI_API_KEY and GEMINI_MODEL): %s", exc)
-                raise NotCharged(
-                    f"The AI isn't set up correctly on the server (Gemini said: {exc.code} {exc.status}). "
-                    "Check GEMINI_API_KEY and GEMINI_MODEL."
-                ) from exc
+                raise NotCharged(_rejection_message(exc)) from exc
             retryable = not isinstance(exc, errors.APIError) or exc.code == 429 or exc.code >= 500
             if retryable and attempt < len(delays):
                 time.sleep(delays[attempt])

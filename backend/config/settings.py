@@ -131,3 +131,5 @@ BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
 # AI: without a key, the rule-based analyzer is used.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+# Whether the key is on Gemini's free tier (no billing on its project). Set to false for a paid key.
+GEMINI_FREE_TIER = os.environ.get("GEMINI_FREE_TIER", "true").lower() not in ("false", "0", "no")

@@ -133,3 +133,14 @@ test("card buttons go in a layer of their own, never inside the site's list", as
   assert.equal(layer.querySelectorAll('[data-interview-analyzer]').length, 2);
   assert.equal(w.document.body.querySelector('[data-interview-analyzer]'), null);
 });
+
+test("other sites' jobs get card buttons but are never looked up", async () => {
+  const asked = [];
+  const link = (id) => `<li><a href="https://www.linkedin.com/jobs/view/${id}">Job ${id}</a></li>`;
+  page(async (m) => (m.type === 'lookup' && asked.push(...m.jobUrls), { ok: true, matches: {} }), {
+    url: 'https://attacker.example/page',
+    body: `<ul>${link(1234567)}${link(7654321)}</ul>`,
+  });
+  await tick(600);
+  assert.deepEqual(asked, []);
+});

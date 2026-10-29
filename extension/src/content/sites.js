@@ -30,16 +30,29 @@
   // click ids). Names like ref, from, position or currentJobId identify the job on some sites, so they stay.
   const TRACKING = new Set(['src', 'sid', 'xp', 'px', 'refid', 'trackingid', 'pagenum', 'gclid', 'fbclid', 'msclkid']);
 
-  /** The site a host belongs to: in.linkedin.com and www.linkedin.com are both linkedin.com, www.naukri.co.in is naukri.co.in. */
+  // Hosts where anyone can have a subdomain: each subdomain there is a site of its own.
+  const SHARED_HOSTS = new Set([
+    'github.io', 'gitlab.io', 'vercel.app', 'netlify.app', 'pages.dev', 'workers.dev', 'web.app', 'firebaseapp.com',
+    'herokuapp.com', 'onrender.com', 'fly.dev', 'azurewebsites.net', 'cloudfront.net', 'appspot.com', 'blogspot.com',
+    'wordpress.com', 'notion.site', 'myshopify.com', 'glitch.me', 'replit.app', 'surge.sh',
+  ]);
+
+  /**
+   * The site a host belongs to: in.linkedin.com and www.linkedin.com are both linkedin.com,
+   * www.naukri.co.in is naukri.co.in, and acme.github.io is acme.github.io (not github.io).
+   */
   function siteOf(hostname) {
     const labels = hostname.toLowerCase().split('.');
-    const twoPart = labels.length >= 3 && labels.at(-1).length === 2 && /^(co|com|org|net|ac|gov|edu)$/.test(labels.at(-2));
+    const twoPart =
+      (labels.length >= 3 && labels.at(-1).length === 2 && /^(co|com|org|net|ac|gov|edu)$/.test(labels.at(-2))) ||
+      SHARED_HOSTS.has(labels.slice(-2).join('.'));
     return labels.slice(twoPart ? -3 : -2).join('.');
   }
 
   /**
-   * Whether a link is on the site this page is on. Only those are read or looked up: any page can
-   * link to any job, and a page linking to other sites' jobs could otherwise learn which ones are saved.
+   * Whether a link is on the site this page is on. Only those are looked up for "✓ Saved": any page
+   * can link to any job, and a page linking to other sites' jobs could otherwise learn which ones are
+   * saved. (This goes by the address, so it can't tell apart sites sharing a domain it doesn't know.)
    */
   const sameSite = (url) => {
     try {
@@ -145,9 +158,11 @@
   // reloading and often carry no JobPosting at all, so the page itself is read the same way everywhere.
 
   // A job word as a whole part of an address: a host name label (jobs.lever.co, careers.acme.com) or a
-  // path segment (/jobs/, /careers/…), or /job-listings-… and /viewjob. Never inside a slug, so news
-  // like /business/jobs-report-october-1234567.html doesn't count.
-  const JOB_WORD = String.raw`(?:^|\.)(?:jobs?|careers?)\.|\/(?:jobs?|careers?|positions?|openings?|vacanc(?:y|ies)|postings?|requisitions?|opportunit(?:y|ies))(?:\/|$)|\/(?:job-listings?|viewjob)\b`;
+  // path segment (/jobs/, /careers/, /job-openings/…), /job-listings-… and /viewjob, or a job id right
+  // after "job-" (/job-1234567-backend-engineer). Never a word inside a slug, so news like
+  // /business/jobs-report-october-1234567.html doesn't count.
+  const JOB_WORD = String.raw`(?:^|\.)(?:jobs?|careers?)\.|\/(?:jobs?|job-openings?|careers?|positions?|openings?|vacanc(?:y|ies)|postings?|requisitions?|opportunit(?:y|ies))(?:\/|$)|\/(?:job-listings?|viewjob)\b|\/job-(?=\d{5,})`;
+  const JOB_WORD_RE = new RegExp(JOB_WORD, 'i');
   const JOB_ID_PARAM = /^(jk|vjk|gh_jid|currentjobid|jobid|job_id)$/i;
   // Sections of a site that write about jobs rather than offer them.
   const NOT_JOBS = /\/(news|blogs?|articles?|story|stories|opinion|press|insights|guides?|advice)(\/|$)/i;
@@ -155,7 +170,7 @@
   /** Whether an address could be a job page: a job word in it, or a job id in its query, and not in a news or blog section. */
   function jobAddress({ hostname, pathname, searchParams }) {
     if (NOT_JOBS.test(pathname)) return false;
-    return new RegExp(JOB_WORD, 'i').test(hostname + pathname) || [...searchParams.keys()].some((key) => JOB_ID_PARAM.test(key));
+    return JOB_WORD_RE.test(hostname + pathname) || [...searchParams.keys()].some((key) => JOB_ID_PARAM.test(key));
   }
 
   // Headings that start the description on almost every job page.
@@ -333,12 +348,14 @@
     };
   }
 
-  // A button or link to apply, which every job page has and articles about jobs don't.
-  const APPLY = /^(easy\s+)?apply\b|\bapply\s+(now|for (this|the) (job|role|position)|on (the )?company)/i;
+  // A button or link to apply, which every job page has and articles about jobs don't, or what replaces
+  // it once you've applied ("Applied", "Applied 3 days ago", "Application submitted", "Withdraw").
+  const APPLY =
+    /^(easy\s+)?apply\b|\bapply\s+(now|for (this|the) (job|role|position)|on (the )?company)|^(already\s+)?applied\b|\byou applied\b|\bapplication (submitted|sent)\b|^withdraw( application)?\b/i;
 
   /**
    * A page showing one job: it carries a visible JobPosting, or it has a job address, a role, a
-   * description and an apply button.
+   * description and an apply button (or the "Applied" that replaces it).
    */
   function looksLikeJobPage() {
     if (fromJsonLd().role || fromMicrodata().role) return true;
@@ -374,11 +391,14 @@
     return JOB_PATH.test(hostname + pathname) ? { url, key: url } : null;
   }
 
-  /** Links to jobs on this page's own site inside root. */
+  /**
+   * Links to jobs inside root, on any site: a company's careers page often links to its jobs on
+   * Greenhouse or Lever. Only those on this page's own site are looked up for "✓ Saved" (see sameSite).
+   */
   const jobLinks = (root) =>
     [...(root.matches?.('a[href]') ? [root] : []), ...root.querySelectorAll('a[href]')]
       .map((link) => ({ link, job: jobOf(link.getAttribute('href')) }))
-      .filter(({ job }) => job && sameSite(job.url));
+      .filter(({ job }) => job);
 
   const MANY = Symbol('several jobs');
 
@@ -497,6 +517,7 @@
 
   globalThis.IASites = {
     findCards,
+    sameSite,
     fromCard: (card) => finish(fromCard(card)),
 
     /** Whether this page shows one job, so it gets the floating "Save" button. */
