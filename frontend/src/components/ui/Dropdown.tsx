@@ -29,6 +29,7 @@ function Dropdown<T extends string>({ value, options, onChange, label, icon: Ico
   const selected = options.findIndex((o) => o.value === value);
 
   const show = (at = Math.max(selected, 0)) => {
+    if (!options.length) return;
     setActive(at);
     setOpen(true);
   };
