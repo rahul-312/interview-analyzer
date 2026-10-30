@@ -64,6 +64,7 @@
   --spacing-auth-card: 24rem;       /* (384px) */
   --spacing-page: 76rem;            /* (1216px) */
   --spacing-sidebar: 16rem;         /* (256px) */
+  --spacing-sidebar-collapsed: 5rem; /* (80px) */
 
   /* Font Sizes and Line Heights */
   --text-xxs: 0.625rem;           /* (10px) */

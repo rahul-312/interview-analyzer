@@ -10,6 +10,7 @@ import { publicRoutes } from '@/config/navItems';
 import { useAuth } from '@/context/AuthContext';
 import { DialogsProvider } from '@/context/DialogsContext';
 import { useAddApplication } from '@/hooks/useAddApplication';
+import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
 interface LayoutProps {
   children: ReactNode;
@@ -33,6 +34,7 @@ const MainLayout = ({ children }: LayoutProps) => {
   const router = useRouter();
   const { user, ready } = useAuth();
   const [isScrolled, setIsScrolled] = useState(false);
+  const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebarCollapsed();
   const isPublic = publicRoutes.includes(router.pathname);
 
   useEffect(() => {
@@ -58,8 +60,12 @@ const MainLayout = ({ children }: LayoutProps) => {
 
   return (
     <DialogsProvider>
-      <div className="min-h-screen pb-20xl md:pl-sidebar">
-        <Sidebar />
+      <div
+        className={`min-h-screen pb-20xl transition-[padding] duration-300 ease-in-out motion-reduce:transition-none ${
+          sidebarCollapsed ? 'md:pl-sidebar-collapsed' : 'md:pl-sidebar'
+        }`}
+      >
+        <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
 
         {/* Top bar */}
         <div
