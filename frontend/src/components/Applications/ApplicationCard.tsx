@@ -2,9 +2,10 @@
 
 import React, { useCallback, useRef, useState } from 'react';
 import Link from 'next/link';
-import { CalendarDays, ChevronDown, CircleSlash, Ellipsis, ExternalLink, MessagesSquare, Trash2, Wallet } from 'lucide-react';
+import { CalendarDays, CircleSlash, Ellipsis, ExternalLink, MessagesSquare, Trash2, Wallet } from 'lucide-react';
 import { statusStyles } from '../Badges';
 import Button from '../ui/Button';
+import Dropdown from '../ui/Dropdown';
 import { sourceOptions, statusOptions } from '@/config/options';
 import { useDismiss } from '@/hooks/useDismiss';
 import type { Application, AppStatus } from '@/models/Application';
@@ -35,21 +36,22 @@ const CompanyMark: React.FC<{ name: string }> = ({ name }) => (
 
 /** The status as a coloured pill that opens the list of statuses. */
 const StatusPicker: React.FC<{ app: Application; onChange: (status: AppStatus) => void }> = ({ app, onChange }) => (
-  <span className={`relative inline-flex items-center rounded-full ${statusStyles[app.status]}`}>
-    <span className="pointer-events-none absolute left-2xl size-lg rounded-full bg-current" />
-    <select
-      aria-label={`Status for ${app.company}`}
-      value={app.status}
-      onChange={(e) => onChange(e.target.value as AppStatus)}
-      className="cursor-pointer appearance-none rounded-full bg-transparent py-md pr-16xl pl-12xl text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-border"
-    >
-      {statusOptions.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-    <ChevronDown size={14} className="pointer-events-none absolute right-2xl" />
+  <Dropdown
+    label={`Status for ${app.company}`}
+    value={app.status}
+    options={statusOptions}
+    onChange={onChange}
+    align="left"
+    icon={<span className="size-lg rounded-full bg-current" />}
+    optionIcon={(status) => <StatusDot status={status} />}
+    buttonClassName={`rounded-full px-2xl py-md ${statusStyles[app.status]}`}
+  />
+);
+
+/** The status's pill colour as a small swatch, for the options in the status menu. */
+const StatusDot: React.FC<{ status: AppStatus }> = ({ status }) => (
+  <span className={`flex size-4xl items-center justify-center rounded-full ${statusStyles[status]}`}>
+    <span className="size-sm rounded-full bg-current" />
   </span>
 );
 

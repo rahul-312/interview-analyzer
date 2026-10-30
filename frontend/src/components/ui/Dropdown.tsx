@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useId, useRef, useState } from 'react';
-import { Check, ChevronDown, type LucideIcon } from 'lucide-react';
+import { Check, ChevronDown } from 'lucide-react';
 import { useDismiss } from '@/hooks/useDismiss';
 import type { Option } from '@/models/Common';
 
@@ -11,12 +11,31 @@ interface DropdownProps<T extends string> {
   onChange: (value: T) => void;
   /** Read out by screen readers along with the chosen option. */
   label: string;
-  icon?: LucideIcon;
+  /** Shown before the chosen option's label, e.g. an icon. */
+  icon?: React.ReactNode;
+  /** Shown before each option in the menu. */
+  optionIcon?: (value: T) => React.ReactNode;
+  /** Replaces the button's default glass look. */
+  buttonClassName?: string;
+  /** Which edge of the button the menu lines up with. */
+  align?: 'left' | 'right';
   className?: string;
 }
 
+const defaultButton = 'glass rounded-xl px-2xl py-xl text-charcoal-gray hover:bg-white/70';
+
 /** A select with our own menu instead of the browser's. Arrow keys, Home/End, typing a letter, Enter and Escape work like a native one. */
-function Dropdown<T extends string>({ value, options, onChange, label, icon: Icon, className = '' }: DropdownProps<T>) {
+function Dropdown<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+  icon,
+  optionIcon,
+  buttonClassName = defaultButton,
+  align = 'right',
+  className = '',
+}: DropdownProps<T>) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
@@ -102,9 +121,9 @@ function Dropdown<T extends string>({ value, options, onChange, label, icon: Ico
         onClick={() => (open ? close() : show())}
         onKeyDown={onKeyDown}
         onKeyUp={onKeyUp}
-        className="glass flex w-full cursor-pointer items-center gap-lg rounded-xl px-2xl py-xl text-sm font-medium text-charcoal-gray transition-colors hover:bg-white/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-border"
+        className={`flex w-full cursor-pointer items-center gap-lg text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-border ${buttonClassName}`}
       >
-        {Icon && <Icon size={16} className="shrink-0" />}
+        {icon && <span className="flex shrink-0">{icon}</span>}
         {/* Every label sits in the same cell, so the button is as wide as the longest and doesn't resize */}
         <span className="grid flex-1 text-left whitespace-nowrap">
           {options.map((o, i) => (
@@ -122,7 +141,7 @@ function Dropdown<T extends string>({ value, options, onChange, label, icon: Ico
         role="listbox"
         aria-label={label}
         hidden={!open}
-        className="absolute right-0 top-full z-20 mt-sm min-w-full rounded-xl border border-light-gray bg-white p-sm shadow-lg"
+        className={`absolute ${align === 'left' ? 'left-0' : 'right-0'} top-full z-20 mt-sm min-w-full rounded-xl border border-light-gray bg-white p-sm shadow-lg`}
       >
         {options.map((o, i) => {
           const isSelected = i === selected;
@@ -140,7 +159,10 @@ function Dropdown<T extends string>({ value, options, onChange, label, icon: Ico
                 i === active ? 'bg-smoke-white' : ''
               } ${isSelected ? 'font-medium text-ink' : 'text-charcoal-gray'}`}
             >
-              {o.label}
+              <span className="flex items-center gap-lg">
+                {optionIcon?.(o.value)}
+                {o.label}
+              </span>
               {isSelected && <Check size={16} className="text-primary" />}
             </li>
           );

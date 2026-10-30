@@ -122,7 +122,7 @@ const Applications = () => {
           </div>
 
           {/* Sort */}
-          <Dropdown label="Sort applications" icon={ArrowUpDown} value={sort} options={sortOptions} onChange={setSort} />
+          <Dropdown label="Sort applications" icon={<ArrowUpDown size={16} />} value={sort} options={sortOptions} onChange={setSort} />
         </div>
       </div>
 
