@@ -53,8 +53,9 @@ function Dropdown<T extends string>({
     setOpen(true);
   };
 
+  // Like a native select, picking the option that's already chosen only closes the menu
   const choose = (i: number) => {
-    onChange(options[i].value);
+    if (i !== selected) onChange(options[i].value);
     setOpen(false);
     buttonRef.current?.focus();
   };
