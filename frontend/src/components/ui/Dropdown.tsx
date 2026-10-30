@@ -50,6 +50,7 @@ function Dropdown<T extends string>({ value, options, onChange, label, icon: Ico
 
   // Focus stays on the button; the highlighted option is announced through aria-activedescendant
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!options.length) return;
     if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const i = matchLetter(e.key, open ? active : Math.max(selected, 0));
       if (i < 0) return;
