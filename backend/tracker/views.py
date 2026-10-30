@@ -6,7 +6,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import ai, insights
+from billing import entitlements
+
+from . import insights
 from .models import Application, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
 from .serializers import (
     ApplicationSerializer,
@@ -280,5 +282,6 @@ class InsightsView(APIView):
             "analysed_rounds": RoundAnalysis.objects.filter(
                 round__application__user=user, status=JobStatus.DONE
             ).count(),
-            "ai_enabled": ai.ai_enabled(),
+            # Whether this user's plan gets Gemini, as usage() reports it.
+            "ai_enabled": entitlements.ai_route(entitlements.for_user(user)) is not None,
         })

@@ -32,6 +32,22 @@ extension share one version number.
 - The free plan now includes 1 prep plan per 24 hours (was 2).
 - An admin-set plan on a profile is now a complimentary plan. Users get
   whichever is higher: that plan or their subscription.
+- Pro now has limits: 15 AI round analyses and 5 prep plans per 24 hours.
+  It was unlimited.
+- Pro jobs only use a paid-tier Gemini key (`GEMINI_PAID_API_KEY`, or
+  `GEMINI_API_KEY` with `GEMINI_FREE_TIER=false`). Before, they used the
+  same key as Free.
+
+### Upgrading
+Users whose profile was set to Pro in the admin are affected on deploy:
+- They go from unlimited to 15 analyses and 5 prep plans per 24 hours. To
+  keep them unlimited in practice, raise `PRO_ANALYSES_PER_24H` and
+  `PRO_PREP_PLANS_PER_24H`, or move them to Pro Plus in the admin.
+- If the server only has a free-tier Gemini key, they get the rule-based
+  engine until `GEMINI_PAID_API_KEY` is set. `python manage.py check`
+  warns about this (`billing.W001`).
+- Free users get 1 prep plan per 24 hours instead of 2. Set
+  `FREE_PREP_PLANS_PER_24H=2` to keep the old limit.
 
 ## [1.0.0] - 2026-10-29
 

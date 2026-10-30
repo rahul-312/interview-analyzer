@@ -48,6 +48,11 @@ export default class BillingService {
     return this.client.post<CurrentSubscription>("/subscriptions/cancel/", { at_period_end: atPeriodEnd });
   }
 
+  /** Cancels the subscription bought to start when the current one ends. Nothing was charged for it yet. */
+  cancelUpcoming() {
+    return this.client.post<CurrentSubscription>("/subscriptions/cancel/", { upcoming: true });
+  }
+
   resume() {
     return this.client.post<CurrentSubscription>("/subscriptions/resume/");
   }

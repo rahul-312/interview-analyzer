@@ -3,8 +3,9 @@ Subscription lifecycle: checkout, verification, plan changes, cancellation and r
 
 Local subscription state is only ever copied from Razorpay (a webhook, or a response to a
 server-side API call); nothing the browser sends changes it except a checkout signature, which
-only marks the checkout as verified. Every change runs under a lock on the user's profile, the
-same lock the usage limits use, so concurrent requests from one user are applied one at a time.
+only marks the checkout as verified. Every action runs under a lock on the user's row, so one
+user's billing requests are applied one at a time. It isn't the profile lock the usage limits take,
+so a slow Razorpay call never holds up the user's AI jobs.
 
 Policies (see README "Plans and billing"):
 - Upgrades (to a higher tier) apply now: Razorpay moves the subscription to the new plan straight
@@ -14,18 +15,29 @@ Policies (see README "Plans and billing"):
 - Cancelling at period end keeps access until the paid period ends; cancelling now ends it now
   (no refund). Razorpay can't undo a cancellation, so "resubscribing" before the period ends
   creates a new subscription that starts billing when the current period ends.
+- A user has at most one subscription that can be paid: a new checkout is refused while another
+  is running, scheduled, or waiting for a failed payment or a resume, and any earlier checkout
+  that was never completed is cancelled at Razorpay before a new one is created.
 """
 import logging
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from accounts.models import Profile, get_profile
+from accounts.models import get_profile
 
 from . import entitlements, razorpay, tiers
-from .models import PaymentTransaction, SubscriptionPlan, SubscriptionStatus, TERMINAL_STATUSES, UserSubscription
+from .models import (
+    OPEN_STATUSES,
+    PaymentTransaction,
+    SubscriptionPlan,
+    SubscriptionStatus,
+    TERMINAL_STATUSES,
+    UserSubscription,
+)
 from .notifications import notify
 
 logger = logging.getLogger(__name__)
@@ -56,13 +68,16 @@ def ts(value):
 
 
 def _lock_user(user):
-    get_profile(user)
-    Profile.objects.select_for_update().get(user=user)
+    get_user_model().objects.select_for_update().filter(pk=user.pk).first()
 
 
 def available_plan(code):
+    """
+    A plan that can be bought now. A tier with nowhere to send its AI jobs (no paid-tier Gemini key,
+    see entitlements.ai_route) isn't sold: it would get the rule-based engine, not what it advertises.
+    """
     plan = SubscriptionPlan.objects.filter(code=code, is_active=True).exclude(razorpay_plan_id="").first()
-    if plan is None:
+    if plan is None or not entitlements.ai_ready(plan.tier):
         raise BillingError("That plan isn't available.", code="plan_unavailable")
     return plan
 
@@ -80,7 +95,7 @@ def apply_snapshot(sub, entity, event_time=None):
     if event_time and sub.last_event_at and event_time < sub.last_event_at:
         return False
     status = entity.get("status")
-    if sub.status in TERMINAL_STATUSES and status != sub.status:
+    if sub.status in TERMINAL_STATUSES and status != sub.status and not _paid_after_expiry(sub, status):
         return False
     before = sub.status
 
@@ -111,6 +126,14 @@ def apply_snapshot(sub, entity, event_time=None):
     if before != sub.status:
         logger.info("Subscription %s: %s -> %s", sub.razorpay_subscription_id, before, sub.status)
     return True
+
+
+def _paid_after_expiry(sub, status):
+    """
+    A checkout this app gave up on (EXPIRED) that Razorpay says was paid after all. Razorpay's state
+    wins, so the user gets what they're charged for.
+    """
+    return sub.status == SubscriptionStatus.EXPIRED and status in OPEN_STATUSES
 
 
 # Payments only move forward: a late "authorized" can't undo "captured".
@@ -176,6 +199,62 @@ def reconcile(sub):
 # What the user sees
 # ---------------------------------------------------------------------------
 
+def abandon_checkout(sub):
+    """
+    Cancels a checkout that was never completed, at Razorpay as well, so its payment link can't be
+    paid later, and marks it EXPIRED. If Razorpay refuses because it was paid meanwhile, applies
+    Razorpay's state instead. Returns True if it was expired. Raises RazorpayError when Razorpay
+    can't be reached, or the checkout is still payable and couldn't be cancelled.
+    """
+    with transaction.atomic():
+        sub = UserSubscription.objects.select_for_update().get(pk=sub.pk)
+        if sub.status != SubscriptionStatus.CREATED:
+            return sub.status == SubscriptionStatus.EXPIRED
+        try:
+            razorpay.cancel_subscription(sub.razorpay_subscription_id, at_cycle_end=False)
+        except razorpay.RazorpayError:
+            entity = razorpay.fetch_subscription(sub.razorpay_subscription_id)
+            if entity.get("status") in OPEN_STATUSES:
+                apply_fresh(sub, entity)
+                return False
+            if entity.get("status") == SubscriptionStatus.CREATED:
+                raise
+        sub.status = SubscriptionStatus.EXPIRED
+        sub.ended_at = timezone.now()
+        sub.save(update_fields=["status", "ended_at", "updated_at"])
+        return True
+
+
+def checkout_blocker(user):
+    """
+    Why the user can't start a new subscription now (a BillingError), or None. Only a subscription
+    ending with its current period may be followed by a new one. Anything else that can still be
+    charged or resumed blocks it, so nobody pays for two.
+    """
+    for sub in UserSubscription.objects.filter(user=user, status__in=OPEN_STATUSES).select_related("plan"):
+        name = sub.plan.get_tier_display()
+        if sub.status == SubscriptionStatus.ACTIVE and sub.cancel_at_period_end:
+            continue
+        if sub.status == SubscriptionStatus.AUTHENTICATED and sub.start_at and sub.start_at > timezone.now():
+            return BillingError(
+                f"Your {name} subscription starts on {sub.start_at:%d %b %Y}. Cancel it first to choose another plan.",
+                status=409, code="already_scheduled",
+            )
+        if sub.status == SubscriptionStatus.AUTHENTICATED:
+            return BillingError(
+                "A subscription is already being set up. Wait a minute for the payment to be confirmed.",
+                status=409, code="activation_pending",
+            )
+        if sub.status == SubscriptionStatus.ACTIVE:
+            return BillingError(f"You're already on {name}. Change plan instead.", status=409, code="already_subscribed")
+        return BillingError(
+            f"Your {name} subscription is waiting for a payment or to be resumed. "
+            "Update the payment, resume it or cancel it before subscribing again.",
+            status=409, code="subscription_needs_attention",
+        )
+    return None
+
+
 def current_subscription(user):
     """The subscription to show: the one giving access, else the latest that got past checkout."""
     sub = entitlements.entitled_subscription(user)
@@ -212,28 +291,31 @@ def start_checkout(user, plan_code):
     with transaction.atomic():
         _lock_user(user)
         plan = available_plan(plan_code)
-        current = entitlements.entitled_subscription(user)
-        if current and not current.cancel_at_period_end:
-            raise BillingError(
-                f"You're already on {current.plan.get_tier_display()}. Change plan instead.", status=409, code="already_subscribed"
-            )
-        if tiers.RANK[Profile.objects.get(user=user).plan] >= tiers.RANK[plan.tier]:
+        blocker = checkout_blocker(user)
+        if blocker:
+            raise blocker
+        if tiers.RANK[get_profile(user).plan] >= tiers.RANK[plan.tier]:
             raise BillingError("Your account already includes this plan.", status=409, code="already_included")
-        if UserSubscription.objects.filter(user=user, status=SubscriptionStatus.AUTHENTICATED).exists():
-            raise BillingError(
-                "A subscription is already being set up. Wait a minute for the payment to be confirmed.",
-                status=409, code="activation_pending",
-            )
 
         # A repeated click, or a retry after closing Checkout, reuses the subscription already created.
+        # Any other checkout not completed (another plan, another tab, or too old) is cancelled first,
+        # so only one can ever be paid.
         reuse_after = timezone.now() - timedelta(minutes=settings.BILLING_CHECKOUT_REUSE_MINUTES)
-        existing = UserSubscription.objects.filter(
-            user=user, plan=plan, status=SubscriptionStatus.CREATED, created_at__gt=reuse_after
-        ).first()
-        if existing:
-            return existing
+        for old in UserSubscription.objects.filter(user=user, status=SubscriptionStatus.CREATED):
+            if old.plan_id == plan.id and old.created_at > reuse_after:
+                return old
+            try:
+                expired = abandon_checkout(old)
+            except razorpay.RazorpayError as exc:
+                raise _from_razorpay(exc) from exc
+            if not expired:
+                raise BillingError(
+                    "An earlier checkout went through. Wait a minute for the payment to be confirmed.",
+                    status=409, code="activation_pending",
+                )
 
         # Replacing a subscription that ends at period end: start billing when it runs out.
+        current = entitlements.entitled_subscription(user)
         start_at = current.current_end if current else None
         try:
             entity = razorpay.create_subscription(
@@ -244,10 +326,19 @@ def start_checkout(user, plan_code):
             )
         except razorpay.RazorpayError as exc:
             raise _from_razorpay(exc) from exc
-        return UserSubscription.objects.create(
-            user=user, plan=plan, interval=plan.interval, razorpay_subscription_id=entity["id"],
-            status=SubscriptionStatus.CREATED, short_url=entity.get("short_url") or "", start_at=start_at,
-        )
+        try:
+            with transaction.atomic():
+                return UserSubscription.objects.create(
+                    user=user, plan=plan, interval=plan.interval, razorpay_subscription_id=entity["id"],
+                    status=SubscriptionStatus.CREATED, short_url=entity.get("short_url") or "", start_at=start_at,
+                )
+        except Exception:
+            # Not saved, so nothing here would ever track it: don't leave it payable at Razorpay.
+            try:
+                razorpay.cancel_subscription(entity["id"], at_cycle_end=False)
+            except razorpay.RazorpayError:
+                logger.error("Razorpay subscription %s was created but not saved, and couldn't be cancelled", entity["id"])
+            raise
 
 
 def verify_checkout(user, *, payment_id, subscription_id, signature):
@@ -315,10 +406,17 @@ def change_plan(user, plan_code):
         return sub, upgrade
 
 
-def cancel(user, *, at_period_end=True):
+def cancel(user, *, at_period_end=True, upcoming=False):
+    """
+    Cancels the current subscription or, with `upcoming`, the one bought to start when it ends.
+    That one hasn't charged anything yet, so it's always cancelled straight away.
+    """
     with transaction.atomic():
         _lock_user(user)
         sub = current_subscription(user)
+        if upcoming:
+            sub = upcoming_subscription(user, sub)
+            at_period_end = False
         if sub is None or sub.status in TERMINAL_STATUSES:
             raise BillingError("You don't have a subscription to cancel.", status=409, code="no_subscription")
         if at_period_end and sub.cancel_at_period_end:

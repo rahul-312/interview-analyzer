@@ -20,12 +20,12 @@ DAY = 86_400
 
 @pytest.fixture(autouse=True)
 def billing_settings(settings):
-    """Razorpay test keys, no real AI calls and no broker."""
+    """Razorpay test keys, a paid-tier Gemini key (no real AI calls: tests that run jobs mock them) and no broker."""
     settings.RAZORPAY_KEY_ID = "rzp_test_key"
     settings.RAZORPAY_KEY_SECRET = KEY_SECRET
     settings.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET
     settings.GEMINI_API_KEY = ""
-    settings.GEMINI_PAID_API_KEY = ""
+    settings.GEMINI_PAID_API_KEY = "paid-tier-key"  # paid plans are only sold with one
     settings.GEMINI_FREE_TIER = True
     settings.BILLING_GRACE_DAYS = 3
     settings.CELERY_TASK_ALWAYS_EAGER = True
@@ -114,7 +114,10 @@ class FakeRazorpay:
         """Razorpay's side of a successful first charge."""
         now = int(time.time())
         sub = self.subscriptions[sub_id]
-        sub.update(status="active", current_start=now, current_end=now + days * DAY, charge_at=now + days * DAY)
+        sub.update(
+            status="active", current_start=now, current_end=now + days * DAY, charge_at=now + days * DAY,
+            paid_count=sub.get("paid_count", 0) + 1,
+        )
         if plan_id:
             sub["plan_id"] = plan_id
         return dict(sub)

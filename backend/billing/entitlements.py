@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 from accounts.models import Profile
@@ -45,6 +46,20 @@ def gives_access(sub, now=None):
         return True  # just activated; Razorpay sends the period with the first charge
     end = access_until(sub)
     return end is not None and now < end
+
+
+def paid_user_ids(now=None):
+    """
+    Users that a subscription gives paid access to right now, as a query: gives_access() for many
+    users at once. Keep the two in step.
+    """
+    now = now or timezone.now()
+    access = (
+        Q(status=SubscriptionStatus.ACTIVE, current_end__isnull=True)
+        | Q(cancel_at_period_end=True, current_end__gt=now)
+        | Q(cancel_at_period_end=False, current_end__gt=now - grace())
+    )
+    return UserSubscription.objects.filter(access, status__in=ACCESS_STATUSES).values("user_id")
 
 
 def entitled_subscription(user, now=None):
@@ -102,3 +117,8 @@ def ai_route(tier):
     if not key:
         return None
     return AiRoute(api_key=key, model=tier.ai_model, provider_may_train=bool(free_tier_key) and key == free_tier_key)
+
+
+def ai_ready(code):
+    """Whether jobs on this plan can use Gemini. A paid plan that can't isn't sold (see billing.checks)."""
+    return ai_route(tiers.get_tier(code)) is not None

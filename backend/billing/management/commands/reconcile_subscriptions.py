@@ -10,20 +10,21 @@ from billing.models import SubscriptionStatus, TERMINAL_STATUSES, UserSubscripti
 class Command(BaseCommand):
     help = (
         "Fetches every open subscription from Razorpay and applies its state, in case webhooks were missed. "
-        "Checkouts never completed within a day are marked expired. Safe to run as often as you like (e.g. hourly cron)."
+        "Checkouts still not completed after a day are cancelled at Razorpay and marked expired. "
+        "Safe to run as often as you like (e.g. hourly cron)."
     )
 
     def handle(self, *args, **options):
         stale = timezone.now() - timedelta(days=1)
-        expired = UserSubscription.objects.filter(status=SubscriptionStatus.CREATED, created_at__lt=stale)
-        to_check = UserSubscription.objects.exclude(status__in=TERMINAL_STATUSES).exclude(pk__in=expired.values("pk"))
-        synced = failed = 0
-        for sub in to_check.iterator():
+        synced = failed = expired = 0
+        for sub in UserSubscription.objects.exclude(status__in=TERMINAL_STATUSES).iterator():
             try:
-                services.reconcile(sub)
+                # Razorpay's word first: a checkout that looks abandoned here may have been paid.
+                sub = services.reconcile(sub)
                 synced += 1
+                if sub.status == SubscriptionStatus.CREATED and sub.created_at < stale and services.abandon_checkout(sub):
+                    expired += 1
             except razorpay.RazorpayError as exc:
                 failed += 1
                 self.stderr.write(f"{sub.razorpay_subscription_id}: {exc.description}")
-        count = expired.update(status=SubscriptionStatus.EXPIRED)
-        self.stdout.write(f"Synced {synced}, failed {failed}, expired {count} abandoned checkouts.")
+        self.stdout.write(f"Synced {synced}, failed {failed}, expired {expired} abandoned checkouts.")

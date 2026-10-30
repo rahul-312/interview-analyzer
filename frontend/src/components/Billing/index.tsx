@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import CancelDialog from './CancelDialog';
+import CancelUpcomingDialog from './CancelUpcomingDialog';
 import Notice from './Notice';
 import PaymentHistory from './PaymentHistory';
 import SubscriptionCard from './SubscriptionCard';
@@ -21,7 +22,7 @@ const Billing = () => {
   const { refreshUser } = useAuth();
   const current = useApi('billing-current', () => billingService.current());
   const payments = useApi('billing-payments', () => billingService.payments());
-  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState<'current' | 'upcoming' | null>(null);
   const [busy, setBusy] = useState<'cancel' | 'resume' | 'pay' | null>(null);
   const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
 
@@ -47,16 +48,36 @@ const Billing = () => {
 
   const cancel = (atPeriodEnd: boolean) =>
     run('cancel', () => billingService.cancel(atPeriodEnd), (next) => {
-      setCancelOpen(false);
+      setCancelOpen(null);
       return atPeriodEnd ? "Your plan is cancelled. You'll keep it until the end of the period." : `Your plan has ended. You're on ${next.plan.name} now.`;
     });
 
-  // A failed payment: the server gives Razorpay's link to pay again or change card.
-  const pay = () =>
-    run('pay', () => billingService.resume(), (next) => {
-      if (next.payment_url) window.open(next.payment_url, '_blank', 'noopener,noreferrer');
-      return next.payment_url ? 'Razorpay opened in a new tab. Your plan comes back as soon as the payment goes through.' : null;
+  const cancelUpcoming = () =>
+    run('cancel', () => billingService.cancelUpcoming(), () => {
+      setCancelOpen(null);
+      return "Your upcoming subscription is cancelled. You won't be charged for it.";
     });
+
+  // A failed payment: the server gives Razorpay's link to pay again or change card. The tab is
+  // opened now, during the click, so popup blockers allow it, and pointed at Razorpay once the
+  // link arrives.
+  const pay = async () => {
+    if (busy) return;
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    let opened = false;
+    await run('pay', () => billingService.resume(), (next) => {
+      if (!next.payment_url) return null;
+      if (!tab) {
+        window.location.assign(next.payment_url); // blocked anyway: go there in this tab
+        return null;
+      }
+      tab.location.href = next.payment_url;
+      opened = true;
+      return 'Razorpay opened in a new tab. Your plan comes back as soon as the payment goes through.';
+    });
+    if (!opened) tab?.close();
+  };
 
   const resume = () => run('resume', () => billingService.resume(), (next) => `Welcome back to ${next.plan.name}.`);
 
@@ -115,8 +136,13 @@ const Billing = () => {
               </Button>
             )}
             {sub && me.actions.cancel && (
-              <Button variant="danger" onClick={() => setCancelOpen(true)} disabled={!!busy}>
+              <Button variant="danger" onClick={() => setCancelOpen('current')} disabled={!!busy}>
                 Cancel subscription
+              </Button>
+            )}
+            {me.upcoming && me.actions.cancel_upcoming && (
+              <Button variant="secondary" onClick={() => setCancelOpen('upcoming')} disabled={!!busy}>
+                Cancel upcoming subscription
               </Button>
             )}
           </div>
@@ -126,13 +152,21 @@ const Billing = () => {
 
       <PaymentHistory payments={payments.data} loading={payments.loading} error={payments.error} />
 
-      {cancelOpen && sub && (
+      {cancelOpen === 'current' && sub && (
         <CancelDialog
           subscription={sub}
           canWaitForPeriodEnd={me.actions.cancel_at_period_end}
           busy={busy === 'cancel'}
           onConfirm={cancel}
-          onClose={() => setCancelOpen(false)}
+          onClose={() => setCancelOpen(null)}
+        />
+      )}
+      {cancelOpen === 'upcoming' && me.upcoming && (
+        <CancelUpcomingDialog
+          subscription={me.upcoming}
+          busy={busy === 'cancel'}
+          onConfirm={cancelUpcoming}
+          onClose={() => setCancelOpen(null)}
         />
       )}
     </div>

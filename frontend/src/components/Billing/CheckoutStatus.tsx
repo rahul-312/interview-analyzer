@@ -2,6 +2,8 @@ import React from 'react';
 import Notice from './Notice';
 import { Working } from '../ui/Feedback';
 import type { CheckoutState } from '@/hooks/useCheckout';
+import { priceLabel } from '@/utils/billing';
+import { formatDate } from '@/utils/format';
 
 /** What's happening with a checkout: working, done, still being confirmed, closed or failed. */
 const CheckoutStatus: React.FC<{ state: CheckoutState }> = ({ state }) => {
@@ -21,6 +23,15 @@ const CheckoutStatus: React.FC<{ state: CheckoutState }> = ({ state }) => {
       );
     case 'success':
       return <Notice tone="success">You&apos;re on {state.current.plan.name}. Thanks for subscribing!</Notice>;
+    case 'scheduled': {
+      const upcoming = state.current.upcoming!;
+      return (
+        <Notice tone="success">
+          Your {priceLabel(upcoming.plan)} subscription starts on {formatDate(upcoming.start_at)}, when your current plan
+          ends. Thanks for subscribing!
+        </Notice>
+      );
+    }
     case 'cancelled':
       return <Notice tone="info">Checkout closed. You haven&apos;t been charged.</Notice>;
     case 'failed':

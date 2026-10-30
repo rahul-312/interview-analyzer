@@ -150,6 +150,39 @@ describe("pricing page", () => {
     expect(await screen.findByText(/You're on Pro/)).toBeTruthy();
   });
 
+  it("says when a subscription bought to follow the current one starts", async () => {
+    const ending = current("pro_monthly", {
+      subscription: { ...current("pro_monthly").subscription!, cancel_at_period_end: true },
+      actions: { ...current().actions, subscribe: true },
+    });
+    api.current.mockResolvedValue(ending);
+    api.checkout.mockResolvedValue({ ...checkoutConfig, plan: "pro_plus_monthly", starts_at: "2026-11-01T00:00:00Z" });
+    api.verify.mockResolvedValue({
+      ...ending,
+      upcoming: { ...current("pro_plus_monthly").subscription!, status: "authenticated", start_at: "2026-11-01T00:00:00Z" },
+    });
+    stubCheckout((options) => options.handler(paid));
+    render(<Pricing />);
+    await screen.findByRole("heading", { name: /Pro Plus/ });
+    await userEvent.click(within(card("Pro Plus")).getByRole("button", { name: /Pro Plus/ }));
+    expect(await screen.findByText(/subscription starts on/)).toBeTruthy();
+    expect(api.current).toHaveBeenCalledTimes(1); // shown straight away, not after polling
+  });
+
+  it("treats an error after a verified payment as still confirming, not failed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    api.checkout.mockResolvedValue(checkoutConfig);
+    api.verify.mockResolvedValue(current(null, { subscription: null }));
+    api.current.mockResolvedValueOnce(current()).mockRejectedValue(new ApiError(500, { detail: "Server error." }));
+    stubCheckout((options) => options.handler(paid));
+    render(<Pricing />);
+    await screen.findByRole("heading", { name: /Pro Plus/ });
+    await userEvent.click(within(card("Pro")).getByRole("button", { name: "Get Pro" }));
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+    expect(await screen.findByText(/Razorpay is still confirming it/)).toBeTruthy();
+    expect(screen.queryByText("Server error.")).toBeNull();
+  });
+
   it("shows the server's error when checkout can't start", async () => {
     api.checkout.mockRejectedValue(new ApiError(409, { detail: "A subscription is already being set up." }));
     render(<Pricing />);

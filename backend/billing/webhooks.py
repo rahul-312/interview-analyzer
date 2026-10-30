@@ -4,16 +4,18 @@ ID and applies it. Razorpay sends the same event more than once and in any order
 - an event already processed (or ignored) is acknowledged and not applied again;
 - a failed one is applied again when Razorpay retries it;
 - each event carries a snapshot of the subscription, applied only if it's newer than the last
-  one applied (services.apply_snapshot), and payments only ever move forward.
+  one applied (services.apply_snapshot), and payments only ever move forward;
+- a body already received under another event ID is a replay, and isn't applied again.
 """
 import logging
 
 from django.db import transaction
 from django.utils import timezone
 
-from .models import PaymentTransaction, SubscriptionStatus, UserSubscription, WebhookEvent
+from . import razorpay
+from .models import PaymentTransaction, SubscriptionStatus, TERMINAL_STATUSES, UserSubscription, WebhookEvent
 from .notifications import notify
-from .services import apply_snapshot, record_payment, ts
+from .services import apply_fresh, apply_snapshot, record_payment, ts
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +27,16 @@ HANDLED = {
 }
 
 # Customer contact and payment instrument details: dropped before an event is stored.
-_SENSITIVE = {"email", "contact", "card", "vpa", "bank_account", "customer_details", "token", "upi", "acquirer_data", "notes"}
+_SENSITIVE = {"email", "contact", "vpa", "bank_account", "customer_details", "token", "upi", "acquirer_data", "notes"}
 
 
 def redact(value):
     if isinstance(value, dict):
-        return {k: redact(v) for k, v in value.items() if k not in _SENSITIVE}
+        return {
+            # A card keeps only its network, which the payment history shows (and a reprocessed event needs).
+            k: {"network": v.get("network")} if k == "card" and isinstance(v, dict) else redact(v)
+            for k, v in value.items() if k not in _SENSITIVE
+        }
     if isinstance(value, list):
         return [redact(v) for v in value]
     return value
@@ -57,10 +63,15 @@ def _find_subscription(sub_entity, pay_entity):
     return query.filter(pk=known).first() if known else None
 
 
-def _notification(event_type, before, sub):
-    if event_type == "subscription.activated" and before != SubscriptionStatus.ACTIVE:
-        return "activated"
-    if event_type == "subscription.charged" and before == SubscriptionStatus.ACTIVE:
+_NOT_STARTED = (SubscriptionStatus.CREATED, SubscriptionStatus.AUTHENTICATED)
+
+
+def _notification(event_type, before, sub, sub_entity):
+    # Razorpay sends both activated and charged for the first payment, in either order: whichever
+    # arrives first starts the subscription, and a renewal is a charge after the first.
+    if event_type in ("subscription.activated", "subscription.charged") and before in _NOT_STARTED:
+        return "activated" if sub.status == SubscriptionStatus.ACTIVE else None
+    if event_type == "subscription.charged" and int(sub_entity.get("paid_count") or 0) > 1:
         return "renewed"
     return {
         "subscription.pending": "payment_failed",
@@ -85,22 +96,42 @@ def apply_event(event_type, data, occurred_at):
 
     before = sub.status
     applied = apply_snapshot(sub, sub_entity, occurred_at) if sub_entity else False
+    if sub_entity and not applied and sub.status not in TERMINAL_STATUSES and sub_entity.get("status") != sub.status:
+        _refresh(sub)
     if pay_entity:
         record_payment(sub, pay_entity, occurred_at)
-    kind = _notification(event_type, before, sub) if applied else None
+    kind = _notification(event_type, before, sub, sub_entity) if applied else None
     if kind:
         transaction.on_commit(lambda: notify(sub, kind))
     return WebhookEvent.Status.PROCESSED
 
 
-def handle(event_id, data):
+def _refresh(sub):
+    """
+    A snapshot was skipped as older than ours but disagrees with it. Clocks can differ (ours stamps
+    what server-side calls return), so ask Razorpay rather than risk keeping the stale state.
+    """
+    try:
+        apply_fresh(sub, razorpay.fetch_subscription(sub.razorpay_subscription_id))
+    except razorpay.RazorpayError as exc:
+        logger.warning("Couldn't refresh subscription %s: %s", sub.razorpay_subscription_id, exc.description)
+
+
+def handle(event_id, data, body_sha256=""):
     """Stores and applies a verified event, once. Returns the WebhookEvent."""
     event_type = str(data.get("event") or "")[:60]
     occurred_at = ts(data.get("created_at"))
     with transaction.atomic():
+        if body_sha256:
+            replay = WebhookEvent.objects.filter(body_sha256=body_sha256).exclude(event_id=event_id[:64]).first()
+            if replay:
+                logger.warning("Webhook %s repeats the body of %s; not applied", event_id, replay.event_id)
+                return replay
         event, _ = WebhookEvent.objects.select_for_update().get_or_create(
             event_id=event_id[:64],
-            defaults={"event_type": event_type, "payload": redact(data), "occurred_at": occurred_at},
+            defaults={
+                "event_type": event_type, "payload": redact(data), "occurred_at": occurred_at, "body_sha256": body_sha256,
+            },
         )
         if event.status in (WebhookEvent.Status.PROCESSED, WebhookEvent.Status.IGNORED):
             return event  # a repeat delivery

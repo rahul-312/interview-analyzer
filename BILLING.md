@@ -31,6 +31,8 @@ Where these are defined:
 | What counts as a run | A run counts when it starts. It's given back if it fails for a reason that isn't the user's: nothing reached the AI, which is always given back, or our side failed after the AI call, which is given back at most `BILLED_REFUNDS_PER_24H` times. Refusals and cut-off replies caused by the user's own text still count. A second request while a run is queued or running gets 409 and counts nothing. The web app and the extension use the same endpoints, so they share the same counts. |
 | At the limit | 429 with `{detail, code: "usage_limit", feature, plan, limit, used, reset_at}`. A debrief is still saved and can be analysed later. |
 | New users | Start on Free. |
+| One subscription at a time | A new checkout is refused while another subscription is running, scheduled to start, or waiting for a failed payment or a resume. The only exception is a subscription cancelled at the end of its period, which a new one can follow. Starting a checkout cancels, at Razorpay, any earlier checkout that wasn't completed, so only one can ever be paid. |
+| Paid plans without paid-tier AI | Paid plans are only sold when they can use Gemini, which needs `GEMINI_PAID_API_KEY` or a paid `GEMINI_API_KEY`. Without one, the pricing page shows the rule-based engine and the plans as unavailable, checkout refuses them, and `manage.py check` warns (`billing.W001`). |
 | Paid access | Starts only when Razorpay reports the subscription `active`, through a webhook or a server-side fetch. The browser's checkout callback alone never grants it. |
 | Failed renewal (`pending`) | Paid access continues for `BILLING_GRACE_DAYS` (default 3) after the paid period ends, while Razorpay retries the charge. |
 | `halted`, `paused`, `cancelled`, `completed`, `expired` | No paid access. |
@@ -41,13 +43,15 @@ Where these are defined:
 | Cancel at end of period (default) | Access lasts until the period ends, with no grace period after that. |
 | Cancel now | Access ends at once. The rest of the period isn't refunded. |
 | Undoing a cancellation | Razorpay can't undo one. The user subscribes again instead, and the new subscription starts billing when the current period ends, so nobody pays twice. |
+| Cancelling the new subscription | Until it starts, the dashboard's **Cancel upcoming subscription** cancels it straight away. Nothing has been charged for it. |
+| Abandoned checkouts | A checkout not completed within a day is cancelled at Razorpay, so its payment link stops working, and marked expired. If Razorpay says it was paid after all, Razorpay's state wins and the user gets the plan. |
 | Recovery | For `pending` and `halted`, the dashboard's **Update payment** opens Razorpay's hosted link to pay again or change card, and Razorpay then reactivates the subscription. For `paused`, **Resume** calls Razorpay's resume API. |
 | Complimentary plans | An admin can set `Profile.plan` to give a plan for free. The user gets whichever is higher: that plan or their subscription. |
 
 ## Debriefs and training
 
 - **Free.** Every place a debrief is written shows a notice that Free debriefs may be used to train and improve the AI. The flag that drives it is `training_notice` in the usage data.
-- **Pro and Pro Plus.** Debriefs are never sent to a Gemini key on Google's free tier, where Google may use prompts. Paid jobs use `GEMINI_PAID_API_KEY`, or `GEMINI_API_KEY` when `GEMINI_FREE_TIER=false`. If neither is set, paid jobs use the rule-based engine instead of falling back to a free-tier key.
+- **Pro and Pro Plus.** Debriefs are never sent to a Gemini key on Google's free tier, where Google may use prompts. Paid jobs use `GEMINI_PAID_API_KEY`, or `GEMINI_API_KEY` when `GEMINI_FREE_TIER=false`. If neither is set, paid plans aren't sold, and anyone already on one, including a complimentary plan, gets the rule-based engine instead of a free-tier key.
 - **Training pipelines** must select debriefs only through `billing.training.training_eligible_debriefs()`. A debrief qualifies only if:
   1. every version of it was written on Free (`Debrief.training_eligible`, which is internal and not in the API), and
   2. its author is on Free now.
@@ -71,9 +75,10 @@ Where these are defined:
 | `BILLING_EMAILS` | Set to `true` to send the app's own billing emails as well as Razorpay's. This needs Django's `EMAIL_*` settings. |
 | `GEMINI_PRO_MODEL` | The model Pro Plus uses. If blank, it uses `GEMINI_MODEL`. |
 | `GEMINI_PAID_API_KEY` | A key on a billing-enabled project, so paid plans can use AI while Free uses a free-tier key. |
-| `CELERY_PRIORITY_QUEUE` | The queue for Pro Plus jobs. Default `priority`. |
+| `CELERY_PRIORITY_QUEUE` | The queue for Pro Plus jobs. Default `priority`. A worker started without `-Q` serves it as well as the normal queue. |
+| `CACHE_URL` | A shared cache such as `redis://localhost:6379/1`. The billing rate limit counts in it, so set it whenever more than one process serves the API. Without it, each process counts separately. |
 
-Without Razorpay keys, the app still runs: plans are shown, but buying is disabled and the billing endpoints return 503.
+Without Razorpay keys, the app still runs: plans are shown, but buying is disabled and the billing endpoints return 503. That includes cancelling, so don't remove the keys while anyone has a subscription.
 
 ## Setting up Razorpay
 
@@ -88,17 +93,17 @@ Set this up separately for test mode and live mode. They have different keys, pl
    - URL: `https://<your-api-host>/api/webhooks/razorpay/`.
    - Secret: the value of `RAZORPAY_WEBHOOK_SECRET`.
    - Active events: `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.updated`, `subscription.pending`, `subscription.halted`, `subscription.cancelled`, `subscription.completed`, `subscription.paused`, `subscription.resumed`, `payment.authorized`, `payment.captured`, `payment.failed`.
-5. **Reconciliation.** Schedule `python manage.py reconcile_subscriptions` to run hourly, for example with cron or a scheduled task. It fetches every open subscription from Razorpay in case a webhook was missed, and marks checkouts abandoned for more than a day as expired.
+5. **Reconciliation.** Schedule `python manage.py reconcile_subscriptions` to run hourly, for example with cron or a scheduled task. It fetches every open subscription from Razorpay in case a webhook was missed. Checkouts still not completed after a day are cancelled at Razorpay and marked expired.
 
 ### How webhooks are handled
 
 - The `X-Razorpay-Signature` header is checked against the raw request body. Events with a bad signature get 400 and are not stored.
-- Each event is stored once, keyed by `X-Razorpay-Event-Id`:
+- Each event is stored once, keyed by `X-Razorpay-Event-Id`. That header isn't signed, so a body already received under another ID counts as a replay and isn't applied again.
   - A repeat of an event already applied gets 200 and isn't applied again.
   - If applying an event fails, the response is 500 so Razorpay retries it, and the event is kept as `failed`.
   - To retry failed events yourself, run `python manage.py reprocess_webhooks [event_id ...]`.
 - Events arrive in any order:
-  - A subscription snapshot older than the newest one already applied is skipped.
+  - A subscription snapshot older than the newest one already applied is skipped. If it disagrees with the state applied, the subscription is fetched from Razorpay, since the two clocks can differ.
   - A subscription that has ended never comes back.
   - A payment's status only moves forward, so a late `authorized` can't undo `captured`.
 - Stored events have customer contact details, card, UPI and bank details, and notes removed. Payments keep only the method and card network.
@@ -106,7 +111,7 @@ Set this up separately for test mode and live mode. They have different keys, pl
 
 ### Worker for the priority queue
 
-Pro Plus jobs go to the `priority` queue. Run a worker that serves it alongside the normal one. On Windows, add `--pool=solo`.
+Pro Plus jobs go to the `priority` queue. A worker started without `-Q`, like the one in the README, serves both queues, so nothing is left waiting. For a real priority lane, run a second worker that serves only Pro Plus. On Windows, add `--pool=solo`.
 
 ```powershell
 celery -A config worker -Q priority -l info -n priority@%h      # Pro Plus only
@@ -140,8 +145,9 @@ Before going live, check these by hand in test mode with test keys. To receive w
 
 1. Switch to live keys, a live webhook (with its own secret) and live plans (run `setup_razorpay_plans` against the live database).
 2. Serve the API over HTTPS. Razorpay only sends webhooks to public HTTPS URLs.
-3. Set `DEBUG=0`, a real `SECRET_KEY`, `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`.
+3. Set `DEBUG=0`, a real `SECRET_KEY`, `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`, and `CACHE_URL` if more than one process serves the API.
 4. Run `python manage.py migrate`. This adds the billing tables, seeds the plans, and adds the run-tier and debrief training fields.
 5. Start the Celery workers for both queues, and schedule `reconcile_subscriptions`.
-6. Set `GEMINI_PAID_API_KEY` (or a paid `GEMINI_API_KEY` with `GEMINI_FREE_TIER=false`). Without one, paid users get the rule-based engine.
-7. Keep an eye on `WebhookEvent` rows with status `failed` in the admin.
+6. Set `GEMINI_PAID_API_KEY` (or a paid `GEMINI_API_KEY` with `GEMINI_FREE_TIER=false`). Without one, paid plans aren't sold and anyone already on one gets the rule-based engine. `python manage.py check` warns about this.
+7. Decide what existing complimentary Pro users get: see "Upgrading" in the CHANGELOG.
+8. Keep an eye on `WebhookEvent` rows with status `failed` in the admin.

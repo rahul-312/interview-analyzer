@@ -67,6 +67,11 @@ class SubscriptionStatus(models.TextChoices):
 
 # Razorpay never moves a subscription out of these, so events can't move ours out of them either.
 TERMINAL_STATUSES = {SubscriptionStatus.CANCELLED, SubscriptionStatus.COMPLETED, SubscriptionStatus.EXPIRED}
+# Past checkout and not ended: Razorpay can still charge these, or they can still be resumed.
+OPEN_STATUSES = (
+    SubscriptionStatus.AUTHENTICATED, SubscriptionStatus.ACTIVE, SubscriptionStatus.PENDING,
+    SubscriptionStatus.HALTED, SubscriptionStatus.PAUSED,
+)
 
 
 class UserSubscription(models.Model):
@@ -157,6 +162,9 @@ class WebhookEvent(models.Model):
         FAILED = "failed", "Failed"
 
     event_id = models.CharField(max_length=64, unique=True)
+    # SHA-256 of the raw body. The event ID header isn't signed, so a captured body resent under a
+    # new ID is caught by this instead.
+    body_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     event_type = models.CharField(max_length=60)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.RECEIVED)
     # The event with customer contact details and payment instrument details removed, for reprocessing.

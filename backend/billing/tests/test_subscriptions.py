@@ -6,7 +6,8 @@ from django.core.management import call_command
 from django.utils import timezone
 
 from accounts.models import Profile
-from billing import entitlements, razorpay
+from billing import entitlements, razorpay, webhooks
+from billing.checks import paid_plans_have_ai
 from billing.models import PaymentTransaction, SubscriptionPlan, SubscriptionStatus, UserSubscription, WebhookEvent
 
 from .conftest import DAY, KEY_SECRET, checkout_signature, payment_entity, send_webhook
@@ -496,3 +497,160 @@ def test_setup_razorpay_plans_creates_missing_plans(db, rzp, monkeypatch):
     assert all(c["interval"] == 1 and c["item"]["currency"] == "INR" for c in created)
     assert sorted(c["period"] for c in created) == ["monthly", "monthly", "yearly"]
     assert sorted(c["item"]["amount"] for c in created) == [19900, 49900, 399900]
+
+
+# ---------------------------------------------------------------------------
+# Only what can be delivered is sold
+# ---------------------------------------------------------------------------
+
+def test_paid_plans_arent_sold_without_a_paid_tier_ai_key(api, anon, plans, rzp, settings):
+    settings.GEMINI_API_KEY = "free-key"
+    settings.GEMINI_PAID_API_KEY = ""
+    by_code = {t["code"]: t for t in anon.get("/api/subscriptions/plans/").data["tiers"]}
+    assert by_code["free"]["ai_model"] == "Flash" and by_code["free"]["ai_available"] is True
+    assert by_code["pro"]["ai_model"] == "Rule-based engine" and by_code["pro"]["ai_available"] is False
+    assert not any(p["available"] for p in by_code["pro"]["prices"] + by_code["pro_plus"]["prices"])
+
+    res = api.post("/api/subscriptions/checkout/", {"plan": "pro_monthly"}, format="json")
+    assert res.status_code == 400 and res.data["code"] == "plan_unavailable"
+    assert api.get("/api/subscriptions/current/").data["actions"]["subscribe"] is False
+    assert rzp.calls == []
+
+
+def test_deploy_check_warns_when_paid_plans_have_no_ai(settings):
+    settings.GEMINI_API_KEY = "free-key"
+    settings.GEMINI_PAID_API_KEY = ""
+    assert [w.id for w in paid_plans_have_ai(None)] == ["billing.W001"]
+    settings.GEMINI_PAID_API_KEY = "paid-key"
+    assert paid_plans_have_ai(None) == []
+
+
+# ---------------------------------------------------------------------------
+# One subscription that can be paid at a time
+# ---------------------------------------------------------------------------
+
+def test_a_new_checkout_cancels_an_unfinished_one_at_razorpay(api, plans, rzp):
+    first = checkout(api, "pro_monthly")
+    second = checkout(api, "pro_plus_monthly")
+    assert ("POST", f"/subscriptions/{first}/cancel", {"cancel_at_cycle_end": 0}) in rzp.calls
+    assert UserSubscription.objects.get(razorpay_subscription_id=first).status == "expired"
+    assert UserSubscription.objects.get(razorpay_subscription_id=second).status == "created"
+
+
+def test_a_new_checkout_waits_if_the_unfinished_one_was_paid_meanwhile(api, plans, rzp):
+    first = checkout(api, "pro_monthly")
+    rzp.subscriptions[first]["status"] = "authenticated"  # paid in another tab; its webhook hasn't arrived
+    rzp.fail_next = razorpay.RazorpayError("Subscription can't be cancelled", status=400)
+    res = api.post("/api/subscriptions/checkout/", {"plan": "pro_plus_monthly"}, format="json")
+    assert res.status_code == 409 and res.data["code"] == "activation_pending"
+    assert UserSubscription.objects.count() == 1
+
+
+def test_checkout_is_refused_while_a_subscription_waits_for_payment(api, anon, plans, rzp):
+    sub_id = subscribe(api, anon, rzp)
+    send_webhook(anon, "subscription.halted", subscription={**rzp.subscriptions[sub_id], "status": "halted"},
+                 created_at=int(time.time()) + 1)
+    actions = api.get("/api/subscriptions/current/").data["actions"]
+    assert actions["subscribe"] is False and actions["pay"] is True
+    res = api.post("/api/subscriptions/checkout/", {"plan": "pro_plus_monthly"}, format="json")
+    assert res.status_code == 409 and res.data["code"] == "subscription_needs_attention"
+
+    # Cancelling it clears the way.
+    assert api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json").status_code == 200
+    assert api.get("/api/subscriptions/current/").data["actions"]["subscribe"] is True
+
+
+def test_upcoming_subscription_can_be_cancelled_before_it_starts(api, anon, plans, rzp):
+    subscribe(api, anon, rzp)
+    api.post("/api/subscriptions/cancel/", {}, format="json")
+    new_id = checkout(api, "pro_yearly")
+    send_webhook(anon, "subscription.authenticated", subscription={**rzp.subscriptions[new_id], "status": "authenticated"},
+                 created_at=int(time.time()) + 1)
+    data = api.get("/api/subscriptions/current/").data
+    assert data["upcoming"]["plan"]["code"] == "pro_yearly"
+    assert data["actions"]["cancel_upcoming"] is True and data["actions"]["subscribe"] is False
+
+    res = api.post("/api/subscriptions/cancel/", {"upcoming": True}, format="json")
+    assert res.status_code == 200 and res.data["upcoming"] is None
+    assert rzp.calls[-1] == ("POST", f"/subscriptions/{new_id}/cancel", {"cancel_at_cycle_end": 0})
+    assert UserSubscription.objects.get(razorpay_subscription_id=new_id).status == "cancelled"
+    assert res.data["plan"]["code"] == "pro"  # the current one still runs to the end of its period
+
+
+# ---------------------------------------------------------------------------
+# Abandoned checkouts
+# ---------------------------------------------------------------------------
+
+def test_reconcile_cancels_abandoned_checkouts_at_razorpay(api, plans, rzp):
+    sub_id = checkout(api)
+    UserSubscription.objects.update(created_at=timezone.now() - timedelta(days=2))
+    call_command("reconcile_subscriptions")
+    assert rzp.subscriptions[sub_id]["status"] == "cancelled"  # its payment link is dead
+    assert UserSubscription.objects.get().status == "expired"
+
+
+def test_reconcile_doesnt_expire_a_checkout_that_was_paid(api, plans, rzp):
+    sub_id = checkout(api)
+    UserSubscription.objects.update(created_at=timezone.now() - timedelta(days=2))
+    rzp.activate(sub_id)  # paid, but the webhooks were missed
+    call_command("reconcile_subscriptions")
+    assert UserSubscription.objects.get().status == "active" and tier(api) == "pro"
+    assert not any(path.endswith("/cancel") for _, path, _ in rzp.calls)
+
+
+def test_an_expired_checkout_follows_razorpay_if_it_was_paid_after_all(api, anon, plans, rzp):
+    sub_id = checkout(api)
+    UserSubscription.objects.update(status="expired")
+    send_webhook(anon, "subscription.activated", subscription=rzp.activate(sub_id))
+    assert tier(api) == "pro"
+
+
+# ---------------------------------------------------------------------------
+# Webhook edge cases
+# ---------------------------------------------------------------------------
+
+def test_a_replayed_body_under_a_new_event_id_is_not_applied(api, anon, plans, rzp):
+    sub_id = checkout(api)
+    entity = rzp.activate(sub_id)
+    at = int(time.time())
+    for event_id in ("evt_1", "evt_2"):
+        res = send_webhook(anon, "subscription.charged", subscription=entity, payment=payment_entity("pay_1", created_at=at),
+                           created_at=at, event_id=event_id)
+        assert res.status_code == 200
+    assert list(WebhookEvent.objects.values_list("event_id", flat=True)) == ["evt_1"]
+
+
+def test_a_stale_snapshot_that_disagrees_is_checked_with_razorpay(api, anon, plans, rzp):
+    sub_id = subscribe(api, anon, rzp)
+    # This server's clock ran ahead, so a newer event looks older than the state applied last.
+    UserSubscription.objects.update(last_event_at=timezone.now() + timedelta(minutes=5))
+    rzp.subscriptions[sub_id]["status"] = "halted"
+    send_webhook(anon, "subscription.halted", subscription=dict(rzp.subscriptions[sub_id]))
+    assert rzp.calls[-1] == ("GET", f"/subscriptions/{sub_id}", None)
+    assert UserSubscription.objects.get().status == "halted"
+
+
+def test_stored_payment_events_keep_only_the_card_network(api, anon, plans, rzp):
+    sub_id = checkout(api)
+    send_webhook(anon, "subscription.charged", subscription=rzp.activate(sub_id), payment=payment_entity("pay_1"))
+    assert WebhookEvent.objects.get().payload["payload"]["payment"]["entity"]["card"] == {"network": "Visa"}
+
+
+@pytest.mark.parametrize("order", [("subscription.activated", "subscription.charged"), ("subscription.charged", "subscription.activated")])
+def test_first_payment_sends_one_activation_email_and_renewals_send_their_own(
+    api, anon, plans, rzp, monkeypatch, django_capture_on_commit_callbacks, order
+):
+    sent = []
+    monkeypatch.setattr(webhooks, "notify", lambda sub, kind: sent.append(kind))
+    sub_id = checkout(api)
+    entity = rzp.activate(sub_id)
+    with django_capture_on_commit_callbacks(execute=True):
+        for event in order:
+            send_webhook(anon, event, subscription=entity, payment=payment_entity("pay_1") if event.endswith("charged") else None)
+    assert sent == ["activated"]
+
+    sent.clear()
+    with django_capture_on_commit_callbacks(execute=True):
+        send_webhook(anon, "subscription.charged", subscription=rzp.activate(sub_id), payment=payment_entity("pay_2"),
+                     created_at=int(time.time()) + 1)
+    assert sent == ["renewed"]

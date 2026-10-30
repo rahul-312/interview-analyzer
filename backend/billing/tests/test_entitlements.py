@@ -167,6 +167,7 @@ def test_lapsed_subscription_falls_back_to_free_limits(api, user, settings):
 def test_paid_debriefs_never_go_to_a_free_tier_key(api, user, application, settings, calls, django_capture_on_commit_callbacks):
     settings.GEMINI_API_KEY = "free-key"
     settings.GEMINI_FREE_TIER = True
+    settings.GEMINI_PAID_API_KEY = ""
     give_subscription(user, "pro")
     rnd = log_round(api, application, django_capture_on_commit_callbacks)
     assert calls == []  # no paid-tier key: the rule-based engine instead

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
+from kombu import Queue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 # override=True: backend/.env wins over variables already set in the terminal (even empty ones).
@@ -106,6 +107,12 @@ CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:
 # X-Timezone: the browser's time zone, so dates like "applied today" use the user's day.
 CORS_ALLOW_HEADERS = (*default_headers, "x-timezone")
 
+# Shared cache, which the billing rate limit counts in. Set CACHE_URL (e.g. redis://localhost:6379/1)
+# whenever more than one process serves the API: the default per-process cache counts each one separately.
+CACHE_URL = os.environ.get("CACHE_URL", "")
+if CACHE_URL:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": CACHE_URL}}
+
 # Celery: with no broker configured, tasks run inline so Redis isn't needed yet.
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "")
 CELERY_TASK_ALWAYS_EAGER = not CELERY_BROKER_URL
@@ -146,8 +153,12 @@ GEMINI_FREE_TIER = os.environ.get("GEMINI_FREE_TIER", "true").lower() not in ("f
 # With neither, paid plans get the rule-based engine rather than a free-tier key.
 GEMINI_PAID_API_KEY = os.environ.get("GEMINI_PAID_API_KEY", "")
 
-# Celery queue for priority plans (Pro Plus). Run a worker that consumes it first: see README.
+# Celery queue for priority plans (Pro Plus). A worker started without -Q serves both queues, so
+# nothing waits on a worker that isn't running; a dedicated `-Q priority` worker makes it a real
+# priority lane (see BILLING.md).
 CELERY_PRIORITY_QUEUE = os.environ.get("CELERY_PRIORITY_QUEUE", "priority")
+CELERY_TASK_DEFAULT_QUEUE = "celery"
+CELERY_TASK_QUEUES = tuple(Queue(name) for name in dict.fromkeys([CELERY_TASK_DEFAULT_QUEUE, CELERY_PRIORITY_QUEUE]))
 
 # Razorpay. Use rzp_test_ keys (and test-mode plan IDs) everywhere but production.
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")

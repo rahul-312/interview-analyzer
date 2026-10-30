@@ -32,6 +32,8 @@ export interface Tier {
   analyses_per_24h: number | null;
   analyses_fair_use: boolean;
   prep_plans_per_24h: number | null;
+  /** False when this server has no Gemini key this plan may use; `ai_model` then names the rule-based engine. */
+  ai_available: boolean;
   ai_model: string;
   priority_queue: boolean;
   debriefs_used_for_training: boolean;
@@ -75,6 +77,8 @@ export interface SubscriptionActions {
   change_plan: boolean;
   cancel: boolean;
   cancel_at_period_end: boolean;
+  /** A subscription bought to start when the current one ends can be cancelled before it starts. */
+  cancel_upcoming: boolean;
   resume: boolean;
   /** A charge failed: pay again or change card through Razorpay's link. */
   pay: boolean;

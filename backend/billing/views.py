@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 from accounts.models import Profile
 from tracker.usage import usage
 
-from . import entitlements, razorpay, services, webhooks
+from . import entitlements, razorpay, services, tiers, webhooks
 from .models import PaymentTransaction, SubscriptionStatus, TERMINAL_STATUSES, WebhookEvent
 from .serializers import (
     CancelSerializer,
@@ -39,6 +39,7 @@ def current_data(user):
     upcoming = services.upcoming_subscription(user, sub)
     has_access = bool(sub and entitlements.gives_access(sub))
     active = has_access and sub.status == SubscriptionStatus.ACTIVE
+    paid_ai = any(entitlements.ai_ready(code) for code in tiers.RANK if code != tiers.FREE)
     open_ = bool(sub and sub.status not in TERMINAL_STATUSES)
     comp = Profile.objects.filter(user=user).values_list("plan", flat=True).first() or "free"
     return {
@@ -49,10 +50,11 @@ def current_data(user):
         "subscription": SubscriptionSerializer(sub).data if sub else None,
         "upcoming": SubscriptionSerializer(upcoming).data if upcoming else None,
         "actions": {
-            # Matches what checkout allows: no paid access now, or access that ends with this period.
-            "subscribe": not has_access or (sub.cancel_at_period_end and upcoming is None),
+            # The same rule checkout applies.
+            "subscribe": paid_ai and services.checkout_blocker(user) is None,
             "change_plan": active and not sub.cancel_at_period_end,
             "cancel": open_ and not sub.cancel_at_period_end,
+            "cancel_upcoming": upcoming is not None,
             "cancel_at_period_end": active and not sub.cancel_at_period_end,
             "resume": bool(sub and sub.status == SubscriptionStatus.PAUSED),
             "pay": bool(sub and sub.status in (SubscriptionStatus.PENDING, SubscriptionStatus.HALTED) and sub.short_url),
@@ -172,13 +174,17 @@ class ChangePlanView(BillingActionView):
 
 
 class CancelView(BillingActionView):
-    """POST {"at_period_end": true}: cancel at the end of the paid period (default) or now."""
+    """
+    POST {"at_period_end": true}: cancel at the end of the paid period (default) or now.
+    POST {"upcoming": true}: cancel the subscription bought to start when the current one ends.
+    """
 
     def post(self, request):
         serializer = CancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         try:
-            services.cancel(request.user, at_period_end=serializer.validated_data["at_period_end"])
+            services.cancel(request.user, at_period_end=data["at_period_end"], upcoming=data["upcoming"])
         except services.BillingError as exc:
             return billing_error(exc)
         return Response(current_data(request.user))
@@ -214,9 +220,10 @@ class RazorpayWebhookView(APIView):
             return Response({"detail": "Invalid JSON."}, status=status.HTTP_400_BAD_REQUEST)
         if not isinstance(data, dict):
             return Response({"detail": "Invalid event."}, status=status.HTTP_400_BAD_REQUEST)
-        # Razorpay sends a unique ID per event; fall back to the body's hash so a repeat is still caught.
-        event_id = request.headers.get("X-Razorpay-Event-Id") or "sha256:" + hashlib.sha256(body).hexdigest()[:56]
-        event = webhooks.handle(event_id, data)
+        # Razorpay sends a unique ID per event, but it isn't signed: the body's hash catches a replay under a new one.
+        body_sha256 = hashlib.sha256(body).hexdigest()
+        event_id = request.headers.get("X-Razorpay-Event-Id") or "sha256:" + body_sha256[:56]
+        event = webhooks.handle(event_id, data, body_sha256=body_sha256)
         if event.status == WebhookEvent.Status.FAILED:
             return Response({"detail": "Processing failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response({"status": event.status})

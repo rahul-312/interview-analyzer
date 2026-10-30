@@ -9,7 +9,7 @@ const refreshUser = vi.fn(async () => {});
 vi.mock("@/context/AuthContext", () => ({ useAuth: () => ({ refreshUser }) }));
 vi.mock("@/context/RefreshContext", () => ({ useRefresh: () => ({ key: 0 }) }));
 vi.mock("@/services/BillingService", () => ({
-  billingService: { current: vi.fn(), payments: vi.fn(), cancel: vi.fn(), resume: vi.fn() },
+  billingService: { current: vi.fn(), payments: vi.fn(), cancel: vi.fn(), cancelUpcoming: vi.fn(), resume: vi.fn() },
 }));
 const { billingService } = await import("@/services/BillingService");
 const api = vi.mocked(billingService);
@@ -51,7 +51,7 @@ describe("billing dashboard", () => {
   it("cancels at the end of the period by default", async () => {
     const cancelled = current("pro_monthly", {
       subscription: subscription("pro_monthly", { cancel_at_period_end: true, access_until: "2026-11-01T00:00:00Z" }),
-      actions: { subscribe: true, change_plan: false, cancel: false, cancel_at_period_end: false, resume: false, pay: false },
+      actions: { ...current().actions, subscribe: true, change_plan: false, cancel: false, cancel_at_period_end: false },
     });
     api.cancel.mockResolvedValue(cancelled);
     render(<Billing />);
@@ -83,16 +83,58 @@ describe("billing dashboard", () => {
   it("offers a way to fix a failed payment", async () => {
     const failing = current("pro_monthly", {
       subscription: subscription("pro_monthly", { status: "halted", status_label: "Halted", gives_access: false }),
-      actions: { subscribe: false, change_plan: false, cancel: true, cancel_at_period_end: false, resume: false, pay: true },
+      actions: { ...current().actions, subscribe: false, change_plan: false, cancel: true, cancel_at_period_end: false, pay: true },
     });
     api.current.mockResolvedValue(failing);
     api.resume.mockResolvedValue({ ...failing, payment_url: "https://rzp.io/i/sub_1" });
-    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const tab = { opener: window as Window | null, location: { href: "" }, close: vi.fn() };
+    const open = vi.spyOn(window, "open").mockImplementation(() => tab as unknown as Window);
     render(<Billing />);
 
     expect((await screen.findByRole("alert")).textContent).toContain("paid features are paused");
     await userEvent.click(screen.getByRole("button", { name: "Update payment" }));
-    expect(open).toHaveBeenCalledWith("https://rzp.io/i/sub_1", "_blank", "noopener,noreferrer");
+    // Opened during the click, so popup blockers allow it, then sent to Razorpay.
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(await screen.findByText(/Razorpay opened in a new tab/)).toBeTruthy();
+    expect(tab.location.href).toBe("https://rzp.io/i/sub_1");
+    expect(tab.opener).toBeNull();
+    expect(tab.close).not.toHaveBeenCalled();
+  });
+
+  it("closes the tab it opened when the payment link can't be fetched", async () => {
+    const failing = current("pro_monthly", {
+      subscription: subscription("pro_monthly", { status: "halted", status_label: "Halted", gives_access: false }),
+      actions: { ...current().actions, subscribe: false, change_plan: false, cancel: true, pay: true },
+    });
+    api.current.mockResolvedValue(failing);
+    api.resume.mockRejectedValue(new ApiError(502, { detail: "Couldn't reach the payment provider. Try again." }));
+    const tab = { opener: null, location: { href: "" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockImplementation(() => tab as unknown as Window);
+    render(<Billing />);
+    await userEvent.click(await screen.findByRole("button", { name: "Update payment" }));
+    expect(await screen.findByText(/Couldn't reach the payment provider/)).toBeTruthy();
+    expect(tab.close).toHaveBeenCalled();
+  });
+
+  it("can cancel a subscription that hasn't started yet", async () => {
+    const withUpcoming = current("pro_monthly", {
+      subscription: subscription("pro_monthly", { cancel_at_period_end: true, access_until: "2026-11-01T00:00:00Z" }),
+      upcoming: subscription("pro_yearly", { status: "authenticated", status_label: "Authorised", gives_access: false, start_at: "2026-11-01T00:00:00Z" }),
+      actions: { ...current().actions, subscribe: false, cancel_upcoming: true },
+    });
+    api.current.mockResolvedValue(withUpcoming);
+    api.cancelUpcoming.mockResolvedValue({ ...withUpcoming, upcoming: null, actions: { ...withUpcoming.actions, cancel_upcoming: false } });
+    render(<Billing />);
+
+    expect(await screen.findByText(/subscription starts on/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel upcoming subscription" }));
+    const dialog = screen.getByRole("dialog", { name: "Cancel upcoming subscription" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel upcoming subscription" }));
+
+    expect(api.cancelUpcoming).toHaveBeenCalled();
+    expect(api.cancel).not.toHaveBeenCalled();
+    expect(await screen.findByText(/You won't be charged for it/)).toBeTruthy();
+    expect(screen.queryByText(/subscription starts on/)).toBeNull();
   });
 
   it("shows the server's error and reloads stale data when an action fails", async () => {

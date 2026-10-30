@@ -5,14 +5,19 @@ from .models import PaymentTransaction, SubscriptionPlan, UserSubscription
 
 
 def tier_data(tier):
-    """What a tier includes, for the pricing page and the current-plan view."""
+    """
+    What a tier includes, for the pricing page and the current-plan view. The AI engine shown is
+    the one its jobs would really get on this server, which is the rule-based one without a key for it.
+    """
+    ai_available = entitlements.ai_route(tier) is not None
     return {
         "code": tier.code,
         "name": tier.name,
         "analyses_per_24h": tier.analyses_per_24h,
         "analyses_fair_use": tier.analyses_fair_use,
         "prep_plans_per_24h": tier.prep_plans_per_24h,
-        "ai_model": tier.ai_model_label,
+        "ai_available": ai_available,
+        "ai_model": tier.ai_model_label if ai_available else "Rule-based engine",
         "priority_queue": tier.priority,
         "debriefs_used_for_training": tier.debriefs_may_train,
         "rule_based_fallback": tier.rule_based_fallback,
@@ -31,10 +36,14 @@ class PriceSerializer(serializers.ModelSerializer):
 
 def plans_data():
     prices = list(SubscriptionPlan.objects.filter(is_active=True))
-    return [
-        {**tier_data(tier), "prices": PriceSerializer([p for p in prices if p.tier == tier.code], many=True).data}
-        for tier in tiers.all_tiers()
-    ]
+    result = []
+    for tier in tiers.all_tiers():
+        data = tier_data(tier)
+        tier_prices = PriceSerializer([p for p in prices if p.tier == tier.code], many=True).data
+        # A paid plan whose AI jobs have nowhere to go isn't sold (services.available_plan).
+        data["prices"] = [{**p, "available": p["available"] and data["ai_available"]} for p in tier_prices]
+        result.append(data)
+    return result
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):
@@ -87,3 +96,4 @@ class VerifySerializer(serializers.Serializer):
 
 class CancelSerializer(serializers.Serializer):
     at_period_end = serializers.BooleanField(default=True)
+    upcoming = serializers.BooleanField(default=False)

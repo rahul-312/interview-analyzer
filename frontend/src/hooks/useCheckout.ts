@@ -73,6 +73,8 @@ export type CheckoutState =
   /** Paid and verified, but Razorpay hasn't confirmed the subscription yet. */
   | { phase: 'pending'; plan: string }
   | { phase: 'success'; plan: string; current: CurrentSubscription }
+  /** Bought to start when a subscription cancelled at period end runs out. */
+  | { phase: 'scheduled'; plan: string; current: CurrentSubscription }
   | { phase: 'cancelled' }
   | { phase: 'failed'; message: string };
 
@@ -81,6 +83,13 @@ const POLL_MS = 3000;
 const POLL_TIMES = 10;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Whether the server shows the subscription just bought: running now, or set to start later. */
+function outcomeFor(current: CurrentSubscription, price: Price): 'success' | 'scheduled' | null {
+  if (current.upcoming?.plan.code === price.code) return 'scheduled';
+  if (current.subscription?.plan.code === price.code && current.subscription.gives_access) return 'success';
+  return null;
+}
 
 /**
  * Subscribing to a plan: create the subscription on the server, pay in Checkout, then have the
@@ -109,14 +118,21 @@ export function useCheckout(onChange?: (current: CurrentSubscription) => void) {
         }
         setState({ phase: 'verifying', plan });
         let current = await billingService.verify(outcome.response);
-        for (let i = 0; current.plan.code !== price.tier && i < POLL_TIMES; i++) {
+        // Paid and verified: from here, an error only means it isn't confirmed yet, not that it failed.
+        try {
+          for (let i = 0; !outcomeFor(current, price) && i < POLL_TIMES; i++) {
+            setState({ phase: 'pending', plan });
+            await wait(POLL_MS);
+            current = await billingService.current();
+          }
+          onChange?.(current);
+          await refreshUser();
+        } catch {
           setState({ phase: 'pending', plan });
-          await wait(POLL_MS);
-          current = await billingService.current();
+          return;
         }
-        onChange?.(current);
-        await refreshUser();
-        setState(current.plan.code === price.tier ? { phase: 'success', plan, current } : { phase: 'pending', plan });
+        const done = outcomeFor(current, price);
+        setState(done ? { phase: done, plan, current } : { phase: 'pending', plan });
       } catch (err) {
         setState({ phase: 'failed', message: errorText(err) || 'Something went wrong. Try again.' });
       } finally {
