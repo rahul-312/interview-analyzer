@@ -13,6 +13,13 @@ export function useSidebarCollapsed() {
     try {
       setCollapsed(localStorage.getItem(STORAGE_KEY) === '1');
     } catch {}
+
+    // Follow changes made in other tabs
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY) setCollapsed(e.newValue === '1');
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   const toggle = useCallback(() => {

@@ -61,7 +61,7 @@ const MainLayout = ({ children }: LayoutProps) => {
   return (
     <DialogsProvider>
       <div
-        className={`min-h-screen pb-20xl transition-[padding] duration-300 ease-in-out ${
+        className={`min-h-screen pb-20xl transition-[padding] duration-300 ease-in-out motion-reduce:transition-none ${
           sidebarCollapsed ? 'md:pl-sidebar-collapsed' : 'md:pl-sidebar'
         }`}
       >

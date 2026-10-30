@@ -7,7 +7,7 @@ export default function Logo({ compact = false }: { compact?: boolean }) {
     <Link href="/applications" className="flex items-center gap-lg font-semibold">
       <Image src="/assets/logo/logo.svg" alt="Interview Analyzer" width={40} height={40} priority />
       <span
-        className={`hidden whitespace-nowrap font-serif text-lg font-medium transition-[opacity,visibility] duration-300 ease-in-out sm:inline ${
+        className={`hidden whitespace-nowrap font-serif text-lg font-medium transition-[opacity,visibility] duration-300 ease-in-out motion-reduce:transition-none sm:inline ${
           compact ? 'invisible opacity-0' : 'opacity-100'
         }`}
       >
