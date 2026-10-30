@@ -30,10 +30,16 @@ const Sidebar = ({ collapsed, onToggle }: SidebarProps) => (
       aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       aria-expanded={!collapsed}
       aria-controls="sidebar"
-      title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      className="absolute top-12xl -right-2xl flex h-8xl w-8xl items-center justify-center rounded-full border border-white/70 bg-white text-dark-gray shadow-card transition-colors hover:text-ink"
+      className="group absolute top-12xl -right-2xl flex h-8xl w-8xl items-center justify-center rounded-full border border-white/70 bg-white text-dark-gray shadow-card transition-colors hover:text-ink"
     >
       {collapsed ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
+      {/* Same tooltip as the collapsed nav links */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute top-1/2 left-full z-50 ml-lg -translate-y-1/2 whitespace-nowrap rounded-lg bg-ink px-lg py-sm text-xs text-white opacity-0 shadow-card transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+      >
+        {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      </span>
     </button>
     <nav aria-label="Main">
       <NavLinks compact={collapsed} />
