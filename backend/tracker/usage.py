@@ -3,7 +3,12 @@ Limits on paid AI jobs, per plan: round analyses and prep plans.
 
 Usage is counted over a rolling 24-hour window: each job frees up again 24 hours
 after it started. Failures that weren't the user's fault are refunded (see refund_run
-and tasks.py); refunds of failures that already cost an API call are capped.
+and tasks.py); refunds of failures that already cost an API call are capped. Jobs the
+user's own text makes fail (refused, cut off) count. A job can't be started twice: a
+second request while one is queued or running gets BUSY and counts nothing.
+
+The plan, and so the limits, come from billing.entitlements, so the web app and the
+browser extension (which call the same endpoints) get the same limits.
 """
 from datetime import timedelta
 
@@ -13,8 +18,8 @@ from django.db.models import Count, Min
 from django.utils import timezone
 
 from accounts.models import Profile, get_profile
+from billing import entitlements
 
-from . import ai
 from .models import AnalysisRun, JobStatus, PrepPlan, RoundAnalysis
 
 WINDOW = timedelta(hours=24)
@@ -30,28 +35,21 @@ IN_PROGRESS = (JobStatus.PENDING, JobStatus.RUNNING)
 ANALYSIS = AnalysisRun.Kind.ANALYSIS
 PREP_PLAN = AnalysisRun.Kind.PREP_PLAN
 
-# How each kind is named in messages, and what "at the limit" means for the user.
+# How each kind is named in messages, what "at the limit" means for the user, and its feature id in 429s.
 _WORDING = {
-    ANALYSIS: ("analyses", "Your debrief is saved; you can analyse it once one frees up."),
-    PREP_PLAN: ("prep plans", "You can make or regenerate a plan once one frees up."),
+    ANALYSIS: ("analyses", "Your debrief is saved; you can analyse it once one frees up.", "ai_round_analysis"),
+    PREP_PLAN: ("prep plans", "You can make or regenerate a plan once one frees up.", "ai_prep_plan"),
 }
 
 
-def plan_limit(plan, kind=ANALYSIS):
+def plan_limit(tier, kind=ANALYSIS):
     """
-    Jobs of this kind allowed per 24 hours on this plan, or None for unlimited.
-    The limits are cost control, so with no API key (free rule-based jobs) nothing is limited.
+    Jobs of this kind allowed per 24 hours on this tier (billing.tiers.Tier), or None for unlimited.
+    The limits are cost control, so when the tier's jobs use the free rule-based engine nothing is limited.
     """
-    if not ai.ai_enabled():
+    if entitlements.ai_route(tier) is None:
         return None
-    limits = settings.PLAN_ANALYSES_PER_24H if kind == ANALYSIS else settings.PLAN_PREP_PLANS_PER_24H
-    return limits.get(plan)
-
-
-def _current_plan(user):
-    # Read-only: profiles are created at sign-up, so a GET never needs to write one.
-    profile = Profile.objects.filter(user=user).only("plan").first()
-    return profile.plan if profile else Profile.Plan.FREE
+    return tier.analyses_per_24h if kind == ANALYSIS else tier.prep_plans_per_24h
 
 
 def _window_stats(user, kind, now):
@@ -60,8 +58,8 @@ def _window_stats(user, kind, now):
     ).aggregate(used=Count("id"), oldest=Min("created_at"))
 
 
-def _quota(user, plan, kind, now):
-    limit = plan_limit(plan, kind)
+def _quota(user, tier, kind, now):
+    limit = plan_limit(tier, kind)
     stats = _window_stats(user, kind, now)
     return {
         "limit": limit,
@@ -69,31 +67,51 @@ def _quota(user, plan, kind, now):
         "remaining": None if limit is None else max(0, limit - stats["used"]),
         # When the oldest run in the window expires, freeing one up.
         "next_available_at": (stats["oldest"] + WINDOW).isoformat() if stats["oldest"] and limit is not None else None,
+        # Shown as "Unlimited, fair use"; `limit` is the fair-use allowance actually enforced.
+        "fair_use": kind == ANALYSIS and tier.analyses_fair_use,
     }
 
 
 def usage(user):
     """The user's plan and what they have left of each limited job."""
-    plan = _current_plan(user)
+    tier = entitlements.for_user(user)
+    route = entitlements.ai_route(tier)
     now = timezone.now()
     return {
-        "plan": plan,
-        # False with no API key: jobs use the free rule-based engine, so the limits are off.
-        "ai_enabled": ai.ai_enabled(),
-        # Gemini's free tier: Google may use what's sent to improve its products, so the app says so.
-        "ai_free_tier": ai.ai_enabled() and settings.GEMINI_FREE_TIER,
-        "analyses": _quota(user, plan, ANALYSIS, now),
-        "prep_plans": _quota(user, plan, PREP_PLAN, now),
+        "plan": tier.code,
+        "plan_name": tier.name,
+        # False when this plan's jobs use the free rule-based engine (no suitable key): the limits are off.
+        "ai_enabled": route is not None,
+        # The key is on Gemini's free tier: Google may use what's sent to improve its products, so the app says so.
+        "ai_free_tier": bool(route and route.provider_may_train),
+        # This plan's debriefs may be used for training (product policy), which the app must tell the user.
+        "training_notice": tier.debriefs_may_train,
+        "ai_model": tier.ai_model_label,
+        "priority": tier.priority,
+        "analyses": _quota(user, tier, ANALYSIS, now),
+        "prep_plans": _quota(user, tier, PREP_PLAN, now),
     }
 
 
 def limit_message(user, kind=ANALYSIS):
-    plan = _current_plan(user)
-    noun, next_step = _WORDING[kind]
-    return (
-        f"You've used all {plan_limit(plan, kind)} {noun} allowed in 24 hours on the "
-        f"{Profile.Plan(plan).label} plan. {next_step}"
-    )
+    tier = entitlements.for_user(user)
+    noun, next_step, _ = _WORDING[kind]
+    return f"You've used all {plan_limit(tier, kind)} {noun} allowed in 24 hours on the {tier.name} plan. {next_step}"
+
+
+def limit_details(user, kind=ANALYSIS):
+    """The body of a 429 for this kind of job: the message, plus the numbers for the app to show."""
+    tier = entitlements.for_user(user)
+    quota = _quota(user, tier, kind, timezone.now())
+    return {
+        "detail": limit_message(user, kind),
+        "code": "usage_limit",
+        "feature": _WORDING[kind][2],
+        "plan": tier.code,
+        "limit": quota["limit"],
+        "used": quota["used"],
+        "reset_at": quota["next_available_at"],
+    }
 
 
 def refund_run(run_id, *, billed):
@@ -150,15 +168,20 @@ def _reserve(user, kind, lock_job, start_job, run_fields):
     now = timezone.now()
     get_profile(user)  # make sure the row exists before locking it
     with transaction.atomic():
-        profile = Profile.objects.select_for_update().get(user=user)
+        Profile.objects.select_for_update().get(user=user)
         if _check_existing_job(lock_job(), now) == BUSY:
             return BUSY, None
 
-        limit = plan_limit(profile.plan, kind)
+        tier = entitlements.for_user(user, now)
+        limit = plan_limit(tier, kind)
         if limit is not None and _window_stats(user, kind, now)["used"] >= limit:
             return LIMITED, None
 
-        run = AnalysisRun.objects.create(user=user, kind=kind, free=not ai.ai_enabled(), **run_fields)
+        route = entitlements.ai_route(tier)
+        run = AnalysisRun.objects.create(
+            user=user, kind=kind, free=route is None, tier=tier.code,
+            model=route.model if route else "", priority=tier.priority, **run_fields,
+        )
         start_job(run)
         return QUEUED, run
 

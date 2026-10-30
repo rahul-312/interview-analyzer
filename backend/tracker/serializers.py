@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from billing import entitlements
+
 from .models import Application, Debrief, InterviewRound, PrepPlan, PrepTask, RoundAnalysis
 
 
@@ -25,7 +27,7 @@ class DebriefSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Debrief
-        exclude = ["id", "round"]
+        exclude = ["id", "round", "training_eligible"]
         read_only_fields = ["updated_at"]
 
 
@@ -80,7 +82,10 @@ class InterviewRoundSerializer(serializers.ModelSerializer):
         # Only a changed debrief needs a new analysis (the edit form re-sends it on every save).
         if existing and all(getattr(existing, field) == value for field, value in debrief_data.items()):
             return
-        Debrief.objects.update_or_create(round=rnd, defaults=debrief_data)
+        # Eligible for training only if every version was written on a plan that allows it.
+        may_train = entitlements.for_user(self.context["request"].user).debriefs_may_train
+        eligible = may_train and (existing is None or existing.training_eligible)
+        Debrief.objects.update_or_create(round=rnd, defaults={**debrief_data, "training_eligible": eligible})
         self.debrief_saved = True
 
     def create(self, validated_data):

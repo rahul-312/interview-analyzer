@@ -1,8 +1,11 @@
 from datetime import timedelta
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+
+from billing import entitlements, tiers
 
 from . import ai
 from .insights import weak_spots
@@ -12,9 +15,13 @@ from .usage import refund_run
 MAX_PLAN_DAYS = 14
 
 
-def queue(task, *args):
-    """Run the task only after the current transaction commits, so the worker sees the saved rows."""
-    transaction.on_commit(lambda: task.delay(*args))
+def queue(task, *args, priority=False):
+    """
+    Run the task only after the current transaction commits, so the worker sees the saved rows.
+    Priority jobs (Pro Plus) go on their own queue, which a dedicated worker serves first.
+    """
+    options = {"queue": settings.CELERY_PRIORITY_QUEUE} if priority else {}
+    transaction.on_commit(lambda: task.apply_async(args=args, **options))
 
 
 def build_analysis_context(rnd):
@@ -38,13 +45,21 @@ def build_analysis_context(rnd):
     }
 
 
-def _settle_free(run_id):
+def _settle_route(run_id):
     """
-    Records whether this run is free from what actually happens now: with no API key the rule-based
-    fallback runs (free); with a key it's a paid call that counts, even if it was queued without one.
+    Picks the Gemini key and model for this run from the plan it was started on, and records whether
+    it's free from what actually happens now: with no suitable key the rule-based fallback runs (free);
+    with one it's a paid call that counts, even if it was queued without one. Returns the route
+    (None for rule-based).
     """
-    if run_id:
-        AnalysisRun.objects.filter(id=run_id).update(free=not ai.ai_enabled())
+    run = AnalysisRun.objects.filter(id=run_id).select_related("user").first() if run_id else None
+    if run is None:
+        # Queued by an older deploy, before runs existed: treat it as a free-plan job.
+        return entitlements.ai_route(tiers.get_tier(tiers.FREE))
+    tier = tiers.get_tier(run.tier) if run.tier else entitlements.for_user(run.user)
+    route = entitlements.ai_route(tier)
+    AnalysisRun.objects.filter(id=run_id).update(free=route is None, model=route.model if route else "")
+    return route
 
 
 def _refund_kind(exc, billing):
@@ -72,14 +87,14 @@ def analyze_round_task(round_id, run_id=None):
     )
     if not claimed:
         return
-    _settle_free(run_id)
+    route = _settle_route(run_id)
 
     billing = ai.Billing()
     refund = None  # None, "free" or "billed"
     try:
         rnd = InterviewRound.objects.select_related("application", "debrief").get(id=round_id)
         debrief_version = rnd.debrief.updated_at
-        result, source = ai.analyze_round(build_analysis_context(rnd), billing)
+        result, source = ai.analyze_round(build_analysis_context(rnd), billing, route)
         fields = {
             "summary": result["summary"],
             "score": result["score"],
@@ -133,13 +148,13 @@ def generate_plan_task(plan_id, run_id=None):
     )
     if not claimed:
         return
-    _settle_free(run_id)
+    route = _settle_route(run_id)
 
     billing = ai.Billing()
     refund = None
     try:
         plan = PrepPlan.objects.select_related("application", "target_round", "user").get(id=plan_id)
-        result, source = ai.generate_plan(build_plan_context(plan), billing)
+        result, source = ai.generate_plan(build_plan_context(plan), billing, route)
         start = timezone.localdate()
         new_tasks = [
             PrepTask(

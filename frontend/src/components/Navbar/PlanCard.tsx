@@ -1,14 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { Sparkles } from "lucide-react";
 import { useUsage } from "@/hooks/useUsage";
 import type { Quota } from "@/models/Auth";
+import { quotaText } from "@/utils/billing";
 import { planLabel } from "@/utils/format";
 
 /** One quota's "1 of 2 left" with a bar of what's left. */
 function QuotaRow({ label, quota }: { label: string; quota: Quota }) {
-  if (quota.limit === null) {
-    return <p className="text-xs text-medium-gray">Unlimited {label}</p>;
+  if (quota.limit === null || quota.fair_use) {
+    return <p className="text-xs text-medium-gray">{label}: {quotaText(quota)}</p>;
   }
   const remaining = quota.remaining ?? 0;
   return (
@@ -29,7 +31,7 @@ function QuotaRow({ label, quota }: { label: string; quota: Quota }) {
   );
 }
 
-/** The sidebar's plan card: what's left of today's AI analyses and prep plans. */
+/** The sidebar's plan card: what's left of today's AI analyses and prep plans, and a link to upgrade or manage. */
 export default function PlanCard() {
   const { usage } = useUsage();
   if (!usage) return null;
@@ -51,6 +53,12 @@ export default function PlanCard() {
           Rounds and prep plans use the basic rule-based engine, with no daily limits.
         </p>
       )}
+      <Link
+        href={usage.plan === "free" ? "/pricing" : "/billing"}
+        className="mt-2xl inline-block text-xs font-medium text-primary hover:underline"
+      >
+        {usage.plan === "free" ? "Upgrade for more" : "Manage plan"}
+      </Link>
     </div>
   );
 }

@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "accounts",
     "tracker",
+    "billing",
 ]
 
 MIDDLEWARE = [
@@ -92,6 +93,8 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    # Only views that set throttle_scope are throttled (billing calls that reach Razorpay).
+    "DEFAULT_THROTTLE_RATES": {"billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min")},
 }
 
 SIMPLE_JWT = {
@@ -111,16 +114,19 @@ CELERY_TASK_EAGER_PROPAGATES = False
 # jobs run inside the web request, so don't sleep there: fail fast and let the user retry.
 AI_RETRY_DELAYS = (1, 3) if CELERY_BROKER_URL else ()
 
-# Round analyses allowed in any rolling 24 hours, by plan (None = unlimited).
+# Round analyses allowed in any rolling 24 hours, by plan (None = unlimited). Pro Plus is shown
+# as "Unlimited, fair use", but its fair-use allowance is enforced like any other limit.
 PLAN_ANALYSES_PER_24H = {
     "free": int(os.environ.get("FREE_ANALYSES_PER_24H", "2")),
-    "pro": None,
+    "pro": int(os.environ.get("PRO_ANALYSES_PER_24H", "15")),
+    "pro_plus": int(os.environ.get("PRO_PLUS_ANALYSES_PER_24H", "50")),
 }
 
 # Prep plans generated (new or regenerated) in any rolling 24 hours, by plan (None = unlimited).
 PLAN_PREP_PLANS_PER_24H = {
-    "free": int(os.environ.get("FREE_PREP_PLANS_PER_24H", "2")),
-    "pro": None,
+    "free": int(os.environ.get("FREE_PREP_PLANS_PER_24H", "1")),
+    "pro": int(os.environ.get("PRO_PREP_PLANS_PER_24H", "5")),
+    "pro_plus": int(os.environ.get("PRO_PLUS_PREP_PLANS_PER_24H", "15")),
 }
 
 # Failed analyses and prep plans that already cost an API call (timeouts, cut-off or unreadable replies, our
@@ -131,5 +137,32 @@ BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
 # AI: without a key, the rule-based analyzer is used.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+# The better model Pro Plus jobs use. Blank: Pro Plus uses GEMINI_MODEL too.
+GEMINI_PRO_MODEL = os.environ.get("GEMINI_PRO_MODEL", "")
 # Whether the key is on Gemini's free tier (no billing on its project). Set to false for a paid key.
 GEMINI_FREE_TIER = os.environ.get("GEMINI_FREE_TIER", "true").lower() not in ("false", "0", "no")
+# A key on a paid (billing-enabled) project. Jobs for paid plans, whose debriefs must not be used for
+# training, only ever go to a paid-tier key: this one, or GEMINI_API_KEY when GEMINI_FREE_TIER is false.
+# With neither, paid plans get the rule-based engine rather than a free-tier key.
+GEMINI_PAID_API_KEY = os.environ.get("GEMINI_PAID_API_KEY", "")
+
+# Celery queue for priority plans (Pro Plus). Run a worker that consumes it first: see README.
+CELERY_PRIORITY_QUEUE = os.environ.get("CELERY_PRIORITY_QUEUE", "priority")
+
+# Razorpay. Use rzp_test_ keys (and test-mode plan IDs) everywhere but production.
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
+RAZORPAY_WEBHOOK_SECRET = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+RAZORPAY_API_URL = os.environ.get("RAZORPAY_API_URL", "https://api.razorpay.com/v1")
+# Billing cycles a subscription runs for before it completes (Razorpay requires a total).
+RAZORPAY_TOTAL_COUNT = {
+    "month": int(os.environ.get("RAZORPAY_MONTHLY_TOTAL_COUNT", "120")),
+    "year": int(os.environ.get("RAZORPAY_YEARLY_TOTAL_COUNT", "10")),
+}
+# Days a subscription whose renewal failed (Razorpay status "pending", still retrying) keeps paid
+# access after its paid period ends. Halted, cancelled and completed subscriptions get none.
+BILLING_GRACE_DAYS = int(os.environ.get("BILLING_GRACE_DAYS", "3"))
+# A checkout for the same plan within this many minutes reuses the subscription already created.
+BILLING_CHECKOUT_REUSE_MINUTES = int(os.environ.get("BILLING_CHECKOUT_REUSE_MINUTES", "30"))
+# Send our own billing emails (activation, renewal, failed payment, cancellation) as well as Razorpay's.
+BILLING_EMAILS = os.environ.get("BILLING_EMAILS", "false").lower() in ("true", "1", "yes")

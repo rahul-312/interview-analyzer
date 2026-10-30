@@ -1,0 +1,222 @@
+import hashlib
+import json
+import logging
+
+from django.conf import settings
+from rest_framework import status
+from rest_framework.exceptions import APIException
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.views import APIView
+
+from accounts.models import Profile
+from tracker.usage import usage
+
+from . import entitlements, razorpay, services, webhooks
+from .models import PaymentTransaction, SubscriptionStatus, TERMINAL_STATUSES, WebhookEvent
+from .serializers import (
+    CancelSerializer,
+    PaymentSerializer,
+    PlanCodeSerializer,
+    SubscriptionSerializer,
+    VerifySerializer,
+    plans_data,
+    tier_data,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def billing_error(exc):
+    return Response({"detail": exc.message, "code": exc.code}, status=exc.status)
+
+
+def current_data(user):
+    """The user's plan, subscription and the actions open to them. Everything the dashboard shows."""
+    tier = entitlements.for_user(user)
+    sub = services.current_subscription(user)
+    upcoming = services.upcoming_subscription(user, sub)
+    has_access = bool(sub and entitlements.gives_access(sub))
+    active = has_access and sub.status == SubscriptionStatus.ACTIVE
+    open_ = bool(sub and sub.status not in TERMINAL_STATUSES)
+    comp = Profile.objects.filter(user=user).values_list("plan", flat=True).first() or "free"
+    return {
+        "plan": tier_data(tier),
+        # Where the plan comes from: a subscription, a complimentary plan set by an admin, or neither.
+        "source": "subscription" if sub and entitlements.gives_access(sub) and sub.tier == tier.code
+        else ("complimentary" if comp == tier.code and tier.paid else "free"),
+        "subscription": SubscriptionSerializer(sub).data if sub else None,
+        "upcoming": SubscriptionSerializer(upcoming).data if upcoming else None,
+        "actions": {
+            # Matches what checkout allows: no paid access now, or access that ends with this period.
+            "subscribe": not has_access or (sub.cancel_at_period_end and upcoming is None),
+            "change_plan": active and not sub.cancel_at_period_end,
+            "cancel": open_ and not sub.cancel_at_period_end,
+            "cancel_at_period_end": active and not sub.cancel_at_period_end,
+            "resume": bool(sub and sub.status == SubscriptionStatus.PAUSED),
+            "pay": bool(sub and sub.status in (SubscriptionStatus.PENDING, SubscriptionStatus.HALTED) and sub.short_url),
+        },
+        "billing_enabled": razorpay.enabled(),
+        "usage": usage(user),
+    }
+
+
+class PaymentsUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Payments aren't set up on this server."
+    default_code = "billing_disabled"
+
+
+class BillingActionView(APIView):
+    """Signed-in billing calls that reach Razorpay: throttled, and unavailable until it's configured."""
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "billing"
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not razorpay.enabled():
+            raise PaymentsUnavailable()
+
+
+class PlansView(APIView):
+    """GET: every plan, what it includes and its prices. Public, for the pricing page."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({
+            "tiers": plans_data(),
+            "billing_enabled": razorpay.enabled(),
+            "grace_days": settings.BILLING_GRACE_DAYS,
+        })
+
+
+class CurrentSubscriptionView(APIView):
+    """GET: the user's plan, subscription, usage and what they can do next."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(current_data(request.user))
+
+
+class UsageView(APIView):
+    """GET: what's left of each limited AI job in the rolling 24 hours."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(usage(request.user))
+
+
+class PaymentsView(APIView):
+    """GET: the user's last 50 payments."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        payments = PaymentTransaction.objects.filter(user=request.user).select_related("subscription__plan")[:50]
+        return Response(PaymentSerializer(payments, many=True).data)
+
+
+class CheckoutView(BillingActionView):
+    """POST {"plan": "pro_monthly"}: creates the Razorpay subscription and returns what Checkout needs."""
+
+    def post(self, request):
+        serializer = PlanCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            sub = services.start_checkout(request.user, serializer.validated_data["plan"])
+        except services.BillingError as exc:
+            return billing_error(exc)
+        user = request.user
+        return Response({
+            "key_id": settings.RAZORPAY_KEY_ID,
+            "subscription_id": sub.razorpay_subscription_id,
+            "plan": sub.plan.code,
+            "name": "Interview Analyzer",
+            "description": str(sub.plan),
+            "starts_at": sub.start_at.isoformat() if sub.start_at else None,
+            "prefill": {"name": user.first_name or user.username, "email": user.email},
+        }, status=status.HTTP_201_CREATED)
+
+
+class VerifyView(BillingActionView):
+    """POST Checkout's response: checks its signature, then syncs the subscription from Razorpay."""
+
+    def post(self, request):
+        serializer = VerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            services.verify_checkout(
+                request.user,
+                payment_id=data["razorpay_payment_id"],
+                subscription_id=data["razorpay_subscription_id"],
+                signature=data["razorpay_signature"],
+            )
+        except services.BillingError as exc:
+            return billing_error(exc)
+        return Response(current_data(request.user))
+
+
+class ChangePlanView(BillingActionView):
+    """POST {"plan": "pro_plus_monthly"}: upgrade now, or downgrade at the end of the cycle."""
+
+    def post(self, request):
+        serializer = PlanCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            _, upgrade = services.change_plan(request.user, serializer.validated_data["plan"])
+        except services.BillingError as exc:
+            return billing_error(exc)
+        return Response({**current_data(request.user), "change": "now" if upgrade else "cycle_end"})
+
+
+class CancelView(BillingActionView):
+    """POST {"at_period_end": true}: cancel at the end of the paid period (default) or now."""
+
+    def post(self, request):
+        serializer = CancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            services.cancel(request.user, at_period_end=serializer.validated_data["at_period_end"])
+        except services.BillingError as exc:
+            return billing_error(exc)
+        return Response(current_data(request.user))
+
+
+class ResumeView(BillingActionView):
+    """POST: resume a paused subscription, or get the link to pay a failed charge."""
+
+    def post(self, request):
+        try:
+            _, payment_url = services.resume(request.user)
+        except services.BillingError as exc:
+            return billing_error(exc)
+        return Response({**current_data(request.user), "payment_url": payment_url})
+
+
+class RazorpayWebhookView(APIView):
+    """
+    POST from Razorpay. The signature is checked against the raw body before anything is parsed.
+    2xx tells Razorpay to stop; a 500 (processing failed) makes it retry later.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        body = request.body
+        if not razorpay.verify_webhook_signature(body, request.headers.get("X-Razorpay-Signature", "")):
+            logger.warning("Rejected a Razorpay webhook with a bad signature")
+            return Response({"detail": "Invalid signature."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            data = json.loads(body)
+        except ValueError:
+            return Response({"detail": "Invalid JSON."}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(data, dict):
+            return Response({"detail": "Invalid event."}, status=status.HTTP_400_BAD_REQUEST)
+        # Razorpay sends a unique ID per event; fall back to the body's hash so a repeat is still caught.
+        event_id = request.headers.get("X-Razorpay-Event-Id") or "sha256:" + hashlib.sha256(body).hexdigest()[:56]
+        event = webhooks.handle(event_id, data)
+        if event.status == WebhookEvent.Status.FAILED:
+            return Response({"detail": "Processing failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"status": event.status})

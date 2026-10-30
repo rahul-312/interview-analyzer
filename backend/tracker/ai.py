@@ -3,8 +3,8 @@ Round analysis and prep-plan generation.
 
 Two layers:
 1. A rule-based fallback that always works (no API key needed).
-2. Gemini, used only when GEMINI_API_KEY is set. Structured output makes the reply
-   JSON matching the schema.
+2. Gemini, used only when the job has a route (a key and model, picked per plan by
+   billing.entitlements.ai_route). Structured output makes the reply JSON matching the schema.
 """
 import json
 import logging
@@ -60,7 +60,28 @@ def advice_for(topic):
 
 
 def ai_enabled():
-    return bool(settings.GEMINI_API_KEY)
+    """Whether any Gemini key is configured. Which key (if any) a user's jobs use depends on their plan."""
+    return bool(settings.GEMINI_API_KEY or settings.GEMINI_PAID_API_KEY)
+
+
+class _SettingsRoute:
+    """GEMINI_API_KEY and GEMINI_MODEL, for callers that don't pass a route of their own."""
+
+    @property
+    def api_key(self):
+        return settings.GEMINI_API_KEY
+
+    @property
+    def model(self):
+        return settings.GEMINI_MODEL
+
+
+DEFAULT_ROUTE = _SettingsRoute()
+
+
+def _resolve(route):
+    """The route to use, or None for the rule-based engine."""
+    return route if route is not None and route.api_key else None
 
 
 # ---------------------------------------------------------------------------
@@ -320,13 +341,13 @@ def _http_errors(name):
     )
 
 
-def get_client():
+def get_client(api_key=None):
     from google import genai
     from google.genai import types
 
     # No hidden SDK retries: a retry after a (possibly counted) timeout must not look "not charged".
     return genai.Client(
-        api_key=settings.GEMINI_API_KEY,
+        api_key=api_key or settings.GEMINI_API_KEY,
         http_options=types.HttpOptions(
             timeout=TIMEOUT_SECONDS * 1000,  # milliseconds
             retry_options=types.HttpRetryOptions(attempts=1),
@@ -334,11 +355,11 @@ def get_client():
     )
 
 
-def call_gemini(system, prompt, schema, billing=None):
+def call_gemini(system, prompt, schema, billing=None, route=DEFAULT_ROUTE):
     from google.genai import errors, types
 
     billing = billing or Billing()
-    client = get_client()
+    client = get_client(route.api_key)
     timeouts = _http_errors("TimeoutException")
     # Network failures other than timeouts (connect, read, protocol errors).
     connection_errors = _http_errors("TransportError")
@@ -348,7 +369,7 @@ def call_gemini(system, prompt, schema, billing=None):
         billing.api_called = True  # from here on, an unexpected failure may have been billed
         try:
             response = client.models.generate_content(
-                model=settings.GEMINI_MODEL,
+                model=route.model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system,
@@ -397,32 +418,34 @@ def _context_block(context):
     return json.dumps(context, indent=2, default=str)
 
 
-def analyze_round(context, billing=None):
-    """Returns (result, "ai") or (result, "rules")."""
-    if not ai_enabled():
+def analyze_round(context, billing=None, route=DEFAULT_ROUTE):
+    """Returns (result, "ai") or (result, "rules"). `route` None (or without a key) means rule-based."""
+    route = _resolve(route)
+    if route is None:
         return rule_based_analysis(context), "rules"
     prompt = (
         "Analyse this interview round. The candidate's debrief and the job context are below as JSON.\n\n"
         f"<round>\n{_context_block(context)}\n</round>"
     )
     try:
-        result = call_gemini(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA, billing)
+        result = call_gemini(ANALYSIS_SYSTEM, prompt, ANALYSIS_SCHEMA, billing, route)
     except CutOff as exc:
         raise CutOff("The analysis came out too long and got cut off. Try shortening your debrief.") from exc
     result["score"] = max(0, min(100, int(result["score"])))
     return result, "ai"
 
 
-def generate_plan(context, billing=None):
-    """Returns (result, "ai") or (result, "rules")."""
-    if not ai_enabled():
+def generate_plan(context, billing=None, route=DEFAULT_ROUTE):
+    """Returns (result, "ai") or (result, "rules"). `route` None (or without a key) means rule-based."""
+    route = _resolve(route)
+    if route is None:
         return rule_based_plan(context), "rules"
     prompt = (
         f"Build a {context['days']}-day prep plan. The candidate's context and recurring weak spots are below as JSON.\n\n"
         f"<context>\n{_context_block(context)}\n</context>"
     )
     try:
-        result = call_gemini(PLAN_SYSTEM, prompt, PLAN_SCHEMA, billing)
+        result = call_gemini(PLAN_SYSTEM, prompt, PLAN_SCHEMA, billing, route)
     except CutOff as exc:
         # A plan's input is mostly ours (weak spots, round type, up to 14 days), and thinking counts
         # towards max_tokens, so a cut-off isn't the user's doing: a plain failure, refunded within the cap.

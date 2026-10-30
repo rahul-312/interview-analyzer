@@ -5,6 +5,34 @@ All notable changes to this project are documented here. The format is based on
 [Semantic Versioning](https://semver.org/). The backend, frontend and browser
 extension share one version number.
 
+## [Unreleased]
+
+### Plans and billing
+- Three plans: Free, Pro (₹199/month or ₹1,699/year) and Pro Plus (₹499/month
+  or ₹3,999/year), billed as Razorpay subscriptions.
+- Per-plan limits on AI round analyses (2, 15, 50) and prep plans (1, 5, 15)
+  per rolling 24 hours, enforced on the server for the web app and the
+  browser extension alike. Pro Plus shows "Unlimited, fair use", with the
+  real allowance stated.
+- Pro Plus runs on a better model (`GEMINI_PRO_MODEL`) and a priority Celery
+  queue.
+- Pricing page with monthly and yearly prices, and a Plans & billing page
+  with the current plan, usage, payment history, plan changes, cancellation
+  and recovery from failed payments.
+- Razorpay webhooks keep subscriptions and payments in sync. Repeated and
+  out-of-order events are handled, and `reconcile_subscriptions` catches
+  anything missed.
+- Free users are told their debriefs may be used for training. Debriefs on
+  paid plans are never sent to a free-tier Gemini key and are excluded from
+  training.
+- Usage-limit responses (429) now include the feature, limit, usage and
+  reset time.
+
+### Changed
+- The free plan now includes 1 prep plan per 24 hours (was 2).
+- An admin-set plan on a profile is now a complimentary plan. Users get
+  whichever is higher: that plan or their subscription.
+
 ## [1.0.0] - 2026-10-29
 
 The first release of Interview Analyzer: track job applications, debrief each

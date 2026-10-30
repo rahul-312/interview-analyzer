@@ -193,6 +193,10 @@ class Debrief(models.Model):
     overall_feeling = models.PositiveSmallIntegerField(
         null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)]
     )
+    # Written (and every edit made) on a plan whose debriefs may be used for training. Once a paid
+    # user writes or edits it, it never becomes eligible again. Internal: not in the API. Training
+    # pipelines must go through billing.training, which also drops users who are on a paid plan now.
+    training_eligible = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -227,8 +231,9 @@ class RoundAnalysis(models.Model):
 
 class AnalysisRun(models.Model):
     """
-    One paid AI job started for a user: a round analysis or a prep plan.
-    Counts against their plan's limit for that kind unless refunded.
+    One paid AI job started for a user: a round analysis or a prep plan. This is the usage
+    record: it counts against their plan's limit for that kind unless refunded, whether it was
+    started from the web app or the browser extension.
     """
 
     class Kind(models.TextChoices):
@@ -247,6 +252,13 @@ class AnalysisRun(models.Model):
     billed = models.BooleanField(default=False)
     # Ran with no API key (free rule-based analyzer/planner), so it never counts against a limit.
     free = models.BooleanField(default=False)
+    # The plan the user was on when it started, which decides its model, queue and API key.
+    # Blank for runs from before plans had tiers.
+    tier = models.CharField(max_length=10, blank=True)
+    # The Gemini model it ran with; blank for the rule-based engine.
+    model = models.CharField(max_length=60, blank=True)
+    # Queued on the priority queue.
+    priority = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-created_at"]
