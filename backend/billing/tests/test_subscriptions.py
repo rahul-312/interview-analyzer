@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from accounts.models import Profile
 from billing import entitlements, notifications, razorpay, services, webhooks
-from billing.checks import paid_plans_have_ai
+from billing.checks import paid_plans_have_ai, signup_limit_is_shared
 from billing.models import BillingLock, PaymentTransaction, SubscriptionPlan, SubscriptionStatus, UserSubscription, WebhookEvent
 
 from .conftest import DAY, KEY_SECRET, checkout_signature, payment_entity, send_webhook
@@ -523,6 +523,18 @@ def test_deploy_check_warns_when_paid_plans_have_no_ai(settings):
     assert [w.id for w in paid_plans_have_ai(None)] == ["billing.W001"]
     settings.GEMINI_PAID_API_KEY = "paid-key"
     assert paid_plans_have_ai(None) == []
+
+
+def test_deploy_check_warns_when_the_signup_limit_isnt_shared(settings):
+    settings.DEBUG = False
+    settings.VERTEX_API_KEY = "vertex-key"
+    settings.CACHE_URL = ""
+    assert [w.id for w in signup_limit_is_shared(None)] == ["billing.W002"]
+    settings.CACHE_URL = "redis://localhost:6379/1"
+    assert signup_limit_is_shared(None) == []
+    settings.CACHE_URL = ""
+    settings.DEBUG = True  # one dev server
+    assert signup_limit_is_shared(None) == []
 
 
 # ---------------------------------------------------------------------------

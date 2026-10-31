@@ -98,8 +98,12 @@ REST_FRAMEWORK = {
     # (per IP), since every new account gets free AI runs.
     "DEFAULT_THROTTLE_RATES": {
         "billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min"),
-        "signup": os.environ.get("SIGNUP_THROTTLE_RATE", "5/hour"),
+        "signup": os.environ.get("SIGNUP_THROTTLE_RATE", "10/hour"),
     },
+    # Reverse proxies in front of the API (1 behind nginx or a load balancer). The throttles trust only the
+    # X-Forwarded-For entry the last proxy added; with 0 they use the connection's address, so a client
+    # can't dodge the sign-up limit by sending a made-up header.
+    "NUM_PROXIES": int(os.environ.get("NUM_PROXIES", "0")),
 }
 
 SIMPLE_JWT = {

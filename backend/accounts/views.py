@@ -12,6 +12,13 @@ class RegisterView(generics.CreateAPIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "signup"
 
+    def check_throttles(self, request):
+        pass  # checked in perform_create instead, so a mistyped form doesn't use up a sign-up
+
+    def perform_create(self, serializer):
+        super().check_throttles(self.request)
+        serializer.save()
+
 
 class MeView(generics.RetrieveUpdateAPIView):
     """GET, PUT and PATCH the logged-in user's profile."""

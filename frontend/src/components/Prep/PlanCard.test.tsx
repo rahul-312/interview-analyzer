@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PlanCard from "./PlanCard";
@@ -25,7 +25,10 @@ beforeEach(() => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("plan card", () => {
   it("ignores a second click on a task while its save is in flight", async () => {
@@ -71,6 +74,19 @@ describe("plan card", () => {
     expect(screen.getByText("Building your plan…")).toBeTruthy();
     rerender(<PlanCard plan={plan({ tasks: [{ ...plan().tasks[0], title: "New task" }] })} onChange={onChange} />);
     expect(screen.getByText("New task")).toBeTruthy();
+  });
+
+  it("stops waiting if the reloaded plan never arrives", async () => {
+    vi.useFakeTimers();
+    api.regenerate.mockResolvedValue(undefined as never);
+    render(<PlanCard plan={plan()} onChange={() => {}} />);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Regenerate" })));
+    expect(screen.getByText("Building your plan…")).toBeTruthy();
+
+    // The page's reload failed, so the same plan stays the prop
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.getByText("Review joins")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Regenerate" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("drops the spinner and shows the error when regenerating is refused", async () => {

@@ -21,3 +21,18 @@ def paid_plans_have_ai(app_configs, **kwargs):
         ),
         id="billing.W001",
     )]
+
+
+@checks.register(checks.Tags.security)
+def signup_limit_is_shared(app_configs, **kwargs):
+    # Debug is a single dev server, whose in-process count is enough
+    if settings.DEBUG or not settings.VERTEX_API_KEY or settings.CACHE_URL:
+        return []
+    return [checks.Warning(
+        "The sign-up rate limit counts per process: CACHE_URL isn't set.",
+        hint=(
+            "Every new account gets AI runs on the billed VERTEX_API_KEY. Without a shared cache, each worker "
+            "keeps its own count and restarts reset it, so the real limit is a multiple of SIGNUP_THROTTLE_RATE."
+        ),
+        id="billing.W002",
+    )]

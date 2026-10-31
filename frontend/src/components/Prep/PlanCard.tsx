@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import TaskList from './TaskList';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
@@ -29,6 +29,8 @@ const countdownStyle = (days: number) => {
   return 'bg-primary-light text-primary-dark';
 };
 
+const RELOAD_WAIT_MS = 10_000;
+
 /** A prep plan: summary, countdown, progress bar, tasks by day, Regenerate and Delete. */
 const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
   const [tasks, setTasks] = useState<PrepTask[]>(plan.tasks);
@@ -51,6 +53,12 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
     setPrevPlan(plan);
     if (regenerating === 'reload') setRegenerating(null);
   }
+  // If the reload fails, the page shows its error and keeps this plan, so stop waiting for a new one
+  useEffect(() => {
+    if (regenerating !== 'reload') return;
+    const timer = setTimeout(() => setRegenerating(null), RELOAD_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [regenerating]);
 
   const doneCount = tasks.filter((t) => t.done).length;
   const progress = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;

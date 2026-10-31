@@ -327,21 +327,38 @@ def test_profile_is_created_at_sign_up():
     assert Profile.objects.get(user_id=res.data["id"]).plan == "free"
 
 
-def test_sign_ups_are_throttled_per_ip():
+@pytest.fixture
+def signups_limited_to_two():
     from django.core.cache import cache
-    from rest_framework.test import APIClient
     from rest_framework.throttling import ScopedRateThrottle
 
     cache.clear()
-    client = APIClient()
     # DRF reads the rates once at import, so patch them on the class
     with mock.patch.object(ScopedRateThrottle, "THROTTLE_RATES", {"signup": "2/hour"}):
-        codes = [
-            client.post("/api/auth/register/", {"username": f"user{i}", "password": "a-strong-pass-123"}, format="json").status_code
-            for i in range(3)
-        ]
+        yield
     cache.clear()
+
+
+def sign_up(username, password="a-strong-pass-123", **headers):
+    from rest_framework.test import APIClient
+
+    return APIClient().post("/api/auth/register/", {"username": username, "password": password}, format="json", **headers).status_code
+
+
+def test_sign_ups_are_throttled_per_ip(signups_limited_to_two):
+    assert [sign_up(f"user{i}") for i in range(3)] == [201, 201, 429]
+
+
+def test_a_made_up_forwarded_for_header_doesnt_dodge_the_sign_up_limit(signups_limited_to_two):
+    codes = [sign_up(f"user{i}", HTTP_X_FORWARDED_FOR=f"203.0.113.{i}") for i in range(3)]
     assert codes == [201, 201, 429]
+
+
+def test_rejected_sign_ups_dont_use_up_the_limit(signups_limited_to_two):
+    assert sign_up("taken") == 201
+    assert [sign_up("taken"), sign_up("weak", password="1")] == [400, 400]
+    assert sign_up("second") == 201
+    assert sign_up("third") == 429
 
 
 def test_me_does_not_write(api, user):
