@@ -113,7 +113,7 @@ const NewPlanForm: React.FC<NewPlanFormProps> = ({ initialApplication, initialRo
           </p>
         )}
         <ErrorMessage message={error} />
-        {busy && <Working text="Building your plan…" hint="This can take a few minutes. Keep this page open." />}
+        {busy && <Working text="Building your plan…" />}
 
         <div className="flex justify-end gap-lg">
           <Button variant="secondary" onClick={onCancel} disabled={busy}>

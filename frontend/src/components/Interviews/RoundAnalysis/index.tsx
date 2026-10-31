@@ -27,26 +27,36 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
   const router = useRouter();
   const { openRoundForm, bump } = useDialogs();
   const [error, setError] = useState('');
-  // The request itself can take as long as the analysis when there's no task queue
-  const [starting, setStarting] = useState(false);
+  // 'request': the analyse call is running (it can take as long as the analysis without a task queue).
+  // 'reload': it started; keep the spinner until the reloaded round arrives, so the old state doesn't flash.
+  const [starting, setStarting] = useState<'request' | 'reload' | null>(null);
   // Poll until the analysis is done
   const { data: round, error: loadError, reload } = useApi(`round-${id}`, () => roundService.get(id), isAnalysing);
+  const [prevRound, setPrevRound] = useState(round);
   const { usage, reloadUsage } = useUsage();
   const outOfAnalyses = usage?.analyses.remaining === 0;
   // A refunded (failed) analysis changes the count, so refresh it when the job finishes
   useRefreshUsageWhenDone(round ? isAnalysing(round) : false);
 
+  if (round !== prevRound) {
+    setPrevRound(round);
+    if (starting === 'reload') setStarting(null);
+  }
+
   const handleAnalyse = async () => {
     setError('');
-    setStarting(true);
+    setStarting('request');
+    let started = true;
     try {
       await roundService.analyze(id);
     } catch (err) {
       // 409: it's already being analysed, which the reload below shows
-      if (!(err instanceof ApiError && err.status === 409)) setError(errorText(err));
-    } finally {
-      setStarting(false);
+      if (!(err instanceof ApiError && err.status === 409)) {
+        setError(errorText(err));
+        started = false;
+      }
     }
+    setStarting(started ? 'reload' : null);
     // Reload either way: a 409/429 means the round or usage changed elsewhere
     reload();
     reloadUsage();
@@ -67,7 +77,7 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
   if (!round) return <Loading />;
 
   const analysis = round.analysis;
-  const analysing = starting || isAnalysing(round);
+  const analysing = starting !== null || isAnalysing(round);
   const outOfAnalysesTitle = outOfAnalyses ? `No analyses left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined;
 
   return (
@@ -95,7 +105,7 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
             <Button
               variant="secondary"
               onClick={handleAnalyse}
-              loading={starting}
+              loading={starting !== null}
               disabled={analysing || outOfAnalyses}
               title={outOfAnalysesTitle}
             >

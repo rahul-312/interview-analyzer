@@ -94,8 +94,12 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    # Only views that set throttle_scope are throttled (billing calls that reach Razorpay).
-    "DEFAULT_THROTTLE_RATES": {"billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min")},
+    # Only views that set throttle_scope are throttled: billing calls that reach Razorpay, and sign-ups
+    # (per IP), since every new account gets free AI runs.
+    "DEFAULT_THROTTLE_RATES": {
+        "billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min"),
+        "signup": os.environ.get("SIGNUP_THROTTLE_RATE", "5/hour"),
+    },
 }
 
 SIMPLE_JWT = {

@@ -392,7 +392,8 @@ def call_gemini(system, prompt, schema, billing=None, route=DEFAULT_ROUTE):
         except (errors.APIError, *connection_errors) as exc:
             # Network failure, or the API rejected/failed the request (4xx, 429 quota, 5xx): nothing billed.
             if isinstance(exc, errors.APIError) and _out_of_daily_quota(exc):
-                raise NotCharged("The AI's free daily limit has been reached. Try again tomorrow.") from exc
+                limit = "daily limit" if route.vertex else "free daily limit"
+                raise NotCharged(f"The AI's {limit} has been reached. Try again tomorrow.") from exc
             if isinstance(exc, errors.APIError) and exc.code in SETUP_ERRORS:
                 raise NotCharged(_rejection_message(exc, route)) from exc
             retryable = not isinstance(exc, errors.APIError) or exc.code == 429 or exc.code >= 500
@@ -400,9 +401,12 @@ def call_gemini(system, prompt, schema, billing=None, route=DEFAULT_ROUTE):
                 time.sleep(delays[attempt])
                 continue
             logger.warning("Gemini request failed after %d attempt(s): %r", attempt + 1, exc)
-            if isinstance(exc, errors.APIError):
+            if not isinstance(exc, errors.APIError):
+                raise NotCharged("The server couldn't reach the AI service. Try again in a moment.") from exc
+            if retryable:  # 429 or 5xx: Google is overloaded or down for a while
                 raise NotCharged("The AI service is busy right now. Wait a minute and try again.") from exc
-            raise NotCharged("The server couldn't reach the AI service. Try again in a moment.") from exc
+            # Any other 4xx won't clear up by waiting
+            raise NotCharged("The AI service couldn't handle this request. Try again later.") from exc
 
     feedback = response.prompt_feedback
     if feedback and feedback.block_reason:

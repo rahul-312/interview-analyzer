@@ -327,6 +327,23 @@ def test_profile_is_created_at_sign_up():
     assert Profile.objects.get(user_id=res.data["id"]).plan == "free"
 
 
+def test_sign_ups_are_throttled_per_ip():
+    from django.core.cache import cache
+    from rest_framework.test import APIClient
+    from rest_framework.throttling import ScopedRateThrottle
+
+    cache.clear()
+    client = APIClient()
+    # DRF reads the rates once at import, so patch them on the class
+    with mock.patch.object(ScopedRateThrottle, "THROTTLE_RATES", {"signup": "2/hour"}):
+        codes = [
+            client.post("/api/auth/register/", {"username": f"user{i}", "password": "a-strong-pass-123"}, format="json").status_code
+            for i in range(3)
+        ]
+    cache.clear()
+    assert codes == [201, 201, 429]
+
+
 def test_me_does_not_write(api, user):
     Profile.objects.filter(user=user).delete()
     assert api.get("/api/auth/me/").data["usage"]["plan"] == "free"
@@ -723,6 +740,37 @@ def test_daily_quota_is_not_retried_and_says_so(api, application, run_jobs, with
     assert len(calls) == 1
     analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
     assert "daily limit" in analysis.error and analysis.refunded is True
+
+
+@pytest.mark.parametrize("vertex,expected", [(False, "free daily limit"), (True, "The AI's daily limit")])
+def test_daily_limit_only_says_free_off_vertex(api, application, run_jobs, settings, vertex, expected):
+    # Vertex is billed, so its daily quota isn't a "free" one
+    settings.GEMINI_API_KEY, settings.VERTEX_API_KEY = ("", "vertex-key") if vertex else ("test-key", "")
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_out_of_daily_quota())):
+        res = log_round(api, application, run_jobs)
+    assert expected in RoundAnalysis.objects.get(round_id=res.data["id"]).error
+
+
+@pytest.mark.parametrize("code,status", [(408, "REQUEST_TIMEOUT"), (413, "PAYLOAD_TOO_LARGE"), (422, "UNPROCESSABLE")])
+def test_other_rejections_dont_say_busy(api, application, run_jobs, with_ai, settings, code, status):
+    # Not retried, and waiting won't fix them, so "busy right now" would mislead
+    settings.AI_RETRY_DELAYS = (1, 3)
+    client, calls = _sequence_client(_api_error(code, status))
+    with mock.patch.object(ai, "get_client", return_value=client):
+        res = log_round(api, application, run_jobs)
+    assert len(calls) == 1
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert "couldn't handle this request" in analysis.error and "busy" not in analysis.error
+    assert analysis.refunded is True
+
+
+def test_setup_mistakes_on_vertex_point_at_the_vertex_key(api, application, run_jobs, settings, caplog):
+    settings.VERTEX_API_KEY = "vertex-key"
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_api_error(404, "NOT_FOUND"))), \
+            caplog.at_level("ERROR", logger="tracker.ai"):
+        res = log_round(api, application, run_jobs)
+    assert "isn't set up correctly" in RoundAnalysis.objects.get(round_id=res.data["id"]).error
+    assert "VERTEX_API_KEY" in caplog.text and "GEMINI_PAID_API_KEY" not in caplog.text
 
 
 @pytest.mark.parametrize("code,status", [(404, "NOT_FOUND"), (400, "INVALID_ARGUMENT"), (403, "PERMISSION_DENIED")])

@@ -72,10 +72,11 @@ Where these are defined:
 | `BILLING_GRACE_DAYS` | Grace period for failed renewals. Default 3. |
 | `BILLING_CHECKOUT_REUSE_MINUTES` | Repeat checkouts for the same plan within this time reuse the subscription already created. Default 30. |
 | `BILLING_THROTTLE_RATE` | Rate limit for each user's billing actions. Default `20/min`. |
+| `SIGNUP_THROTTLE_RATE` | Sign-ups allowed per IP address, since every new account gets free AI runs. Default `5/hour`. Needs `CACHE_URL` to count across processes. |
 | `BILLING_EMAILS` | Set to `true` to send the app's own billing emails as well as Razorpay's. This needs Django's `EMAIL_*` settings. |
 | `GEMINI_PRO_MODEL` | The model Pro Plus uses. If blank, it uses `GEMINI_MODEL`. |
 | `GEMINI_PAID_API_KEY` | A key on a billing-enabled project, so paid plans can use AI while Free uses a free-tier key. |
-| `VERTEX_API_KEY` | A Vertex AI key on a Google Cloud project with billing. When set, every plan, Free included, uses it instead of the keys above. It's a paid tier, so paid plans are sold and no training notice is shown. |
+| `VERTEX_API_KEY` | A Vertex AI key on a Google Cloud project with billing. When set, every plan, Free included, uses it instead of the keys above. It's a paid tier, so paid plans are sold and the Google free-tier notice isn't shown (the app's own Free-plan training notice still is). There's no fallback: while it's set the Gemini keys are never used, so a bad key, a billing suspension or a Vertex outage stops AI for every plan (jobs fail without counting). Free accounts get AI on this billed key, so set a budget alert on the project and restrict the key to the Vertex AI API. |
 | `CELERY_PRIORITY_QUEUE` | The queue for Pro Plus jobs. Default `priority`. A worker started without `-Q` serves it as well as the normal queue. |
 | `CACHE_URL` | A shared cache such as `redis://localhost:6379/1`. The billing rate limit counts in it, so set it whenever more than one process serves the API. Without it, each process counts separately. |
 

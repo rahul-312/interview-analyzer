@@ -32,7 +32,7 @@ def billing_settings(settings, monkeypatch):
     for code in ("PRO_MONTHLY", "PRO_YEARLY", "PRO_PLUS_MONTHLY", "PRO_PLUS_YEARLY"):
         monkeypatch.delenv(f"RAZORPAY_PLAN_{code}", raising=False)  # set in a developer's .env
     settings.CELERY_TASK_ALWAYS_EAGER = True
-    settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"billing": "1000/min"}}
+    settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"billing": "1000/min", "signup": "1000/min"}}
     from config.celery import app
     app.conf.task_always_eager = True
 
