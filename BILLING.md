@@ -44,7 +44,7 @@ Where these are defined:
 | Cancel now | Access ends at once. The rest of the period isn't refunded. |
 | Undoing a cancellation | Razorpay can't undo one. The user subscribes again instead, and the new subscription starts billing when the current period ends, so nobody pays twice. |
 | Cancelling the new subscription | Until it starts, the dashboard's **Cancel upcoming subscription** cancels it straight away. Nothing has been charged for it. |
-| Abandoned checkouts | A checkout not completed within a day is cancelled at Razorpay, so its payment link stops working, and marked expired. If Razorpay says it was paid after all, Razorpay's state wins and the user gets the plan. |
+| Abandoned checkouts | A checkout's payment link expires at Razorpay after a day (`expire_by`). `reconcile_subscriptions` also cancels any still-unpaid checkout older than that at Razorpay and marks it expired. If Razorpay says it was paid after all, Razorpay's state wins and the user gets the plan. |
 | Recovery | For `pending` and `halted`, the dashboard's **Update payment** opens Razorpay's hosted link to pay again or change card, and Razorpay then reactivates the subscription. For `paused`, **Resume** calls Razorpay's resume API. |
 | Complimentary plans | An admin can set `Profile.plan` to give a plan for free. The user gets whichever is higher: that plan or their subscription. |
 

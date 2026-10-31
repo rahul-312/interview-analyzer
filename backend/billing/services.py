@@ -3,9 +3,8 @@ Subscription lifecycle: checkout, verification, plan changes, cancellation and r
 
 Local subscription state is only ever copied from Razorpay (a webhook, or a response to a
 server-side API call); nothing the browser sends changes it except a checkout signature, which
-only marks the checkout as verified. Every action runs under a lock on the user's row, so one
-user's billing requests are applied one at a time. It isn't the profile lock the usage limits take,
-so a slow Razorpay call never holds up the user's AI jobs.
+only marks the checkout as verified. Every action runs under the user's BillingLock, so one user's
+billing requests are applied one at a time, and a slow Razorpay call holds up nothing else.
 
 Policies (see README "Plans and billing"):
 - Upgrades (to a higher tier) apply now: Razorpay moves the subscription to the new plan straight
@@ -23,7 +22,6 @@ import logging
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -32,6 +30,7 @@ from accounts.models import get_profile
 from . import entitlements, razorpay, tiers
 from .models import (
     OPEN_STATUSES,
+    BillingLock,
     PaymentTransaction,
     SubscriptionPlan,
     SubscriptionStatus,
@@ -41,6 +40,10 @@ from .models import (
 from .notifications import notify
 
 logger = logging.getLogger(__name__)
+
+# How long a checkout's payment link works. Razorpay expires it after this (expire_by), and
+# reconcile_subscriptions cancels anything older that's still unpaid.
+CHECKOUT_EXPIRY = timedelta(days=1)
 
 # Payment methods Razorpay can't move to another plan (update returns an error for them).
 NO_PLAN_CHANGE_METHODS = {"upi", "emandate", "nach"}
@@ -68,7 +71,8 @@ def ts(value):
 
 
 def _lock_user(user):
-    get_user_model().objects.select_for_update().filter(pk=user.pk).first()
+    BillingLock.objects.get_or_create(user=user)
+    BillingLock.objects.select_for_update().get(user=user)
 
 
 def available_plan(code):
@@ -225,15 +229,25 @@ def abandon_checkout(sub):
         return True
 
 
-def checkout_blocker(user):
+def _stale(sub):
+    """Active here, but its paid period and grace are over: a renewal or ending webhook was missed."""
+    return sub.status == SubscriptionStatus.ACTIVE and not entitlements.gives_access(sub)
+
+
+def checkout_blocker(user, refreshed=False):
     """
     Why the user can't start a new subscription now (a BillingError), or None. Only a subscription
     ending with its current period may be followed by a new one. Anything else that can still be
     charged or resumed blocks it, so nobody pays for two.
+
+    A stale active subscription (see _stale) doesn't block unless `refreshed`: checkout fetches it
+    from Razorpay first and then asks again with refreshed=True.
     """
     for sub in UserSubscription.objects.filter(user=user, status__in=OPEN_STATUSES).select_related("plan"):
         name = sub.plan.get_tier_display()
         if sub.status == SubscriptionStatus.ACTIVE and sub.cancel_at_period_end:
+            continue
+        if _stale(sub) and not refreshed:
             continue
         if sub.status == SubscriptionStatus.AUTHENTICATED and sub.start_at and sub.start_at > timezone.now():
             return BillingError(
@@ -288,10 +302,16 @@ def start_checkout(user, plan_code):
     Creates (or reuses) a Razorpay subscription for the plan and returns it. Checkout in the
     browser then authorises it; nothing is granted until Razorpay confirms the payment.
     """
+    # Stale active subscriptions are fetched first, and kept even if checkout is then refused.
+    for stale in [s for s in UserSubscription.objects.filter(user=user, status=SubscriptionStatus.ACTIVE) if _stale(s)]:
+        try:
+            reconcile(stale)
+        except razorpay.RazorpayError as exc:
+            raise _from_razorpay(exc) from exc
     with transaction.atomic():
         _lock_user(user)
         plan = available_plan(plan_code)
-        blocker = checkout_blocker(user)
+        blocker = checkout_blocker(user, refreshed=True)
         if blocker:
             raise blocker
         if tiers.RANK[get_profile(user).plan] >= tiers.RANK[plan.tier]:
@@ -323,6 +343,7 @@ def start_checkout(user, plan_code):
                 total_count=settings.RAZORPAY_TOTAL_COUNT[plan.interval],
                 notes={"user_id": str(user.id), "plan": plan.code},
                 start_at=start_at,
+                expire_by=timezone.now() + CHECKOUT_EXPIRY,
             )
         except razorpay.RazorpayError as exc:
             raise _from_razorpay(exc) from exc
@@ -435,7 +456,8 @@ def cancel(user, *, at_period_end=True, upcoming=False):
         sub.cancel_at_period_end = at_period_end
         sub.save(update_fields=["cancel_requested_at", "cancel_at_period_end", "updated_at"])
         apply_fresh(sub, entity)
-        transaction.on_commit(lambda: notify(sub, "cancel_scheduled" if at_period_end else "cancelled"))
+        kind = "upcoming_cancelled" if upcoming else ("cancel_scheduled" if at_period_end else "cancelled")
+        transaction.on_commit(lambda: notify(sub, kind))
         return sub
 
 

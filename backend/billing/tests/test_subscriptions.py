@@ -6,9 +6,9 @@ from django.core.management import call_command
 from django.utils import timezone
 
 from accounts.models import Profile
-from billing import entitlements, razorpay, webhooks
+from billing import entitlements, razorpay, services, webhooks
 from billing.checks import paid_plans_have_ai
-from billing.models import PaymentTransaction, SubscriptionPlan, SubscriptionStatus, UserSubscription, WebhookEvent
+from billing.models import BillingLock, PaymentTransaction, SubscriptionPlan, SubscriptionStatus, UserSubscription, WebhookEvent
 
 from .conftest import DAY, KEY_SECRET, checkout_signature, payment_entity, send_webhook
 
@@ -654,3 +654,68 @@ def test_first_payment_sends_one_activation_email_and_renewals_send_their_own(
         send_webhook(anon, "subscription.charged", subscription=rzp.activate(sub_id), payment=payment_entity("pay_2"),
                      created_at=int(time.time()) + 1)
     assert sent == ["renewed"]
+
+
+# ---------------------------------------------------------------------------
+# Second review
+# ---------------------------------------------------------------------------
+
+def test_checkout_links_expire_at_razorpay_after_a_day(api, plans, rzp):
+    before = int(time.time())
+    checkout(api)
+    payload = rzp.calls[-1][2]
+    assert before + DAY - 5 <= payload["expire_by"] <= int(time.time()) + DAY
+
+
+def test_billing_actions_lock_their_own_row_not_the_users(api, user, plans, rzp):
+    checkout(api)
+    assert BillingLock.objects.filter(user=user).exists()
+
+
+def test_a_stale_active_subscription_is_checked_with_razorpay_before_checkout(api, anon, plans, rzp):
+    sub_id = subscribe(api, anon, rzp)
+    # The paid period and grace are over, and the cancellation webhook was missed.
+    UserSubscription.objects.update(current_end=timezone.now() - timedelta(days=10))
+    rzp.subscriptions[sub_id]["status"] = "cancelled"
+    assert api.get("/api/subscriptions/current/").data["actions"]["subscribe"] is True
+
+    checkout(api, "pro_plus_monthly")
+    assert UserSubscription.objects.get(razorpay_subscription_id=sub_id).status == "cancelled"
+
+
+def test_a_stale_active_subscription_that_renewed_still_blocks_checkout(api, anon, plans, rzp):
+    sub_id = subscribe(api, anon, rzp)
+    UserSubscription.objects.update(current_end=timezone.now() - timedelta(days=10))
+    rzp.activate(sub_id)  # renewed; the webhook was missed
+    res = api.post("/api/subscriptions/checkout/", {"plan": "pro_plus_monthly"}, format="json")
+    assert res.status_code == 409 and res.data["code"] == "already_subscribed"
+    assert tier(api) == "pro"
+
+
+def test_cancelling_the_upcoming_subscription_sends_its_own_email(
+    api, anon, plans, rzp, monkeypatch, django_capture_on_commit_callbacks
+):
+    sent = []
+    monkeypatch.setattr(services, "notify", lambda sub, kind: sent.append(kind))
+    monkeypatch.setattr(webhooks, "notify", lambda sub, kind: sent.append(kind))
+    subscribe(api, anon, rzp)
+    api.post("/api/subscriptions/cancel/", {}, format="json")
+    new_id = checkout(api, "pro_yearly")
+    send_webhook(anon, "subscription.authenticated", subscription={**rzp.subscriptions[new_id], "status": "authenticated"},
+                 created_at=int(time.time()) + 1)
+    sent.clear()
+    with django_capture_on_commit_callbacks(execute=True):
+        api.post("/api/subscriptions/cancel/", {"upcoming": True}, format="json")
+        send_webhook(anon, "subscription.cancelled", subscription=dict(rzp.subscriptions[new_id]), created_at=int(time.time()) + 2)
+    assert sent == ["upcoming_cancelled"]
+
+
+def test_cancelling_now_sends_one_cancelled_email(api, anon, plans, rzp, monkeypatch, django_capture_on_commit_callbacks):
+    sent = []
+    monkeypatch.setattr(services, "notify", lambda sub, kind: sent.append(kind))
+    monkeypatch.setattr(webhooks, "notify", lambda sub, kind: sent.append(kind))
+    sub_id = subscribe(api, anon, rzp)
+    with django_capture_on_commit_callbacks(execute=True):
+        api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+        send_webhook(anon, "subscription.cancelled", subscription=dict(rzp.subscriptions[sub_id]), created_at=int(time.time()) + 2)
+    assert sent == ["cancelled"]

@@ -52,6 +52,16 @@ class SubscriptionPlan(models.Model):
         return self.is_active and bool(self.razorpay_plan_id)
 
 
+class BillingLock(models.Model):
+    """
+    One row per user, locked so that user's billing actions run one at a time. Nothing else writes
+    to it, so holding it during a Razorpay call holds up only other billing actions by the same user
+    (not AI jobs, which lock the profile, nor logins, which write the user row).
+    """
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, primary_key=True, related_name="+")
+
+
 class SubscriptionStatus(models.TextChoices):
     # Razorpay's subscription states, plus EXPIRED for a checkout that was never completed.
     CREATED = "created", "Awaiting checkout"

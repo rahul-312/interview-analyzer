@@ -64,10 +64,13 @@ def create_plan(*, interval, amount_paise, currency, name, description=""):
     })
 
 
-def create_subscription(*, plan_id, total_count, notes, start_at=None):
+def create_subscription(*, plan_id, total_count, notes, start_at=None, expire_by=None):
+    """`expire_by`: after this, Razorpay no longer accepts the first payment and expires the subscription."""
     payload = {"plan_id": plan_id, "total_count": total_count, "customer_notify": 1, "notes": notes}
     if start_at is not None:
         payload["start_at"] = int(start_at.timestamp())
+    if expire_by is not None:
+        payload["expire_by"] = int(expire_by.timestamp())
     return _request("POST", "/subscriptions", payload)
 
 

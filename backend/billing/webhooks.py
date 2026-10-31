@@ -64,6 +64,7 @@ def _find_subscription(sub_entity, pay_entity):
 
 
 _NOT_STARTED = (SubscriptionStatus.CREATED, SubscriptionStatus.AUTHENTICATED)
+_STARTED = (SubscriptionStatus.ACTIVE, SubscriptionStatus.PENDING, SubscriptionStatus.HALTED, SubscriptionStatus.PAUSED)
 
 
 def _notification(event_type, before, sub, sub_entity):
@@ -73,10 +74,13 @@ def _notification(event_type, before, sub, sub_entity):
         return "activated" if sub.status == SubscriptionStatus.ACTIVE else None
     if event_type == "subscription.charged" and int(sub_entity.get("paid_count") or 0) > 1:
         return "renewed"
+    if event_type == "subscription.cancelled":
+        # Only a subscription that had started has a plan to end; the user was emailed already if
+        # they cancelled it here (it's cancelled before the event arrives).
+        return "cancelled" if before in _STARTED else None
     return {
         "subscription.pending": "payment_failed",
         "subscription.halted": "halted",
-        "subscription.cancelled": "cancelled",
     }.get(event_type)
 
 

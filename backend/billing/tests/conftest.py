@@ -19,7 +19,7 @@ DAY = 86_400
 
 
 @pytest.fixture(autouse=True)
-def billing_settings(settings):
+def billing_settings(settings, monkeypatch):
     """Razorpay test keys, a paid-tier Gemini key (no real AI calls: tests that run jobs mock them) and no broker."""
     settings.RAZORPAY_KEY_ID = "rzp_test_key"
     settings.RAZORPAY_KEY_SECRET = KEY_SECRET
@@ -28,6 +28,8 @@ def billing_settings(settings):
     settings.GEMINI_PAID_API_KEY = "paid-tier-key"  # paid plans are only sold with one
     settings.GEMINI_FREE_TIER = True
     settings.BILLING_GRACE_DAYS = 3
+    for code in ("PRO_MONTHLY", "PRO_YEARLY", "PRO_PLUS_MONTHLY", "PRO_PLUS_YEARLY"):
+        monkeypatch.delenv(f"RAZORPAY_PLAN_{code}", raising=False)  # set in a developer's .env
     settings.CELERY_TASK_ALWAYS_EAGER = True
     settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"billing": "1000/min"}}
     from config.celery import app

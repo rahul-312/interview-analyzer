@@ -25,6 +25,11 @@ _MESSAGES = {
     ),
     "cancel_scheduled": ("Your {plan} plan will end on {end}", "Your {plan} plan is cancelled. You keep it until {end}."),
     "cancelled": ("Your {plan} plan has ended", "Your {plan} plan has ended and your account is back on Free."),
+    "upcoming_cancelled": (
+        "Your new {plan} subscription is cancelled",
+        "Your {plan} subscription that was due to start won't start, and you won't be charged for it. "
+        "Your current plan isn't affected.",
+    ),
 }
 
 
