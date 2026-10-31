@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import TaskList from './TaskList';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
-import { ErrorMessage, Working } from '../ui/Feedback';
+import { ErrorMessage, JobFailed, Working } from '../ui/Feedback';
 import { useUsage } from '@/hooks/useUsage';
 import type { PrepPlan, PrepTask } from '@/models/PrepPlan';
+import { ApiError } from '@/services/ApiClient';
 import { prepPlanService } from '@/services/PrepPlanService';
 import { errorText } from '@/utils/errorText';
 import { daysUntil, formatDate, planLabel } from '@/utils/format';
@@ -33,8 +34,11 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
   const [tasks, setTasks] = useState<PrepTask[]>(plan.tasks);
   const [prevTasks, setPrevTasks] = useState(plan.tasks);
   const [error, setError] = useState('');
+  // The request itself can take as long as the generation when there's no task queue
+  const [regenerating, setRegenerating] = useState(false);
   const { usage, reloadUsage } = useUsage();
   const outOfPlans = usage?.prep_plans.remaining === 0;
+  const outOfPlansTitle = outOfPlans ? `No prep plans left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined;
 
   // Take the server's tasks when the plan is reloaded
   if (plan.tasks !== prevTasks) {
@@ -45,9 +49,14 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
   const doneCount = tasks.filter((t) => t.done).length;
   const progress = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;
   const days = daysUntil(plan.interview_date);
-  const generating = plan.status === 'pending' || plan.status === 'running';
+  const generating = regenerating || plan.status === 'pending' || plan.status === 'running';
+
+  // Tasks with a save in flight. A second click (e.g. a double-click) waits, so saves can't land out of order.
+  const saving = useRef(new Set<number>());
 
   const handleToggle = async (task: PrepTask) => {
+    if (saving.current.has(task.id)) return;
+    saving.current.add(task.id);
     setError('');
     setTasks((ts) => ts.map((t) => (t.id === task.id ? { ...t, done: !t.done } : t)));
     try {
@@ -55,15 +64,22 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
     } catch (err) {
       setTasks((ts) => ts.map((t) => (t.id === task.id ? task : t)));
       setError(errorText(err));
+    } finally {
+      saving.current.delete(task.id);
     }
   };
 
   const handleRegenerate = async () => {
     if (doneCount && !confirm('Regenerating replaces all tasks, including ticked ones. Continue?')) return;
+    setError('');
+    setRegenerating(true);
     try {
       await prepPlanService.regenerate(plan.id);
     } catch (err) {
-      setError(errorText(err));
+      // 409: it's already generating, which the reload below shows
+      if (!(err instanceof ApiError && err.status === 409)) setError(errorText(err));
+    } finally {
+      setRegenerating(false);
     }
     // Reload either way: a 409/429 means the plan or usage changed elsewhere
     onChange();
@@ -97,14 +113,14 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
       {generating ? (
         <Working text="Building your plan…" />
       ) : plan.status === 'failed' ? (
-        <div className="flex flex-col gap-lg">
-          <ErrorMessage message={`Plan generation failed: ${plan.error}`} />
-          {plan.refunded && (
-            <p className="rounded-lg bg-pale-mint px-2xl py-lg text-sm text-deep-green">
-              This one didn&apos;t count towards your limit.
-            </p>
-          )}
-        </div>
+        <JobFailed
+          title="We couldn't build this plan."
+          reason={plan.error}
+          refundedWhat={plan.refunded && 'one of your prep plans'}
+          onRetry={handleRegenerate}
+          retryDisabled={outOfPlans}
+          retryTitle={outOfPlansTitle}
+        />
       ) : (
         <>
           <p className="text-sm text-charcoal-gray">{plan.summary}</p>
@@ -136,10 +152,11 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
         <Button
           variant="secondary"
           onClick={handleRegenerate}
+          loading={regenerating}
           disabled={generating || outOfPlans}
-          title={outOfPlans ? `No prep plans left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined}
+          title={outOfPlansTitle}
         >
-          Regenerate
+          {regenerating ? 'Regenerating…' : 'Regenerate'}
         </Button>
         <Button variant="danger" onClick={handleDelete}>
           Delete

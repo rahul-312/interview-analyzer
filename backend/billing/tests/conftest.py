@@ -27,6 +27,7 @@ def billing_settings(settings, monkeypatch):
     settings.GEMINI_API_KEY = ""
     settings.GEMINI_PAID_API_KEY = "paid-tier-key"  # paid plans are only sold with one
     settings.GEMINI_FREE_TIER = True
+    settings.VERTEX_API_KEY = ""
     settings.BILLING_GRACE_DAYS = 3
     for code in ("PRO_MONTHLY", "PRO_YEARLY", "PRO_PLUS_MONTHLY", "PRO_PLUS_YEARLY"):
         monkeypatch.delenv(f"RAZORPAY_PLAN_{code}", raising=False)  # set in a developer's .env

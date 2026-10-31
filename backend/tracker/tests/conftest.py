@@ -13,6 +13,7 @@ def offline_settings(settings):
     settings.GEMINI_API_KEY = ""
     settings.GEMINI_PAID_API_KEY = ""
     settings.GEMINI_FREE_TIER = True
+    settings.VERTEX_API_KEY = ""
     settings.CELERY_TASK_ALWAYS_EAGER = True
     from config.celery import app
     app.conf.task_always_eager = True

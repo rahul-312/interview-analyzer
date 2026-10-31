@@ -9,10 +9,11 @@ import NotAnalysed from './NotAnalysed';
 import { OutcomeBadge } from '../../Badges';
 import Button from '../../ui/Button';
 import Card from '../../ui/Card';
-import { ErrorMessage, Loading, Working } from '../../ui/Feedback';
+import { ErrorMessage, JobFailed, Loading, Working } from '../../ui/Feedback';
 import { useDialogs } from '@/context/DialogsContext';
 import { useApi } from '@/hooks/useApi';
 import { useRefreshUsageWhenDone, useUsage } from '@/hooks/useUsage';
+import { ApiError } from '@/services/ApiClient';
 import { roundService } from '@/services/RoundService';
 import { isAnalysing } from '@/utils/analysis';
 import { errorText } from '@/utils/errorText';
@@ -26,6 +27,8 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
   const router = useRouter();
   const { openRoundForm, bump } = useDialogs();
   const [error, setError] = useState('');
+  // The request itself can take as long as the analysis when there's no task queue
+  const [starting, setStarting] = useState(false);
   // Poll until the analysis is done
   const { data: round, error: loadError, reload } = useApi(`round-${id}`, () => roundService.get(id), isAnalysing);
   const { usage, reloadUsage } = useUsage();
@@ -35,10 +38,14 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
 
   const handleAnalyse = async () => {
     setError('');
+    setStarting(true);
     try {
       await roundService.analyze(id);
     } catch (err) {
-      setError(errorText(err));
+      // 409: it's already being analysed, which the reload below shows
+      if (!(err instanceof ApiError && err.status === 409)) setError(errorText(err));
+    } finally {
+      setStarting(false);
     }
     // Reload either way: a 409/429 means the round or usage changed elsewhere
     reload();
@@ -60,7 +67,8 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
   if (!round) return <Loading />;
 
   const analysis = round.analysis;
-  const analysing = isAnalysing(round);
+  const analysing = starting || isAnalysing(round);
+  const outOfAnalysesTitle = outOfAnalyses ? `No analyses left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined;
 
   return (
     <div className="flex flex-col gap-8xl">
@@ -87,10 +95,11 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
             <Button
               variant="secondary"
               onClick={handleAnalyse}
+              loading={starting}
               disabled={analysing || outOfAnalyses}
-              title={outOfAnalyses ? `No analyses left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined}
+              title={outOfAnalysesTitle}
             >
-              Re-analyse
+              {starting ? 'Analysing…' : 'Re-analyse'}
             </Button>
           )}
           <Button variant="secondary" onClick={() => openRoundForm({ round, withDebrief: true, afterSave: reload })}>
@@ -107,24 +116,22 @@ const RoundAnalysis: React.FC<RoundAnalysisProps> = ({ id }) => {
       {/* Analysis */}
       {!round.debrief ? (
         <Card className="text-sm text-medium-gray">No debrief yet. Write one to get an analysis of this round.</Card>
-      ) : !analysis ? (
-        <NotAnalysed usage={usage} onAnalyse={handleAnalyse} />
       ) : analysing ? (
         <Card>
-          <Working text={analysis.status === 'running' ? 'Analysing your debrief…' : 'Queued for analysis…'} />
+          <Working text={analysis?.status === 'pending' ? 'Queued for analysis…' : 'Analysing your debrief…'} />
         </Card>
+      ) : !analysis ? (
+        <NotAnalysed usage={usage} onAnalyse={handleAnalyse} />
       ) : analysis.status === 'failed' ? (
-        <Card className="flex flex-col items-start gap-lg text-sm">
-          <p className="font-medium text-rose-dark">The analysis failed.</p>
-          <p className="text-dark-gray">{analysis.error}</p>
-          {analysis.refunded && (
-            <p className="rounded-lg bg-pale-mint px-2xl py-lg text-deep-green">
-              This one didn&apos;t count towards your limit.
-            </p>
-          )}
-          <Button variant="primary" onClick={handleAnalyse} disabled={outOfAnalyses}>
-            Try again
-          </Button>
+        <Card>
+          <JobFailed
+            title="We couldn't analyse this round."
+            reason={analysis.error}
+            refundedWhat={analysis.refunded && 'one of your analyses'}
+            onRetry={handleAnalyse}
+            retryDisabled={outOfAnalyses}
+            retryTitle={outOfAnalysesTitle}
+          />
         </Card>
       ) : analysis.stale ? (
         <>

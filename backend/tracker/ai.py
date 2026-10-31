@@ -61,7 +61,7 @@ def advice_for(topic):
 
 def ai_enabled():
     """Whether any Gemini key is configured. Which key (if any) a user's jobs use depends on their plan."""
-    return bool(settings.GEMINI_API_KEY or settings.GEMINI_PAID_API_KEY)
+    return bool(settings.GEMINI_API_KEY or settings.GEMINI_PAID_API_KEY or settings.VERTEX_API_KEY)
 
 
 class _SettingsRoute:
@@ -74,6 +74,8 @@ class _SettingsRoute:
     @property
     def model(self):
         return settings.GEMINI_MODEL
+
+    vertex = False
 
 
 DEFAULT_ROUTE = _SettingsRoute()
@@ -308,9 +310,13 @@ BLOCKED_PROMPT = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "JAILBREAK"}
 SETUP_ERRORS = {400, 401, 403, 404}
 
 
-def _rejection_message(exc):
+def _rejection_message(exc, route):
     """What to tell the user when Gemini rejects the request (a 4xx other than 429). Every rejection is logged."""
-    logger.error("Gemini rejected the request; check GEMINI_API_KEY and GEMINI_MODEL: %s", exc)
+    key_setting = "VERTEX_API_KEY" if route.vertex else "GEMINI_API_KEY / GEMINI_PAID_API_KEY"
+    logger.error(
+        "Gemini rejected the request for model %r; check %s and GEMINI_MODEL / GEMINI_PRO_MODEL: %s",
+        route.model, key_setting, exc,
+    )
     detail = (exc.message or "").lower()
     if "location is not supported" in detail:
         return "The AI isn't available in the region this server runs in."
@@ -341,12 +347,13 @@ def _http_errors(name):
     )
 
 
-def get_client(api_key=None):
+def get_client(api_key=None, vertex=False):
     from google import genai
     from google.genai import types
 
     # No hidden SDK retries: a retry after a (possibly counted) timeout must not look "not charged".
     return genai.Client(
+        vertexai=vertex,
         api_key=api_key or settings.GEMINI_API_KEY,
         http_options=types.HttpOptions(
             timeout=TIMEOUT_SECONDS * 1000,  # milliseconds
@@ -359,7 +366,7 @@ def call_gemini(system, prompt, schema, billing=None, route=DEFAULT_ROUTE):
     from google.genai import errors, types
 
     billing = billing or Billing()
-    client = get_client(route.api_key)
+    client = get_client(route.api_key, route.vertex)
     timeouts = _http_errors("TimeoutException")
     # Network failures other than timeouts (connect, read, protocol errors).
     connection_errors = _http_errors("TransportError")
@@ -387,12 +394,15 @@ def call_gemini(system, prompt, schema, billing=None, route=DEFAULT_ROUTE):
             if isinstance(exc, errors.APIError) and _out_of_daily_quota(exc):
                 raise NotCharged("The AI's free daily limit has been reached. Try again tomorrow.") from exc
             if isinstance(exc, errors.APIError) and exc.code in SETUP_ERRORS:
-                raise NotCharged(_rejection_message(exc)) from exc
+                raise NotCharged(_rejection_message(exc, route)) from exc
             retryable = not isinstance(exc, errors.APIError) or exc.code == 429 or exc.code >= 500
             if retryable and attempt < len(delays):
                 time.sleep(delays[attempt])
                 continue
-            raise NotCharged(f"The AI service is unavailable right now ({exc.__class__.__name__}). Try again.") from exc
+            logger.warning("Gemini request failed after %d attempt(s): %r", attempt + 1, exc)
+            if isinstance(exc, errors.APIError):
+                raise NotCharged("The AI service is busy right now. Wait a minute and try again.") from exc
+            raise NotCharged("The server couldn't reach the AI service. Try again in a moment.") from exc
 
     feedback = response.prompt_feedback
     if feedback and feedback.block_reason:

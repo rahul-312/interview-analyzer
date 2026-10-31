@@ -75,6 +75,7 @@ Where these are defined:
 | `BILLING_EMAILS` | Set to `true` to send the app's own billing emails as well as Razorpay's. This needs Django's `EMAIL_*` settings. |
 | `GEMINI_PRO_MODEL` | The model Pro Plus uses. If blank, it uses `GEMINI_MODEL`. |
 | `GEMINI_PAID_API_KEY` | A key on a billing-enabled project, so paid plans can use AI while Free uses a free-tier key. |
+| `VERTEX_API_KEY` | A Vertex AI key on a Google Cloud project with billing. When set, every plan, Free included, uses it instead of the keys above. It's a paid tier, so paid plans are sold and no training notice is shown. |
 | `CELERY_PRIORITY_QUEUE` | The queue for Pro Plus jobs. Default `priority`. A worker started without `-Q` serves it as well as the normal queue. |
 | `CACHE_URL` | A shared cache such as `redis://localhost:6379/1`. The billing rate limit counts in it, so set it whenever more than one process serves the API. Without it, each process counts separately. |
 

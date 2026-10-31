@@ -247,17 +247,18 @@ def test_unbilled_refunds_are_not_capped(api, application, run_jobs, with_ai, se
     assert counted_runs() == 0
 
 
-@pytest.mark.parametrize("outcome", [
-    httpx.ConnectError("down", request=_REQ),
-    _api_error(429, "RESOURCE_EXHAUSTED"),
-    _api_error(503, "UNAVAILABLE"),
+@pytest.mark.parametrize("outcome,message", [
+    (httpx.ConnectError("down", request=_REQ), "couldn't reach the AI service"),
+    (_api_error(429, "RESOURCE_EXHAUSTED"), "busy right now"),
+    (_api_error(503, "UNAVAILABLE"), "busy right now"),
 ], ids=["connection", "429", "503"])
-def test_unbilled_failures_are_refunded(api, application, run_jobs, with_ai, outcome):
+def test_unbilled_failures_are_refunded(api, application, run_jobs, with_ai, outcome, message):
     with mock.patch.object(ai, "get_client", return_value=_fake_client(outcome)):
         res = log_round(api, application, run_jobs)
     analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
     assert analysis.status == JobStatus.FAILED
-    assert "unavailable" in analysis.error
+    # Plain words for the user; the exception's class name is only in the log
+    assert message in analysis.error and "ConnectError" not in analysis.error
     assert counted_runs() == 0
 
 

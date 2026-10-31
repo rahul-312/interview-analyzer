@@ -7,7 +7,7 @@ from . import entitlements, razorpay, tiers
 
 @checks.register(checks.Tags.compatibility)
 def paid_plans_have_ai(app_configs, **kwargs):
-    if not settings.GEMINI_API_KEY and not settings.GEMINI_PAID_API_KEY:
+    if not settings.GEMINI_API_KEY and not settings.GEMINI_PAID_API_KEY and not settings.VERTEX_API_KEY:
         return []  # no AI anywhere: every plan says rule-based
     missing = [tiers.NAMES[code] for code in tiers.RANK if code != tiers.FREE and not entitlements.ai_ready(code)]
     if not missing:

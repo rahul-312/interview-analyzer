@@ -152,6 +152,9 @@ GEMINI_FREE_TIER = os.environ.get("GEMINI_FREE_TIER", "true").lower() not in ("f
 # training, only ever go to a paid-tier key: this one, or GEMINI_API_KEY when GEMINI_FREE_TIER is false.
 # With neither, paid plans get the rule-based engine rather than a free-tier key.
 GEMINI_PAID_API_KEY = os.environ.get("GEMINI_PAID_API_KEY", "")
+# An API key for Gemini on Vertex AI (Google Cloud). When set, every plan's jobs use it instead of the
+# keys above: it bills a Google Cloud project, so it's a paid tier, and it's far more reliable under load.
+VERTEX_API_KEY = os.environ.get("VERTEX_API_KEY", "")
 
 # Celery queue for priority plans (Pro Plus). A worker started without -Q serves both queues, so
 # nothing waits on a worker that isn't running; a dedicated `-Q priority` worker makes it a real
