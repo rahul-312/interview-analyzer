@@ -39,11 +39,13 @@ _MESSAGES = {
 def _after_cancel(sub):
     """What the user has now that `sub` has ended: a subscription about to start, another plan, or Free."""
     upcoming = (
-        UserSubscription.objects.filter(user=sub.user, status=SubscriptionStatus.AUTHENTICATED)
+        UserSubscription.objects.filter(
+            user=sub.user, status=SubscriptionStatus.AUTHENTICATED, start_at__gt=timezone.now()
+        )
         .exclude(pk=sub.pk).select_related("plan").order_by("start_at").first()
     )
     if upcoming:
-        start = timezone.localtime(upcoming.start_at).strftime("%d %b %Y") if upcoming.start_at else "soon"
+        start = timezone.localtime(upcoming.start_at).strftime("%d %b %Y")
         return f"Your {upcoming.plan.get_tier_display()} subscription starts on {start}."
     current = entitlements.tier_for(sub.user)
     if current != tiers.FREE:
@@ -57,10 +59,10 @@ def notify(sub, kind):
     logger.info("Billing event %s for subscription %s", kind, sub.razorpay_subscription_id)
     if not getattr(settings, "BILLING_EMAILS", False) or not sub.user.email:
         return
-    end = timezone.localtime(sub.current_end).strftime("%d %b %Y") if sub.current_end else "the end of the period"
-    after = _after_cancel(sub) if kind == "cancelled" else ""
-    subject, body = (text.format(plan=sub.plan.get_tier_display(), end=end, after=after) for text in _MESSAGES[kind])
     try:
+        end = timezone.localtime(sub.current_end).strftime("%d %b %Y") if sub.current_end else "the end of the period"
+        after = _after_cancel(sub) if kind == "cancelled" else ""
+        subject, body = (text.format(plan=sub.plan.get_tier_display(), end=end, after=after) for text in _MESSAGES[kind])
         send_mail(subject, body, None, [sub.user.email])
-    except Exception:  # never let email break a webhook
+    except Exception:  # never let email break a request or webhook; billing is already saved
         logger.exception("Couldn't send billing email %s", kind)

@@ -6,7 +6,7 @@ from django.core.management import call_command
 from django.utils import timezone
 
 from accounts.models import Profile
-from billing import entitlements, razorpay, services, webhooks
+from billing import entitlements, notifications, razorpay, services, webhooks
 from billing.checks import paid_plans_have_ai
 from billing.models import BillingLock, PaymentTransaction, SubscriptionPlan, SubscriptionStatus, UserSubscription, WebhookEvent
 
@@ -761,3 +761,35 @@ def test_the_cancelled_email_names_the_subscription_about_to_start(
         send_webhook(anon, "subscription.cancelled", subscription={**rzp.subscriptions[sub_id], "status": "cancelled"},
                      created_at=int(time.time()) + 2)
     assert "Your Pro Plus subscription starts on " in _cancelled_email(mailoutbox)
+
+
+def test_the_cancelled_email_ignores_an_authorised_checkout_with_no_start_date(
+    api, anon, plans, rzp, settings, mailoutbox, django_capture_on_commit_callbacks
+):
+    settings.BILLING_EMAILS = True
+    sub_id = subscribe(api, anon, rzp)
+    other = UserSubscription.objects.get(razorpay_subscription_id=sub_id)
+    other.pk, other.razorpay_subscription_id = None, "sub_other"
+    other.status, other.start_at = SubscriptionStatus.AUTHENTICATED, None
+    other.save()
+    with django_capture_on_commit_callbacks(execute=True):
+        api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+    body = _cancelled_email(mailoutbox)
+    assert "soon" not in body and body.endswith("Your account is back on Free.")
+
+
+def test_a_failure_writing_the_email_doesnt_fail_the_cancel(
+    api, anon, plans, rzp, settings, monkeypatch, mailoutbox, django_capture_on_commit_callbacks
+):
+    settings.BILLING_EMAILS = True
+    sub_id = subscribe(api, anon, rzp)
+
+    def broken(sub):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(notifications, "_after_cancel", broken)
+    with django_capture_on_commit_callbacks(execute=True):
+        res = api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+    assert res.status_code == 200
+    assert UserSubscription.objects.get(razorpay_subscription_id=sub_id).status == "cancelled"
+    assert not [m for m in mailoutbox if m.subject.endswith("plan has ended")]
