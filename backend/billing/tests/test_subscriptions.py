@@ -719,3 +719,45 @@ def test_cancelling_now_sends_one_cancelled_email(api, anon, plans, rzp, monkeyp
         api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
         send_webhook(anon, "subscription.cancelled", subscription=dict(rzp.subscriptions[sub_id]), created_at=int(time.time()) + 2)
     assert sent == ["cancelled"]
+
+
+def _cancelled_email(mailoutbox):
+    bodies = [m.body for m in mailoutbox if m.subject.endswith("plan has ended")]
+    assert len(bodies) == 1
+    return bodies[0]
+
+
+def test_the_cancelled_email_says_the_account_is_back_on_free(
+    api, anon, plans, rzp, settings, mailoutbox, django_capture_on_commit_callbacks
+):
+    settings.BILLING_EMAILS = True
+    subscribe(api, anon, rzp)
+    with django_capture_on_commit_callbacks(execute=True):
+        api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+    assert _cancelled_email(mailoutbox).endswith("Your account is back on Free.")
+
+
+def test_the_cancelled_email_names_the_complimentary_plan(
+    api, anon, user, plans, rzp, settings, mailoutbox, django_capture_on_commit_callbacks
+):
+    settings.BILLING_EMAILS = True
+    Profile.objects.filter(user=user).update(plan="pro")
+    subscribe(api, anon, rzp, plan="pro_plus_monthly")
+    with django_capture_on_commit_callbacks(execute=True):
+        api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+    assert _cancelled_email(mailoutbox).endswith("Your account is on Pro.")
+
+
+def test_the_cancelled_email_names_the_subscription_about_to_start(
+    api, anon, plans, rzp, settings, mailoutbox, django_capture_on_commit_callbacks
+):
+    settings.BILLING_EMAILS = True
+    sub_id = subscribe(api, anon, rzp)
+    api.post("/api/subscriptions/cancel/", {}, format="json")
+    new_id = checkout(api, "pro_plus_yearly")
+    send_webhook(anon, "subscription.authenticated", subscription={**rzp.subscriptions[new_id], "status": "authenticated"},
+                 created_at=int(time.time()) + 1)
+    with django_capture_on_commit_callbacks(execute=True):
+        send_webhook(anon, "subscription.cancelled", subscription={**rzp.subscriptions[sub_id], "status": "cancelled"},
+                     created_at=int(time.time()) + 2)
+    assert "Your Pro Plus subscription starts on " in _cancelled_email(mailoutbox)

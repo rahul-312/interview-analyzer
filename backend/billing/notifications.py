@@ -9,6 +9,9 @@ from django.conf import settings
 from django.core.mail import send_mail
 from django.utils import timezone
 
+from . import entitlements, tiers
+from .models import SubscriptionStatus, UserSubscription
+
 logger = logging.getLogger(__name__)
 
 _MESSAGES = {
@@ -24,13 +27,28 @@ _MESSAGES = {
         "Go to Plans & billing to pay and restore them.",
     ),
     "cancel_scheduled": ("Your {plan} plan will end on {end}", "Your {plan} plan is cancelled. You keep it until {end}."),
-    "cancelled": ("Your {plan} plan has ended", "Your {plan} plan has ended and your account is back on Free."),
+    "cancelled": ("Your {plan} plan has ended", "Your {plan} plan has ended. {after}"),
     "upcoming_cancelled": (
         "Your new {plan} subscription is cancelled",
         "Your {plan} subscription that was due to start won't start, and you won't be charged for it. "
         "Your current plan isn't affected.",
     ),
 }
+
+
+def _after_cancel(sub):
+    """What the user has now that `sub` has ended: a subscription about to start, another plan, or Free."""
+    upcoming = (
+        UserSubscription.objects.filter(user=sub.user, status=SubscriptionStatus.AUTHENTICATED)
+        .exclude(pk=sub.pk).select_related("plan").order_by("start_at").first()
+    )
+    if upcoming:
+        start = timezone.localtime(upcoming.start_at).strftime("%d %b %Y") if upcoming.start_at else "soon"
+        return f"Your {upcoming.plan.get_tier_display()} subscription starts on {start}."
+    current = entitlements.tier_for(sub.user)
+    if current != tiers.FREE:
+        return f"Your account is on {tiers.NAMES[current]}."
+    return "Your account is back on Free."
 
 
 def notify(sub, kind):
@@ -40,7 +58,8 @@ def notify(sub, kind):
     if not getattr(settings, "BILLING_EMAILS", False) or not sub.user.email:
         return
     end = timezone.localtime(sub.current_end).strftime("%d %b %Y") if sub.current_end else "the end of the period"
-    subject, body = (text.format(plan=sub.plan.get_tier_display(), end=end) for text in _MESSAGES[kind])
+    after = _after_cancel(sub) if kind == "cancelled" else ""
+    subject, body = (text.format(plan=sub.plan.get_tier_display(), end=end, after=after) for text in _MESSAGES[kind])
     try:
         send_mail(subject, body, None, [sub.user.email])
     except Exception:  # never let email break a webhook
