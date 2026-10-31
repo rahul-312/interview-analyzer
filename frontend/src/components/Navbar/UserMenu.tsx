@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { ChevronDown, LogOut } from "lucide-react";
+import Link from "next/link";
+import { ChevronDown, CreditCard, LogOut } from "lucide-react";
 import Button from "../ui/Button";
 import { useAuth } from "@/context/AuthContext";
 import { useDismiss } from "@/hooks/useDismiss";
@@ -54,11 +55,24 @@ export default function UserMenu({ inline = false }: { inline?: boolean }) {
     </Button>
   );
 
+  const billingLink = (
+    <Link
+      href="/billing"
+      onClick={close}
+      className="flex w-full items-center gap-lg rounded-lg px-xl py-lg text-sm text-charcoal-gray hover:bg-smoke-white hover:text-ink"
+    >
+      <CreditCard size={16} /> Plans &amp; billing
+    </Link>
+  );
+
   if (inline) {
     return (
       <div className="flex w-full flex-col gap-lg">
         {profile}
-        <div className="-mx-xl">{logoutButton}</div>
+        <div className="-mx-xl">
+          {billingLink}
+          {logoutButton}
+        </div>
       </div>
     );
   }
@@ -83,6 +97,7 @@ export default function UserMenu({ inline = false }: { inline?: boolean }) {
         >
           <div className="px-xl py-lg">{profile}</div>
           <div className="my-sm border-t border-light-gray" />
+          {billingLink}
           {logoutButton}
         </div>
       )}

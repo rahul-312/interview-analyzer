@@ -5,7 +5,8 @@ import { useUsage } from "@/hooks/useUsage";
 import type { Quota } from "@/models/Auth";
 import { planLabel } from "@/utils/format";
 
-const left = (q: Quota, noun: string) => (q.limit === null ? `unlimited ${noun}` : `${q.remaining}/${q.limit} ${noun}`);
+const left = (q: Quota, noun: string) =>
+  q.fair_use ? `unlimited ${noun} (fair use)` : q.limit === null ? `unlimited ${noun}` : `${q.remaining}/${q.limit} ${noun}`;
 
 /**
  * "Free · 1/2 analyses · 2/2 plans left", or "Pro · Unlimited". Each quota can be unlimited on its own.

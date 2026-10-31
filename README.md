@@ -5,6 +5,8 @@ Track job applications, debrief each interview round, get an analysis of what we
 - `backend/`: Django 5.2, Django REST Framework (generic views), SimpleJWT, Celery, and the Gemini API
 - `frontend/`: Next.js 15 (Pages Router), TypeScript, Tailwind CSS 4, lucide-react, Recharts
 
+There are three plans: Free, Pro and Pro Plus. Paid plans are billed through Razorpay subscriptions, and every limit is enforced by the backend. See [BILLING.md](BILLING.md) for the plans, the policies, Razorpay setup and deployment.
+
 ## Run it locally
 
 You need Python 3.12+, Node 20+ and PostgreSQL. Create an empty database (for example `interview-analyzer`), then put its details in `backend/.env` (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`). You don't need Redis or an API key at first: jobs run inline and a rule-based analyzer is used.
@@ -52,19 +54,21 @@ The tests (`extension/tests`, run with jsdom) sit outside `src` so their package
 ```
 frontend/src/
 ├── pages/          thin route wrappers: _app, _document, login, register,
-│                   applications, applications/[id], interviews, interviews/[id], analysis, prep
+│                   applications, applications/[id], interviews, interviews/[id], analysis, prep,
+│                   pricing, billing
 ├── components/     one folder per feature, index.tsx composes small section files
 │   ├── MainLayout/   auth guard, sticky navbar, page container
 │   ├── Navbar/       NavLinks, NavButton, UserMenu, HamburgerMenu (mobile)
 │   ├── Applications/, Interviews/, Analysis/, Prep/
+│   ├── Billing/      pricing page, plans & billing dashboard, cancel dialog
 │   ├── ApplicationForm/, RoundForm/, Modal/, Badges/, Charts/, Auth/, Logo/
 │   └── ui/           Button, FormControls, Card, Feedback, PageHeader
 ├── context/        AuthContext, DialogsContext (shared pop-ups), RefreshContext
-├── hooks/          useApi (load + poll), useAddApplication
+├── hooks/          useApi (load + poll), useAddApplication, useCheckout (Razorpay Checkout)
 ├── services/       ApiClient plus one class per resource (ApplicationService, RoundService, ...)
 ├── models/         TypeScript types
 ├── config/         navItems, dropdown options
-├── utils/          date formatting, error text
+├── utils/          date formatting, error text, prices and plan wording (billing.ts)
 └── styles/         globals.css with @theme tokens (colours, spacing scale, text sizes)
 ```
 
@@ -74,7 +78,7 @@ Spacing uses the named scale from `globals.css` (`gap-4xl`, `px-6xl` and so on) 
 
 ```powershell
 cd backend;   .venv\Scripts\python -m pytest -q
-cd frontend;  npm run lint; npm run build
+cd frontend;  npm run lint; npm test; npm run build
 cd extension; npm install; npm test
 ```
 
@@ -111,3 +115,8 @@ With an API key set, round analysis and prep plans use `gemini-3.8-flash` with s
 | POST | `/api/prep-plans/{id}/regenerate/` |
 | PUT/PATCH | `/api/prep-tasks/{id}/` (only `done` is writable) |
 | GET | `/api/insights/` |
+| GET | `/api/subscriptions/plans/` (public), `/current/`, `/usage/`, `/payments/` |
+| POST | `/api/subscriptions/checkout/` (`{"plan": "pro_monthly"}`), `/verify/`, `/change-plan/`, `/cancel/` (`{"at_period_end": true}`), `/resume/` |
+| POST | `/api/webhooks/razorpay/` (Razorpay only, signature checked) |
+
+Requests over a plan's limit get 429 with `{detail, code: "usage_limit", feature, plan, limit, used, reset_at}`.

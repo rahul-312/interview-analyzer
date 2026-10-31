@@ -3,11 +3,16 @@ from django.db import models
 
 
 class Profile(models.Model):
-    """Per-user settings. Every user is on the free plan until switched (in the admin)."""
+    """
+    Per-user settings. `plan` is a complimentary plan set in the admin (everyone starts on Free);
+    paid plans come from Razorpay subscriptions. Users get whichever of the two is higher: see
+    billing.entitlements.
+    """
 
     class Plan(models.TextChoices):
         FREE = "free", "Free"
         PRO = "pro", "Pro"
+        PRO_PLUS = "pro_plus", "Pro Plus"
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
     plan = models.CharField(max_length=10, choices=Plan.choices, default=Plan.FREE)

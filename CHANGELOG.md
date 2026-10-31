@@ -5,6 +5,50 @@ All notable changes to this project are documented here. The format is based on
 [Semantic Versioning](https://semver.org/). The backend, frontend and browser
 extension share one version number.
 
+## [Unreleased]
+
+### Plans and billing
+- Three plans: Free, Pro (₹199/month or ₹1,699/year) and Pro Plus (₹499/month
+  or ₹3,999/year), billed as Razorpay subscriptions.
+- Per-plan limits on AI round analyses (2, 15, 50) and prep plans (1, 5, 15)
+  per rolling 24 hours, enforced on the server for the web app and the
+  browser extension alike. Pro Plus shows "Unlimited, fair use", with the
+  real allowance stated.
+- Pro Plus runs on a better model (`GEMINI_PRO_MODEL`) and a priority Celery
+  queue.
+- Pricing page with monthly and yearly prices, and a Plans & billing page
+  with the current plan, usage, payment history, plan changes, cancellation
+  and recovery from failed payments.
+- Razorpay webhooks keep subscriptions and payments in sync. Repeated and
+  out-of-order events are handled, and `reconcile_subscriptions` catches
+  anything missed.
+- Free users are told their debriefs may be used for training. Debriefs on
+  paid plans are never sent to a free-tier Gemini key and are excluded from
+  training.
+- Usage-limit responses (429) now include the feature, limit, usage and
+  reset time.
+
+### Changed
+- The free plan now includes 1 prep plan per 24 hours (was 2).
+- An admin-set plan on a profile is now a complimentary plan. Users get
+  whichever is higher: that plan or their subscription.
+- Pro now has limits: 15 AI round analyses and 5 prep plans per 24 hours.
+  It was unlimited.
+- Pro jobs only use a paid-tier Gemini key (`GEMINI_PAID_API_KEY`, or
+  `GEMINI_API_KEY` with `GEMINI_FREE_TIER=false`). Before, they used the
+  same key as Free.
+
+### Upgrading
+Users whose profile was set to Pro in the admin are affected on deploy:
+- They go from unlimited to 15 analyses and 5 prep plans per 24 hours. To
+  keep them unlimited in practice, raise `PRO_ANALYSES_PER_24H` and
+  `PRO_PREP_PLANS_PER_24H`, or move them to Pro Plus in the admin.
+- If the server only has a free-tier Gemini key, they get the rule-based
+  engine until `GEMINI_PAID_API_KEY` is set. `python manage.py check`
+  warns about this (`billing.W001`).
+- Free users get 1 prep plan per 24 hours instead of 2. Set
+  `FREE_PREP_PLANS_PER_24H=2` to keep the old limit.
+
 ## [1.0.0] - 2026-10-29
 
 The first release of Interview Analyzer: track job applications, debrief each

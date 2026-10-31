@@ -46,7 +46,8 @@ export function isPast(value: string): boolean {
   return new Date(value).getTime() < Date.now();
 }
 
-/** "free" → "Free", "pro" → "Pro". */
+/** "free" → "Free", "pro" → "Pro", "pro_plus" → "Pro Plus". */
 export function planLabel(plan: string | null | undefined): string {
+  if (plan === "pro_plus") return "Pro Plus";
   return plan === "pro" ? "Pro" : "Free";
 }

@@ -84,16 +84,18 @@ def test_free_plan_gets_two_analyses_then_round_is_saved_without_one(api, applic
 
 
 def test_usage_is_reported_on_me(api, application, run_jobs):
-    fresh = {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None}
+    fresh = {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None, "fair_use": False}
+    fresh_plans = {"limit": 1, "used": 0, "remaining": 1, "next_available_at": None, "fair_use": False}
     assert api.get("/api/auth/me/").data["usage"] == {
-        "plan": "free", "ai_enabled": True, "ai_free_tier": True, "analyses": fresh, "prep_plans": fresh
+        "plan": "free", "plan_name": "Free", "ai_enabled": True, "ai_free_tier": True, "training_notice": True,
+        "ai_model": "Flash", "priority": False, "analyses": fresh, "prep_plans": fresh_plans,
     }
 
     log_round(api, application, run_jobs)
     usage = api.get("/api/auth/me/").data["usage"]
     assert usage["analyses"]["used"] == 1 and usage["analyses"]["remaining"] == 1
     assert usage["analyses"]["next_available_at"] is not None
-    assert usage["prep_plans"] == fresh  # counted separately
+    assert usage["prep_plans"] == fresh_plans  # counted separately
 
 
 def test_analyses_free_up_after_24_hours(api, application, run_jobs):
@@ -104,11 +106,13 @@ def test_analyses_free_up_after_24_hours(api, application, run_jobs):
     assert not log_round(api, application, run_jobs, "Q3").data["analysis_limited"]
 
 
-def test_pro_plan_is_unlimited(api, application, run_jobs, user):
+def test_pro_plan_gets_its_own_limit(api, application, run_jobs, user, settings):
+    settings.GEMINI_FREE_TIER = False  # paid plans only use a paid-tier key
     Profile.objects.update_or_create(user=user, defaults={"plan": Profile.Plan.PRO})
     for i in range(4):
         assert not log_round(api, application, run_jobs, f"Q{i}").data["analysis_limited"]
-    assert api.get("/api/auth/me/").data["usage"]["analyses"]["remaining"] is None
+    analyses = api.get("/api/auth/me/").data["usage"]["analyses"]
+    assert analyses["limit"] == 15 and analyses["remaining"] == 11
 
 
 def test_failed_analysis_is_refunded(api, application, run_jobs):
@@ -335,7 +339,7 @@ def test_me_does_not_write(api, user):
 def test_debrief_edited_while_running_saves_result_as_stale(api, application, run_jobs):
     real_analyze = ai.analyze_round
 
-    def edit_during_run(context, billing=None):
+    def edit_during_run(context, billing=None, route=None):
         # The user saves a new debrief while the AI call is in flight.
         Debrief.objects.filter(round__application=application).update(
             went_badly="edited mid-run", updated_at=timezone.now() + timedelta(seconds=1)
@@ -368,7 +372,7 @@ def test_replaced_running_job_is_discarded_and_keeps_its_charge(api, application
     round_id = _round_with_queued_analysis(api, application)
     old_run = AnalysisRun.objects.get(refunded=False)
 
-    def replaced_mid_run(context, billing=None):
+    def replaced_mid_run(context, billing=None, route=None):
         # While this job is in the AI call, it gets treated as stuck and a new analysis starts.
         RoundAnalysis.objects.filter(round_id=round_id).update(started_at=timezone.now() - timedelta(minutes=20))
         assert api.post(f"/api/rounds/{round_id}/analyze/").status_code == 202
@@ -514,17 +518,19 @@ def make_plan(api, application, run_jobs=None):
         return api.post("/api/prep-plans/", body, format="json")
 
 
-def test_free_plan_gets_two_prep_plans_then_none_is_created(api, application, run_jobs):
-    assert make_plan(api, application, run_jobs).status_code == 201
+def test_free_plan_gets_one_prep_plan_then_none_is_created(api, application, run_jobs):
     assert make_plan(api, application, run_jobs).status_code == 201
 
     res = make_plan(api, application, run_jobs)
     assert res.status_code == 429
-    assert "2 prep plans" in res.data["detail"]
-    assert PrepPlan.objects.count() == 2  # no empty plan left behind
+    assert "1 prep plans" in res.data["detail"]
+    assert res.data["code"] == "usage_limit" and res.data["feature"] == "ai_prep_plan"
+    assert res.data["limit"] == 1 and res.data["used"] == 1 and res.data["reset_at"]
+    assert PrepPlan.objects.count() == 1  # no empty plan left behind
 
 
-def test_regenerate_counts_and_is_limited(api, application, run_jobs):
+def test_regenerate_counts_and_is_limited(api, application, run_jobs, settings):
+    settings.PLAN_PREP_PLANS_PER_24H = {**settings.PLAN_PREP_PLANS_PER_24H, "free": 2}
     plan = make_plan(api, application, run_jobs).data
     assert PrepPlan.objects.get(id=plan["id"]).status == JobStatus.DONE
     with run_jobs():
@@ -538,7 +544,7 @@ def test_analyses_and_prep_plans_are_counted_separately(api, application, run_jo
     log_round(api, application, run_jobs, "Q2")  # analyses used up
     assert make_plan(api, application, run_jobs).status_code == 201
     usage = api.get("/api/auth/me/").data["usage"]
-    assert usage["analyses"]["remaining"] == 0 and usage["prep_plans"]["remaining"] == 1
+    assert usage["analyses"]["remaining"] == 0 and usage["prep_plans"]["used"] == 1
 
 
 def test_regenerate_while_generating_is_rejected(api, application):

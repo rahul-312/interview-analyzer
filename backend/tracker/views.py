@@ -6,7 +6,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import ai, insights
+from billing import entitlements
+
+from . import insights
 from .models import Application, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
 from .serializers import (
     ApplicationSerializer,
@@ -20,6 +22,7 @@ from .usage import (
     LIMITED,
     PREP_PLAN,
     QUEUED,
+    limit_details,
     limit_message,
     mark_stale,
     reserve_analysis,
@@ -34,7 +37,7 @@ def queue_analysis(rnd, user):
     """
     result, run = reserve_analysis(user, rnd)
     if result == QUEUED:
-        queue(analyze_round_task, rnd.id, run.id)
+        queue(analyze_round_task, rnd.id, run.id, priority=run.priority)
     return result
 
 
@@ -45,7 +48,7 @@ def queue_plan(plan, user):
     """
     result, run = reserve_prep_plan(user, plan)
     if result == QUEUED:
-        queue(generate_plan_task, plan.id, run.id)
+        queue(generate_plan_task, plan.id, run.id, priority=run.priority)
     return result
 
 
@@ -196,7 +199,7 @@ class RoundAnalyzeView(APIView):
         if result == BUSY:
             return Response({"detail": "This round is already being analysed."}, status=status.HTTP_409_CONFLICT)
         if result == LIMITED:
-            return Response({"detail": limit_message(request.user)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(limit_details(request.user), status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
 
 
@@ -225,10 +228,10 @@ class PrepPlanListCreateView(PrepPlanQuerysetMixin, generics.ListCreateAPIView):
         with transaction.atomic():
             plan = serializer.save(user=request.user)
             if queue_plan(plan, request.user) == LIMITED:
-                message = limit_message(request.user, PREP_PLAN)
+                details = limit_details(request.user, PREP_PLAN)
                 # At the limit: don't keep an empty plan that can never be generated.
                 transaction.set_rollback(True)
-                return Response({"detail": message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+                return Response(details, status=status.HTTP_429_TOO_MANY_REQUESTS)
         plan = self.get_queryset().get(pk=plan.pk)
         return Response(self.get_serializer(plan).data, status=status.HTTP_201_CREATED)
 
@@ -249,7 +252,7 @@ class PrepPlanRegenerateView(APIView):
         if result == BUSY:
             return Response({"detail": "This plan is already being generated."}, status=status.HTTP_409_CONFLICT)
         if result == LIMITED:
-            return Response({"detail": limit_message(request.user, PREP_PLAN)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(limit_details(request.user, PREP_PLAN), status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Plan regeneration queued."}, status=status.HTTP_202_ACCEPTED)
 
 
@@ -279,5 +282,6 @@ class InsightsView(APIView):
             "analysed_rounds": RoundAnalysis.objects.filter(
                 round__application__user=user, status=JobStatus.DONE
             ).count(),
-            "ai_enabled": ai.ai_enabled(),
+            # Whether this user's plan gets Gemini, as usage() reports it.
+            "ai_enabled": entitlements.ai_route(entitlements.for_user(user)) is not None,
         })

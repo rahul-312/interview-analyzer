@@ -4,6 +4,7 @@ from pathlib import Path
 
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
+from kombu import Queue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 # override=True: backend/.env wins over variables already set in the terminal (even empty ones).
@@ -25,6 +26,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "accounts",
     "tracker",
+    "billing",
 ]
 
 MIDDLEWARE = [
@@ -92,6 +94,8 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    # Only views that set throttle_scope are throttled (billing calls that reach Razorpay).
+    "DEFAULT_THROTTLE_RATES": {"billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min")},
 }
 
 SIMPLE_JWT = {
@@ -103,6 +107,12 @@ CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:
 # X-Timezone: the browser's time zone, so dates like "applied today" use the user's day.
 CORS_ALLOW_HEADERS = (*default_headers, "x-timezone")
 
+# Shared cache, which the billing rate limit counts in. Set CACHE_URL (e.g. redis://localhost:6379/1)
+# whenever more than one process serves the API: the default per-process cache counts each one separately.
+CACHE_URL = os.environ.get("CACHE_URL", "")
+if CACHE_URL:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": CACHE_URL}}
+
 # Celery: with no broker configured, tasks run inline so Redis isn't needed yet.
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "")
 CELERY_TASK_ALWAYS_EAGER = not CELERY_BROKER_URL
@@ -111,16 +121,19 @@ CELERY_TASK_EAGER_PROPAGATES = False
 # jobs run inside the web request, so don't sleep there: fail fast and let the user retry.
 AI_RETRY_DELAYS = (1, 3) if CELERY_BROKER_URL else ()
 
-# Round analyses allowed in any rolling 24 hours, by plan (None = unlimited).
+# Round analyses allowed in any rolling 24 hours, by plan (None = unlimited). Pro Plus is shown
+# as "Unlimited, fair use", but its fair-use allowance is enforced like any other limit.
 PLAN_ANALYSES_PER_24H = {
     "free": int(os.environ.get("FREE_ANALYSES_PER_24H", "2")),
-    "pro": None,
+    "pro": int(os.environ.get("PRO_ANALYSES_PER_24H", "15")),
+    "pro_plus": int(os.environ.get("PRO_PLUS_ANALYSES_PER_24H", "50")),
 }
 
 # Prep plans generated (new or regenerated) in any rolling 24 hours, by plan (None = unlimited).
 PLAN_PREP_PLANS_PER_24H = {
-    "free": int(os.environ.get("FREE_PREP_PLANS_PER_24H", "2")),
-    "pro": None,
+    "free": int(os.environ.get("FREE_PREP_PLANS_PER_24H", "1")),
+    "pro": int(os.environ.get("PRO_PREP_PLANS_PER_24H", "5")),
+    "pro_plus": int(os.environ.get("PRO_PLUS_PREP_PLANS_PER_24H", "15")),
 }
 
 # Failed analyses and prep plans that already cost an API call (timeouts, cut-off or unreadable replies, our
@@ -131,5 +144,36 @@ BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
 # AI: without a key, the rule-based analyzer is used.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+# The better model Pro Plus jobs use. Blank: Pro Plus uses GEMINI_MODEL too.
+GEMINI_PRO_MODEL = os.environ.get("GEMINI_PRO_MODEL", "")
 # Whether the key is on Gemini's free tier (no billing on its project). Set to false for a paid key.
 GEMINI_FREE_TIER = os.environ.get("GEMINI_FREE_TIER", "true").lower() not in ("false", "0", "no")
+# A key on a paid (billing-enabled) project. Jobs for paid plans, whose debriefs must not be used for
+# training, only ever go to a paid-tier key: this one, or GEMINI_API_KEY when GEMINI_FREE_TIER is false.
+# With neither, paid plans get the rule-based engine rather than a free-tier key.
+GEMINI_PAID_API_KEY = os.environ.get("GEMINI_PAID_API_KEY", "")
+
+# Celery queue for priority plans (Pro Plus). A worker started without -Q serves both queues, so
+# nothing waits on a worker that isn't running; a dedicated `-Q priority` worker makes it a real
+# priority lane (see BILLING.md).
+CELERY_PRIORITY_QUEUE = os.environ.get("CELERY_PRIORITY_QUEUE", "priority")
+CELERY_TASK_DEFAULT_QUEUE = "celery"
+CELERY_TASK_QUEUES = tuple(Queue(name) for name in dict.fromkeys([CELERY_TASK_DEFAULT_QUEUE, CELERY_PRIORITY_QUEUE]))
+
+# Razorpay. Use rzp_test_ keys (and test-mode plan IDs) everywhere but production.
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
+RAZORPAY_WEBHOOK_SECRET = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+RAZORPAY_API_URL = os.environ.get("RAZORPAY_API_URL", "https://api.razorpay.com/v1")
+# Billing cycles a subscription runs for before it completes (Razorpay requires a total).
+RAZORPAY_TOTAL_COUNT = {
+    "month": int(os.environ.get("RAZORPAY_MONTHLY_TOTAL_COUNT", "120")),
+    "year": int(os.environ.get("RAZORPAY_YEARLY_TOTAL_COUNT", "10")),
+}
+# Days a subscription whose renewal failed (Razorpay status "pending", still retrying) keeps paid
+# access after its paid period ends. Halted, cancelled and completed subscriptions get none.
+BILLING_GRACE_DAYS = int(os.environ.get("BILLING_GRACE_DAYS", "3"))
+# A checkout for the same plan within this many minutes reuses the subscription already created.
+BILLING_CHECKOUT_REUSE_MINUTES = int(os.environ.get("BILLING_CHECKOUT_REUSE_MINUTES", "30"))
+# Send our own billing emails (activation, renewal, failed payment, cancellation) as well as Razorpay's.
+BILLING_EMAILS = os.environ.get("BILLING_EMAILS", "false").lower() in ("true", "1", "yes")
