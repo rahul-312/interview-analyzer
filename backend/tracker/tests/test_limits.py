@@ -332,7 +332,8 @@ def signup_limits(settings):
     from django.core.cache import cache
     from rest_framework.throttling import SimpleRateThrottle
 
-    rates = {"signup": "2/hour", "signup_attempt": "1000/min"}
+    # Keep the other rates: a throttle without one raises ImproperlyConfigured
+    rates = {**SimpleRateThrottle.THROTTLE_RATES, "signup": "2/hour", "signup_attempt": "1000/min"}
     settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 0}  # whatever the local .env says
     cache.clear()
     # DRF reads the rates once at import, so patch them on the class
@@ -342,13 +343,21 @@ def signup_limits(settings):
 
 
 def sign_up(username, password="a-strong-pass-123", **headers):
+    return post_sign_up(username, password, **headers).status_code
+
+
+def post_sign_up(username, password="a-strong-pass-123", **headers):
     from rest_framework.test import APIClient
 
-    return APIClient().post("/api/auth/register/", {"username": username, "password": password}, format="json", **headers).status_code
+    return APIClient().post("/api/auth/register/", {"username": username, "password": password}, format="json", **headers)
 
 
 def test_sign_ups_are_throttled_per_ip(signup_limits):
-    assert [sign_up(f"user{i}") for i in range(3)] == [201, 201, 429]
+    assert [sign_up(f"user{i}") for i in range(2)] == [201, 201]
+    res = post_sign_up("user2")
+    assert res.status_code == 429
+    assert res.data["detail"] == "Too many sign-ups from this network. Try again in an hour."
+    assert res["Retry-After"]
 
 
 def test_a_made_up_forwarded_for_header_doesnt_dodge_the_sign_up_limit(signup_limits):

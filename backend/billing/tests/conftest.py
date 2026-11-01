@@ -34,7 +34,7 @@ def billing_settings(settings, monkeypatch):
         monkeypatch.delenv(f"RAZORPAY_PLAN_{code}", raising=False)  # set in a developer's .env
     settings.CELERY_TASK_ALWAYS_EAGER = True
     # DRF reads the rates once at import, so patch them on the class
-    monkeypatch.setattr(SimpleRateThrottle, "THROTTLE_RATES", {"billing": "1000/min", "signup": "1000/min", "signup_attempt": "1000/min"})
+    monkeypatch.setattr(SimpleRateThrottle, "THROTTLE_RATES", {**SimpleRateThrottle.THROTTLE_RATES, "billing": "1000/min", "signup": "1000/min", "signup_attempt": "1000/min"})
     from config.celery import app
     app.conf.task_always_eager = True
 

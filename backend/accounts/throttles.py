@@ -19,7 +19,8 @@ class PerIpThrottle(SimpleRateThrottle):
             _warned_about_proxies = True
             logger.warning(
                 "A request came with X-Forwarded-For but NUM_PROXIES is 0, so rate limits use the connection's IP. "
-                "If a reverse proxy serves the API, set NUM_PROXIES, or all users share one sign-up limit."
+                "If a reverse proxy serves the API, set NUM_PROXIES, or all users share one sign-up limit. "
+                "Without a proxy this is harmless: the client sent the header itself."
             )
         return super().get_ident(request)
 

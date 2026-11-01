@@ -1,4 +1,7 @@
+import math
+
 from rest_framework import generics
+from rest_framework.exceptions import ErrorDetail, Throttled
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from .serializers import RegisterSerializer, UserSerializer
@@ -17,6 +20,13 @@ class RegisterView(generics.CreateAPIView):
         if not throttle.allow_request(self.request, self):
             self.throttled(self.request, throttle.wait())
         serializer.save()
+
+    def throttled(self, request, wait):
+        minutes = max(1, math.ceil((wait or 60) / 60))
+        when = "a minute" if minutes == 1 else "an hour" if minutes == 60 else f"{minutes} minutes"
+        exc = Throttled(wait)  # keeps the Retry-After header
+        exc.detail = ErrorDetail(f"Too many sign-ups from this network. Try again in {when}.", code="throttled")
+        raise exc
 
 
 class MeView(generics.RetrieveUpdateAPIView):
