@@ -25,11 +25,12 @@ class PerIpThrottle(SimpleRateThrottle):
         return super().get_ident(request)
 
     def wait(self):
-        # DRF gives no wait when the count is already over the limit (simultaneous requests); the
-        # oldest counted request expiring frees the next slot
+        # DRF gives no wait when the count is already over the limit (simultaneous requests). The next
+        # request is allowed once fewer than num_requests are left, i.e. when the num_requests-th newest
+        # expires (history runs newest first)
         wait = super().wait()
-        if wait is None and self.history:
-            wait = max(0, self.duration - (self.now - self.history[-1]))
+        if wait is None and len(self.history) >= self.num_requests:
+            wait = max(0, self.duration - (self.now - self.history[self.num_requests - 1]))
         return wait
 
 

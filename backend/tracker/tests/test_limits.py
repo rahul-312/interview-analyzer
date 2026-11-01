@@ -379,7 +379,7 @@ def test_the_wait_is_known_even_when_over_the_limit():
     throttle = SignupThrottle()
     throttle.duration, throttle.num_requests, throttle.now = 3600, 2, 1000.0
     throttle.history = [990.0, 900.0, 800.0]  # three counted: simultaneous requests slipped past
-    assert throttle.wait() == 3400.0
+    assert throttle.wait() == 3500.0  # 900 has to expire too, not just 800
 
 
 def test_a_made_up_forwarded_for_header_doesnt_dodge_the_sign_up_limit(signup_limits):
