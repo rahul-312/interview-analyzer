@@ -27,6 +27,10 @@ extension share one version number.
   training.
 - Usage-limit responses (429) now include the feature, limit, usage and
   reset time.
+- 7-day money-back window: cancelling now within 7 days of a new
+  subscription's first payment refunds it in full through Razorpay, once per
+  user (`BILLING_REFUND_DAYS`). Add the `refund.*` events to the Razorpay
+  webhook and run `migrate`.
 
 ### Changed
 - The free plan now includes 1 prep plan per 24 hours (was 2).

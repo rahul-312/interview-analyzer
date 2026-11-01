@@ -46,6 +46,7 @@ export const plansResponse = (overrides: Partial<PlansResponse> = {}): PlansResp
   ],
   billing_enabled: true,
   grace_days: 3,
+  refund_days: 7,
   ...overrides,
 });
 
@@ -109,6 +110,8 @@ export const current = (code: string | null = null, overrides: Partial<CurrentSu
       resume: false,
       pay: false,
     },
+    refund: null,
+    refund_days: 7,
     billing_enabled: true,
     usage: usage(plan),
     ...overrides,
@@ -126,6 +129,7 @@ export const payment = (overrides: Partial<Payment> = {}): Payment => ({
   method: "card",
   method_detail: "Visa",
   failure_reason: "",
+  refund_status: "",
   paid_at: "2026-10-01T00:00:00Z",
   created_at: "2026-10-01T00:00:00Z",
   ...overrides,

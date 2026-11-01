@@ -15,7 +15,7 @@ from django.utils import timezone
 from . import razorpay
 from .models import PaymentTransaction, SubscriptionStatus, TERMINAL_STATUSES, UserSubscription, WebhookEvent
 from .notifications import notify
-from .services import apply_fresh, apply_snapshot, record_payment, ts
+from .services import apply_fresh, apply_refund, apply_snapshot, record_payment, ts
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ HANDLED = {
     "subscription.pending", "subscription.halted", "subscription.cancelled", "subscription.completed",
     "subscription.paused", "subscription.resumed",
     "payment.authorized", "payment.captured", "payment.failed",
+    "refund.created", "refund.processed", "refund.failed",
 }
 
 # Customer contact and payment instrument details: dropped before an event is stored.
@@ -103,7 +104,11 @@ def apply_event(event_type, data, occurred_at):
     if sub_entity and not applied and sub.status not in TERMINAL_STATUSES and sub_entity.get("status") != sub.status:
         _refresh(sub)
     if pay_entity:
-        record_payment(sub, pay_entity, occurred_at)
+        payment = record_payment(sub, pay_entity, occurred_at)
+        # Refund events carry the refund and its payment.
+        refund_entity = _entity(data, "refund")
+        if refund_entity and refund_entity.get("payment_id") == payment.razorpay_payment_id:
+            apply_refund(payment, refund_entity)
     kind = _notification(event_type, before, sub, sub_entity) if applied else None
     if kind:
         transaction.on_commit(lambda: notify(sub, kind))

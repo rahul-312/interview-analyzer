@@ -41,7 +41,9 @@ Where these are defined:
 | Downgrade, or switching monthly/yearly | Applies at the end of the current cycle (`cycle_end`). The current plan stays until then. |
 | Plan changes on UPI Autopay or eMandate | Razorpay doesn't allow them. The user cancels at the end of the period and subscribes to the new plan. |
 | Cancel at end of period (default) | Access lasts until the period ends, with no grace period after that. |
-| Cancel now | Access ends at once. The rest of the period isn't refunded. |
+| Cancel now | Access ends at once. Outside the money-back window, the rest of the period isn't refunded. |
+| Money-back window | Cancelling now within `BILLING_REFUND_DAYS` (default 7) of a subscription's first payment refunds everything paid for it, in full (an upgrade charge too), and access ends at once. Only an active subscription qualifies, and only once per user: any earlier refund, including one made in the Razorpay Dashboard, uses it up. Renewals never qualify, since the window is counted from the first payment. Cancelling at period end inside the window doesn't refund, but **Cancel now** stays available until the window closes. The pricing page, the cancel dialog and the cancellation email state the policy. |
+| Refunds | The cancellation is saved first and the payments are marked `requested`, then refunded at Razorpay (`speed: normal`, which takes 5–7 working days). Before refunding, Razorpay is asked whether the payment already has a refund, so a retry never refunds twice. A refund Razorpay doesn't take straight away is retried by `reconcile_subscriptions`. A refund that **fails** at Razorpay is logged as an error, shown to the user as "Refund failed, contact support" and not retried: refund it from the Dashboard. Filter payments by refund status in the admin to find them. Razorpay keeps its fee on refunded payments. |
 | Undoing a cancellation | Razorpay can't undo one. The user subscribes again instead, and the new subscription starts billing when the current period ends, so nobody pays twice. |
 | Cancelling the new subscription | Until it starts, the dashboard's **Cancel upcoming subscription** cancels it straight away. Nothing has been charged for it. |
 | Abandoned checkouts | A checkout's payment link expires at Razorpay after a day (`expire_by`). `reconcile_subscriptions` also cancels any still-unpaid checkout older than that at Razorpay and marks it expired. If Razorpay says it was paid after all, Razorpay's state wins and the user gets the plan. |
@@ -70,6 +72,7 @@ Where these are defined:
 | `RAZORPAY_PLAN_PRO_MONTHLY` and the other three plans (optional) | Existing Razorpay plan IDs for `setup_razorpay_plans` to link, instead of creating new plans. |
 | `RAZORPAY_MONTHLY_TOTAL_COUNT`, `RAZORPAY_YEARLY_TOTAL_COUNT` | Billing cycles before a subscription completes. Razorpay requires a total. Defaults are 120 and 10. |
 | `BILLING_GRACE_DAYS` | Grace period for failed renewals. Default 3. |
+| `BILLING_REFUND_DAYS` | The money-back window, in days from a subscription's first payment. Default 7. `0` turns it off. |
 | `BILLING_CHECKOUT_REUSE_MINUTES` | Repeat checkouts for the same plan within this time reuse the subscription already created. Default 30. |
 | `BILLING_THROTTLE_RATE` | Rate limit for each user's billing actions. Default `20/min`. |
 | `SIGNUP_THROTTLE_RATE` | Sign-ups allowed per IP address, since every new account gets free AI runs. Default `10/hour`. Only accounts actually created count, not rejected forms. Needs `CACHE_URL` to count across processes, and `NUM_PROXIES` to see the real IP. |
@@ -96,8 +99,8 @@ Set this up separately for test mode and live mode. They have different keys, pl
 4. **Webhook.** Go to **Account & Settings → Webhooks → Add new webhook**.
    - URL: `https://<your-api-host>/api/webhooks/razorpay/`.
    - Secret: the value of `RAZORPAY_WEBHOOK_SECRET`.
-   - Active events: `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.updated`, `subscription.pending`, `subscription.halted`, `subscription.cancelled`, `subscription.completed`, `subscription.paused`, `subscription.resumed`, `payment.authorized`, `payment.captured`, `payment.failed`.
-5. **Reconciliation.** Schedule `python manage.py reconcile_subscriptions` to run hourly, for example with cron or a scheduled task. It fetches every open subscription from Razorpay in case a webhook was missed. Checkouts still not completed after a day are cancelled at Razorpay and marked expired.
+   - Active events: `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.updated`, `subscription.pending`, `subscription.halted`, `subscription.cancelled`, `subscription.completed`, `subscription.paused`, `subscription.resumed`, `payment.authorized`, `payment.captured`, `payment.failed`, `refund.created`, `refund.processed`, `refund.failed`.
+5. **Reconciliation.** Schedule `python manage.py reconcile_subscriptions` to run hourly, for example with cron or a scheduled task. It fetches every open subscription from Razorpay in case a webhook was missed. Checkouts still not completed after a day are cancelled at Razorpay and marked expired. Money-back refunds not yet made are made, and ones still processing are synced.
 
 ### How webhooks are handled
 
@@ -142,8 +145,9 @@ Before going live, check these by hand in test mode with test keys. To receive w
 5. **Failed renewal and recovery.** Make a renewal fail. The status becomes "Payment failed, retrying", the grace message appears, and **Update payment** opens Razorpay. Pay, and the plan is active again.
 6. **Upgrade, then downgrade.** Upgrade Pro to Pro Plus and check that it applies at once, and check the amount Razorpay charges. Then downgrade and check that the change is scheduled for the end of the cycle.
 7. **Cancellation.** Cancel at the end of the period. Access lasts until that date, then becomes Free when `subscription.cancelled` arrives.
-8. **Webhook repeats.** Re-send a delivered webhook from the Dashboard. No duplicate payment appears.
-9. **Extension.** The extension doesn't start AI jobs itself. It signs in with the same JWT and calls the same API, so any AI request made with its token gets the same plan and limits. `test_extension_gets_the_same_limits_as_the_web_app` covers this.
+8. **Money-back refund.** Subscribe, then choose **Cancel now** within 7 days. The dialog offers the full amount, access ends, and the payment shows "Refund on the way". The Dashboard shows the refund, and `refund.processed` turns the payment to "Refunded". Subscribe and cancel now again: no second refund is offered.
+9. **Webhook repeats.** Re-send a delivered webhook from the Dashboard. No duplicate payment appears.
+10. **Extension.** The extension doesn't start AI jobs itself. It signs in with the same JWT and calls the same API, so any AI request made with its token gets the same plan and limits. `test_extension_gets_the_same_limits_as_the_web_app` covers this.
 
 ## Going live
 

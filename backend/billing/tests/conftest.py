@@ -75,6 +75,7 @@ class FakeRazorpay:
 
     def __init__(self):
         self.subscriptions = {}
+        self.refunds = {}  # payment ID -> its refunds, oldest first
         self.calls = []
         self.fail_next = None  # a RazorpayError to raise on the next call
         self._ids = itertools.count(1)
@@ -87,6 +88,18 @@ class FakeRazorpay:
         parts = path.strip("/").split("/")
         if parts == ["plans"]:
             return {"id": f"plan_new_{next(self._ids)}"}
+        if parts[0] == "payments":
+            refunds = self.refunds.setdefault(parts[1], [])
+            if method == "GET":
+                return {"entity": "collection", "count": len(refunds), "items": [dict(r) for r in reversed(refunds)]}
+            if refunds:
+                raise razorpay.RazorpayError("The payment has been fully refunded already", status=400)
+            refund = {
+                "id": f"rfnd_{next(self._ids)}", "entity": "refund", "payment_id": parts[1], "status": "pending",
+                "amount": payload.get("amount"), "notes": payload["notes"], "created_at": int(time.time()),
+            }
+            refunds.append(refund)
+            return dict(refund)
         if parts == ["subscriptions"] and method == "POST":
             sub_id = f"sub_{next(self._ids)}"
             self.subscriptions[sub_id] = {
@@ -139,8 +152,11 @@ def checkout_signature(payment_id, subscription_id):
     return hmac.new(KEY_SECRET.encode(), f"{payment_id}|{subscription_id}".encode(), hashlib.sha256).hexdigest()
 
 
-def send_webhook(client, event, *, subscription=None, payment=None, created_at=None, event_id=None, secret=WEBHOOK_SECRET):
+def send_webhook(client, event, *, subscription=None, payment=None, refund=None, created_at=None, event_id=None,
+                 secret=WEBHOOK_SECRET):
     payload = {}
+    if refund is not None:
+        payload["refund"] = {"entity": refund}
     if subscription is not None:
         payload["subscription"] = {"entity": subscription}
     if payment is not None:

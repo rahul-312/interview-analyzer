@@ -185,6 +185,9 @@ RAZORPAY_TOTAL_COUNT = {
 # Days a subscription whose renewal failed (Razorpay status "pending", still retrying) keeps paid
 # access after its paid period ends. Halted, cancelled and completed subscriptions get none.
 BILLING_GRACE_DAYS = int(os.environ.get("BILLING_GRACE_DAYS", "3"))
+# Money-back window: cancelling now within this many days of a new subscription's first payment
+# refunds it in full, once per user. 0 turns it off.
+BILLING_REFUND_DAYS = int(os.environ.get("BILLING_REFUND_DAYS", "7"))
 # A checkout for the same plan within this many minutes reuses the subscription already created.
 BILLING_CHECKOUT_REUSE_MINUTES = int(os.environ.get("BILLING_CHECKOUT_REUSE_MINUTES", "30"))
 # Send our own billing emails (activation, renewal, failed payment, cancellation) as well as Razorpay's.

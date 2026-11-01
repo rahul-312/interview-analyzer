@@ -80,7 +80,7 @@ class PaymentSerializer(serializers.ModelSerializer):
         model = PaymentTransaction
         fields = [
             "id", "razorpay_payment_id", "plan", "amount_paise", "currency", "status", "status_label", "method",
-            "method_detail", "failure_reason", "paid_at", "created_at",
+            "method_detail", "failure_reason", "refund_status", "paid_at", "created_at",
         ]
 
 

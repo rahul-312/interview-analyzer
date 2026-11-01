@@ -14,7 +14,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useApi } from '@/hooks/useApi';
 import type { CurrentSubscription } from '@/models/Billing';
 import { billingService } from '@/services/BillingService';
-import { subscriptionNotice } from '@/utils/billing';
+import { formatPrice, subscriptionNotice } from '@/utils/billing';
 import { errorText } from '@/utils/errorText';
 
 /** Plans & billing: the current plan, usage, payments, and changing or cancelling the subscription. */
@@ -46,10 +46,14 @@ const Billing = () => {
     }
   };
 
+  // What cancelling now refunds, read before the cancellation clears it.
+  const refund = current.data?.refund ?? null;
   const cancel = (atPeriodEnd: boolean) =>
     run('cancel', () => billingService.cancel(atPeriodEnd), (next) => {
       setCancelOpen(null);
-      return atPeriodEnd ? "Your plan is cancelled. You'll keep it until the end of the period." : `Your plan has ended. You're on ${next.plan.name} now.`;
+      if (atPeriodEnd) return "Your plan is cancelled. You'll keep it until the end of the period.";
+      const ended = `Your plan has ended. You're on ${next.plan.name} now.`;
+      return refund ? `${ended} We're refunding ${formatPrice(refund.amount_paise, refund.currency)}; it usually arrives within 5–7 working days.` : ended;
     });
 
   const cancelUpcoming = () =>
@@ -156,6 +160,7 @@ const Billing = () => {
         <CancelDialog
           subscription={sub}
           canWaitForPeriodEnd={me.actions.cancel_at_period_end}
+          refund={me.refund}
           busy={busy === 'cancel'}
           onConfirm={cancel}
           onClose={() => setCancelOpen(null)}

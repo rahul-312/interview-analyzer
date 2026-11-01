@@ -138,6 +138,15 @@ class PaymentTransaction(models.Model):
         FAILED = "failed", "Failed"
         REFUNDED = "refunded", "Refunded"
 
+    class RefundStatus(models.TextChoices):
+        # REQUESTED: we've decided to refund it but Razorpay hasn't confirmed a refund yet
+        # (services.settle_refund, retried by reconcile_subscriptions). The rest are Razorpay's.
+        NONE = "", "None"
+        REQUESTED = "requested", "Requested"
+        PENDING = "pending", "Processing"
+        PROCESSED = "processed", "Refunded"
+        FAILED = "failed", "Refund failed"
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payments")
     subscription = models.ForeignKey(UserSubscription, on_delete=models.SET_NULL, null=True, blank=True, related_name="payments")
     razorpay_payment_id = models.CharField(max_length=40, unique=True)
@@ -151,6 +160,10 @@ class PaymentTransaction(models.Model):
     method_detail = models.CharField(max_length=40, blank=True)
     failure_reason = models.CharField(max_length=300, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
+    # A full refund: the money-back window's (services.refund_offer) or one made in the Razorpay Dashboard.
+    refund_status = models.CharField(max_length=10, choices=RefundStatus.choices, blank=True, default=RefundStatus.NONE)
+    razorpay_refund_id = models.CharField(max_length=40, blank=True)
+    refund_requested_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

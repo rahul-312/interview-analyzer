@@ -13,6 +13,19 @@ const statusClass: Record<Payment['status'], string> = {
   created: 'bg-smoke-white text-dark-gray',
 };
 
+/** A refund still on its way, or one that needs support. A finished one shows as the payment's own status. */
+const refundBadge: Partial<Record<Payment['refund_status'], { text: string; className: string }>> = {
+  requested: { text: 'Refund on the way', className: 'bg-sky-light text-sky-dark' },
+  pending: { text: 'Refund on the way', className: 'bg-sky-light text-sky-dark' },
+  failed: { text: 'Refund failed, contact support', className: 'bg-rose-pale text-rose-dark' },
+};
+
+const StatusBadge = ({ payment }: { payment: Payment }) => {
+  const refund = payment.status === 'refunded' ? undefined : refundBadge[payment.refund_status];
+  const [text, className] = refund ? [refund.text, refund.className] : [payment.status_label, statusClass[payment.status]];
+  return <span className={`rounded-full px-lg py-xs text-xs font-medium ${className}`}>{text}</span>;
+};
+
 /** "pro_plus_yearly" → "Pro Plus yearly". */
 function planName(code: string | null) {
   if (!code) return 'Subscription';
@@ -49,7 +62,7 @@ const PaymentHistory: React.FC<PaymentHistoryProps> = ({ payments, loading, erro
             </div>
             <div className="flex items-center gap-xl">
               <span className="font-medium tabular-nums">{formatPrice(p.amount_paise, p.currency)}</span>
-              <span className={`rounded-full px-lg py-xs text-xs font-medium ${statusClass[p.status]}`}>{p.status_label}</span>
+              <StatusBadge payment={p} />
             </div>
           </li>
         ))}

@@ -10,7 +10,7 @@ from django.core.mail import send_mail
 from django.utils import timezone
 
 from . import entitlements, tiers
-from .models import SubscriptionStatus, UserSubscription
+from .models import PaymentTransaction, SubscriptionStatus, UserSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ _MESSAGES = {
         "Go to Plans & billing to pay and restore them.",
     ),
     "cancel_scheduled": ("Your {plan} plan will end on {end}", "Your {plan} plan is cancelled. You keep it until {end}."),
-    "cancelled": ("Your {plan} plan has ended", "Your {plan} plan has ended. {after}"),
+    "cancelled": ("Your {plan} plan has ended", "Your {plan} plan has ended. {refund}{after}"),
     "upcoming_cancelled": (
         "Your new {plan} subscription is cancelled",
         "Your {plan} subscription that was due to start won't start, and you won't be charged for it. "
@@ -53,6 +53,18 @@ def _after_cancel(sub):
     return "Your account is back on Free."
 
 
+def _refund_text(sub):
+    """The money-back refund started with the cancellation, if any."""
+    refunding = sub.payments.exclude(
+        refund_status__in=[PaymentTransaction.RefundStatus.NONE, PaymentTransaction.RefundStatus.FAILED]
+    )
+    total = sum(p.amount_paise for p in refunding)
+    if not total:
+        return ""
+    return (f"We're refunding ₹{total / 100:g} to your original payment method. "
+            "It usually arrives within 5–7 working days. ")
+
+
 def notify(sub, kind):
     if kind not in _MESSAGES:
         return
@@ -62,7 +74,10 @@ def notify(sub, kind):
     try:
         end = timezone.localtime(sub.current_end).strftime("%d %b %Y") if sub.current_end else "the end of the period"
         after = _after_cancel(sub) if kind == "cancelled" else ""
-        subject, body = (text.format(plan=sub.plan.get_tier_display(), end=end, after=after) for text in _MESSAGES[kind])
+        refund = _refund_text(sub) if kind == "cancelled" else ""
+        subject, body = (
+            text.format(plan=sub.plan.get_tier_display(), end=end, after=after, refund=refund) for text in _MESSAGES[kind]
+        )
         send_mail(subject, body, None, [sub.user.email])
     except Exception:  # never let email break a request or webhook; billing is already saved
         logger.exception("Couldn't send billing email %s", kind)

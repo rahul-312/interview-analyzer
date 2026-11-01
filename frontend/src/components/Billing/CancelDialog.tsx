@@ -1,20 +1,23 @@
 import React, { useState } from 'react';
 import Modal from '../Modal';
 import Button from '../ui/Button';
-import type { Subscription } from '@/models/Billing';
+import type { RefundOffer, Subscription } from '@/models/Billing';
+import { formatPrice } from '@/utils/billing';
 import { formatDate } from '@/utils/format';
 
 interface CancelDialogProps {
   subscription: Subscription;
   /** Cancelling at period end is only possible while a paid period is running. */
   canWaitForPeriodEnd: boolean;
+  /** Set inside the money-back window: cancelling now refunds this. */
+  refund: RefundOffer | null;
   busy: boolean;
   onConfirm: (atPeriodEnd: boolean) => void;
   onClose: () => void;
 }
 
-/** Asks when to cancel: at the end of the paid period (the default) or now. */
-const CancelDialog: React.FC<CancelDialogProps> = ({ subscription, canWaitForPeriodEnd, busy, onConfirm, onClose }) => {
+/** Asks when to cancel: at the end of the paid period (the default) or now, with a refund inside the money-back window. */
+const CancelDialog: React.FC<CancelDialogProps> = ({ subscription, canWaitForPeriodEnd, refund, busy, onConfirm, onClose }) => {
   const [atPeriodEnd, setAtPeriodEnd] = useState(canWaitForPeriodEnd);
   const end = subscription.current_end ? formatDate(subscription.current_end) : 'the end of the period';
 
@@ -41,8 +44,20 @@ const CancelDialog: React.FC<CancelDialogProps> = ({ subscription, canWaitForPer
           <label className="flex cursor-pointer items-start gap-lg rounded-xl border border-input-border p-2xl has-checked:border-crimson-red has-checked:bg-rose-pale">
             <input type="radio" name="when" checked={!atPeriodEnd} onChange={() => setAtPeriodEnd(false)} className="mt-xs" />
             <span>
-              <span className="font-medium text-ink">Now</span>
-              <span className="block text-medium-gray">Paid features stop straight away. The current period isn&apos;t refunded.</span>
+              {refund ? (
+                <>
+                  <span className="font-medium text-ink">Now, with a full refund of {formatPrice(refund.amount_paise, refund.currency)}</span>
+                  <span className="block text-medium-gray">
+                    Paid features stop straight away. The refund goes back to your original payment method, usually within
+                    5–7 working days. You can get a refund once, until {formatDate(refund.until)}.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="font-medium text-ink">Now</span>
+                  <span className="block text-medium-gray">Paid features stop straight away. The current period isn&apos;t refunded.</span>
+                </>
+              )}
             </span>
           </label>
         </fieldset>

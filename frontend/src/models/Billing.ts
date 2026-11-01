@@ -50,6 +50,8 @@ export interface PlansResponse {
   tiers: TierWithPrices[];
   billing_enabled: boolean;
   grace_days: number;
+  /** Money-back window: days after a first payment that cancelling now refunds it. 0 = none. */
+  refund_days: number;
 }
 
 export interface Subscription {
@@ -91,6 +93,9 @@ export interface CurrentSubscription {
   /** Bought to take over when a subscription cancelled at period end runs out. */
   upcoming: Subscription | null;
   actions: SubscriptionActions;
+  /** Set while cancelling now would refund the subscription in full. */
+  refund: RefundOffer | null;
+  refund_days: number;
   billing_enabled: boolean;
   usage: Usage;
   /** Only after change-plan: when the change applies. */
@@ -110,8 +115,18 @@ export interface Payment {
   method: string;
   method_detail: string;
   failure_reason: string;
+  /** "" when not refunded. "requested" and "pending" are on the way. */
+  refund_status: "" | "requested" | "pending" | "processed" | "failed";
   paid_at: string | null;
   created_at: string;
+}
+
+/** What cancelling now would refund, inside the money-back window. */
+export interface RefundOffer {
+  amount_paise: number;
+  currency: string;
+  /** The window closes then. */
+  until: string;
 }
 
 /** What the server returns for Razorpay Checkout. Never contains a secret. */
