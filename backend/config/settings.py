@@ -94,16 +94,17 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    # Only views that set throttle_scope are throttled: billing calls that reach Razorpay, and sign-ups
-    # (per IP), since every new account gets free AI runs.
+    # Only views that set throttles are: billing calls that reach Razorpay, and sign-ups (per IP, see
+    # accounts/throttles.py), since every new account gets free AI runs.
     "DEFAULT_THROTTLE_RATES": {
         "billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min"),
         "signup": os.environ.get("SIGNUP_THROTTLE_RATE", "10/hour"),
+        "signup_attempt": os.environ.get("SIGNUP_ATTEMPT_THROTTLE_RATE", "60/min"),
     },
     # Reverse proxies in front of the API (1 behind nginx or a load balancer). The throttles trust only the
     # X-Forwarded-For entry the last proxy added; with 0 they use the connection's address, so a client
     # can't dodge the sign-up limit by sending a made-up header.
-    "NUM_PROXIES": int(os.environ.get("NUM_PROXIES", "0")),
+    "NUM_PROXIES": int(os.environ.get("NUM_PROXIES") or 0),
 }
 
 SIMPLE_JWT = {

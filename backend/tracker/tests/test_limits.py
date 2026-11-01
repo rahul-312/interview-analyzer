@@ -328,14 +328,16 @@ def test_profile_is_created_at_sign_up():
 
 
 @pytest.fixture
-def signups_limited_to_two():
+def signup_limits(settings):
     from django.core.cache import cache
-    from rest_framework.throttling import ScopedRateThrottle
+    from rest_framework.throttling import SimpleRateThrottle
 
+    rates = {"signup": "2/hour", "signup_attempt": "1000/min"}
+    settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 0}  # whatever the local .env says
     cache.clear()
     # DRF reads the rates once at import, so patch them on the class
-    with mock.patch.object(ScopedRateThrottle, "THROTTLE_RATES", {"signup": "2/hour"}):
-        yield
+    with mock.patch.object(SimpleRateThrottle, "THROTTLE_RATES", rates):
+        yield rates
     cache.clear()
 
 
@@ -345,20 +347,34 @@ def sign_up(username, password="a-strong-pass-123", **headers):
     return APIClient().post("/api/auth/register/", {"username": username, "password": password}, format="json", **headers).status_code
 
 
-def test_sign_ups_are_throttled_per_ip(signups_limited_to_two):
+def test_sign_ups_are_throttled_per_ip(signup_limits):
     assert [sign_up(f"user{i}") for i in range(3)] == [201, 201, 429]
 
 
-def test_a_made_up_forwarded_for_header_doesnt_dodge_the_sign_up_limit(signups_limited_to_two):
+def test_a_made_up_forwarded_for_header_doesnt_dodge_the_sign_up_limit(signup_limits):
     codes = [sign_up(f"user{i}", HTTP_X_FORWARDED_FOR=f"203.0.113.{i}") for i in range(3)]
     assert codes == [201, 201, 429]
 
 
-def test_rejected_sign_ups_dont_use_up_the_limit(signups_limited_to_two):
+def test_rejected_sign_ups_dont_use_up_the_limit(signup_limits):
     assert sign_up("taken") == 201
     assert [sign_up("taken"), sign_up("weak", password="1")] == [400, 400]
     assert sign_up("second") == 201
     assert sign_up("third") == 429
+
+
+def test_every_sign_up_attempt_has_a_looser_limit(signup_limits):
+    signup_limits["signup_attempt"] = "3/min"
+    assert [sign_up("taken"), sign_up("taken"), sign_up("taken"), sign_up("fresh")] == [201, 400, 400, 429]
+
+
+def test_a_forwarded_for_header_with_no_proxies_set_is_logged_once(signup_limits, caplog):
+    from accounts import throttles
+
+    with mock.patch.object(throttles, "_warned_about_proxies", False):
+        sign_up("user0", HTTP_X_FORWARDED_FOR="203.0.113.1")
+        sign_up("user1", HTTP_X_FORWARDED_FOR="203.0.113.2")
+    assert sum("NUM_PROXIES" in r.message for r in caplog.records) == 1
 
 
 def test_me_does_not_write(api, user):

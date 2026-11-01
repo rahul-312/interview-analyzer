@@ -73,7 +73,8 @@ Where these are defined:
 | `BILLING_CHECKOUT_REUSE_MINUTES` | Repeat checkouts for the same plan within this time reuse the subscription already created. Default 30. |
 | `BILLING_THROTTLE_RATE` | Rate limit for each user's billing actions. Default `20/min`. |
 | `SIGNUP_THROTTLE_RATE` | Sign-ups allowed per IP address, since every new account gets free AI runs. Default `10/hour`. Only accounts actually created count, not rejected forms. Needs `CACHE_URL` to count across processes, and `NUM_PROXIES` to see the real IP. |
-| `NUM_PROXIES` | Reverse proxies in front of the API, such as nginx or a load balancer. Default `0`. Set it to the real number (usually `1`) so the rate limits read the client's IP from `X-Forwarded-For`. Too high and clients can fake their IP with that header; too low and everyone shares the proxy's IP. |
+| `SIGNUP_ATTEMPT_THROTTLE_RATE` | All register requests per IP, including rejected ones, so usernames can't be probed without limit. Default `60/min`. |
+| `NUM_PROXIES` | Reverse proxies in front of the API, such as nginx or a load balancer. Default `0`. Set it to the real number (usually `1`) so the rate limits read the client's IP from `X-Forwarded-For`. Too high and clients can fake their IP with that header; too low and everyone shares the proxy's IP, and with it one sign-up limit. The server logs a warning if a request arrives with `X-Forwarded-For` while it's `0`. |
 | `BILLING_EMAILS` | Set to `true` to send the app's own billing emails as well as Razorpay's. This needs Django's `EMAIL_*` settings. |
 | `GEMINI_PRO_MODEL` | The model Pro Plus uses. If blank, it uses `GEMINI_MODEL`. |
 | `GEMINI_PAID_API_KEY` | A key on a billing-enabled project, so paid plans can use AI while Free uses a free-tier key. |
