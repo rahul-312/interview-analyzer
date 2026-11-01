@@ -360,6 +360,28 @@ def test_sign_ups_are_throttled_per_ip(signup_limits):
     assert res["Retry-After"]
 
 
+@pytest.mark.parametrize("wait, when", [
+    (30, "a minute"), (600, "10 minutes"), (3599, "an hour"), (86_000, "24 hours"),
+])
+def test_the_sign_up_limit_message_rounds_the_wait(wait, when):
+    from rest_framework.exceptions import Throttled
+
+    from accounts.views import RegisterView
+
+    with pytest.raises(Throttled) as exc:
+        RegisterView().throttled(None, wait)
+    assert exc.value.detail == f"Too many sign-ups from this network. Try again in {when}."
+
+
+def test_the_wait_is_known_even_when_over_the_limit():
+    from accounts.throttles import SignupThrottle
+
+    throttle = SignupThrottle()
+    throttle.duration, throttle.num_requests, throttle.now = 3600, 2, 1000.0
+    throttle.history = [990.0, 900.0, 800.0]  # three counted: simultaneous requests slipped past
+    assert throttle.wait() == 3400.0
+
+
 def test_a_made_up_forwarded_for_header_doesnt_dodge_the_sign_up_limit(signup_limits):
     codes = [sign_up(f"user{i}", HTTP_X_FORWARDED_FOR=f"203.0.113.{i}") for i in range(3)]
     assert codes == [201, 201, 429]

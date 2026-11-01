@@ -24,6 +24,14 @@ class PerIpThrottle(SimpleRateThrottle):
             )
         return super().get_ident(request)
 
+    def wait(self):
+        # DRF gives no wait when the count is already over the limit (simultaneous requests); the
+        # oldest counted request expiring frees the next slot
+        wait = super().wait()
+        if wait is None and self.history:
+            wait = max(0, self.duration - (self.now - self.history[-1]))
+        return wait
+
 
 class SignupAttemptThrottle(PerIpThrottle):
     """Every register request, valid or not, so usernames can't be probed without limit."""

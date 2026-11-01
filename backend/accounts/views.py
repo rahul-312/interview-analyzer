@@ -23,7 +23,13 @@ class RegisterView(generics.CreateAPIView):
 
     def throttled(self, request, wait):
         minutes = max(1, math.ceil((wait or 60) / 60))
-        when = "a minute" if minutes == 1 else "an hour" if minutes == 60 else f"{minutes} minutes"
+        hours = math.ceil(minutes / 60)
+        if minutes == 1:
+            when = "a minute"
+        elif minutes < 60:
+            when = f"{minutes} minutes"
+        else:
+            when = "an hour" if hours == 1 else f"{hours} hours"
         exc = Throttled(wait)  # keeps the Retry-After header
         exc.detail = ErrorDetail(f"Too many sign-ups from this network. Try again in {when}.", code="throttled")
         raise exc
