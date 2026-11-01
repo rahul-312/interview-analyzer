@@ -72,9 +72,13 @@ Where these are defined:
 | `BILLING_GRACE_DAYS` | Grace period for failed renewals. Default 3. |
 | `BILLING_CHECKOUT_REUSE_MINUTES` | Repeat checkouts for the same plan within this time reuse the subscription already created. Default 30. |
 | `BILLING_THROTTLE_RATE` | Rate limit for each user's billing actions. Default `20/min`. |
+| `SIGNUP_THROTTLE_RATE` | Sign-ups allowed per IP address, since every new account gets free AI runs. Default `10/hour`. Only accounts actually created count, not rejected forms. Needs `CACHE_URL` to count across processes, and `NUM_PROXIES` to see the real IP. |
+| `SIGNUP_ATTEMPT_THROTTLE_RATE` | All register requests per IP, including rejected ones, so usernames can't be probed without limit. Default `60/min`. |
+| `NUM_PROXIES` | Reverse proxies in front of the API, such as nginx or a load balancer. Default `0`. Set it to the real number (usually `1`) so the rate limits read the client's IP from `X-Forwarded-For`. Too high and clients can fake their IP with that header; too low and everyone shares the proxy's IP, and with it one sign-up limit. The server logs a warning if a request arrives with `X-Forwarded-For` while it's `0`. |
 | `BILLING_EMAILS` | Set to `true` to send the app's own billing emails as well as Razorpay's. This needs Django's `EMAIL_*` settings. |
 | `GEMINI_PRO_MODEL` | The model Pro Plus uses. If blank, it uses `GEMINI_MODEL`. |
 | `GEMINI_PAID_API_KEY` | A key on a billing-enabled project, so paid plans can use AI while Free uses a free-tier key. |
+| `VERTEX_API_KEY` | A Vertex AI key on a Google Cloud project with billing. When set, every plan, Free included, uses it instead of the keys above. It's a paid tier, so paid plans are sold and the Google free-tier notice isn't shown (the app's own Free-plan training notice still is). There's no fallback: while it's set the Gemini keys are never used, so a bad key, a billing suspension or a Vertex outage stops AI for every plan (jobs fail without counting). Free accounts get AI on this billed key, so set a budget alert on the project and restrict the key to the Vertex AI API. |
 | `CELERY_PRIORITY_QUEUE` | The queue for Pro Plus jobs. Default `priority`. A worker started without `-Q` serves it as well as the normal queue. |
 | `CACHE_URL` | A shared cache such as `redis://localhost:6379/1`. The billing rate limit counts in it, so set it whenever more than one process serves the API. Without it, each process counts separately. |
 
@@ -145,7 +149,7 @@ Before going live, check these by hand in test mode with test keys. To receive w
 
 1. Switch to live keys, a live webhook (with its own secret) and live plans (run `setup_razorpay_plans` against the live database).
 2. Serve the API over HTTPS. Razorpay only sends webhooks to public HTTPS URLs.
-3. Set `DEBUG=0`, a real `SECRET_KEY`, `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`, and `CACHE_URL` if more than one process serves the API.
+3. Set `DEBUG=0`, a real `SECRET_KEY`, `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`, `CACHE_URL` if more than one process serves the API, and `NUM_PROXIES` if it's behind a reverse proxy.
 4. Run `python manage.py migrate`. This adds the billing tables, seeds the plans, and adds the run-tier and debrief training fields.
 5. Start the Celery workers for both queues, and schedule `reconcile_subscriptions`.
 6. Set `GEMINI_PAID_API_KEY` (or a paid `GEMINI_API_KEY` with `GEMINI_FREE_TIER=false`). Without one, paid plans aren't sold and anyone already on one gets the rule-based engine. `python manage.py check` warns about this.

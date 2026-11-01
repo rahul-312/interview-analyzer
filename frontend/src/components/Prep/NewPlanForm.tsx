@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import AiDataNotice from '../ui/AiDataNotice';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
-import { ErrorMessage } from '../ui/Feedback';
+import { ErrorMessage, Working } from '../ui/Feedback';
 import { Field, Input, Select } from '../ui/FormControls';
 import { useApi } from '@/hooks/useApi';
 import { useUsage } from '@/hooks/useUsage';
@@ -113,13 +113,14 @@ const NewPlanForm: React.FC<NewPlanFormProps> = ({ initialApplication, initialRo
           </p>
         )}
         <ErrorMessage message={error} />
+        {busy && <Working text="Building your plan…" />}
 
         <div className="flex justify-end gap-lg">
-          <Button variant="secondary" onClick={onCancel}>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy || application === '' || outOfPlans}>
-            {busy ? 'Creating…' : 'Create plan'}
+          <Button type="submit" variant="primary" loading={busy} disabled={application === '' || outOfPlans}>
+            {busy ? 'Building plan…' : 'Create plan'}
           </Button>
         </div>
       </form>

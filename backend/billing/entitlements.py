@@ -100,14 +100,19 @@ class AiRoute:
     model: str
     # The key is on Gemini's free tier, where Google may use prompts to improve its products.
     provider_may_train: bool
+    # The key is for Gemini on Vertex AI rather than the Gemini API.
+    vertex: bool = False
 
 
 def ai_route(tier):
     """
     The Gemini key and model for jobs on this tier, or None for the rule-based engine.
-    Plans whose debriefs mustn't be used for training never get a free-tier key: with no paid-tier
-    key configured they use the rule-based engine instead.
+    A Vertex AI key, when set, is used for every plan. Otherwise, plans whose debriefs mustn't be
+    used for training never get a free-tier key: with no paid-tier key configured they use the
+    rule-based engine instead.
     """
+    if settings.VERTEX_API_KEY:
+        return AiRoute(api_key=settings.VERTEX_API_KEY, model=tier.ai_model, provider_may_train=False, vertex=True)
     free_tier_key = settings.GEMINI_API_KEY if settings.GEMINI_FREE_TIER else ""
     paid_keys = [k for k in (settings.GEMINI_PAID_API_KEY, "" if settings.GEMINI_FREE_TIER else settings.GEMINI_API_KEY) if k]
     if tier.debriefs_may_train:

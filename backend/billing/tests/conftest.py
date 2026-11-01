@@ -9,6 +9,7 @@ from unittest import mock
 import pytest
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
+from rest_framework.throttling import SimpleRateThrottle
 
 from billing import razorpay
 from billing.models import SubscriptionPlan
@@ -27,11 +28,13 @@ def billing_settings(settings, monkeypatch):
     settings.GEMINI_API_KEY = ""
     settings.GEMINI_PAID_API_KEY = "paid-tier-key"  # paid plans are only sold with one
     settings.GEMINI_FREE_TIER = True
+    settings.VERTEX_API_KEY = ""
     settings.BILLING_GRACE_DAYS = 3
     for code in ("PRO_MONTHLY", "PRO_YEARLY", "PRO_PLUS_MONTHLY", "PRO_PLUS_YEARLY"):
         monkeypatch.delenv(f"RAZORPAY_PLAN_{code}", raising=False)  # set in a developer's .env
     settings.CELERY_TASK_ALWAYS_EAGER = True
-    settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"billing": "1000/min"}}
+    # DRF reads the rates once at import, so patch them on the class
+    monkeypatch.setattr(SimpleRateThrottle, "THROTTLE_RATES", {**SimpleRateThrottle.THROTTLE_RATES, "billing": "1000/min", "signup": "1000/min", "signup_attempt": "1000/min"})
     from config.celery import app
     app.conf.task_always_eager = True
 

@@ -94,8 +94,17 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    # Only views that set throttle_scope are throttled (billing calls that reach Razorpay).
-    "DEFAULT_THROTTLE_RATES": {"billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min")},
+    # Only views that set throttles are: billing calls that reach Razorpay, and sign-ups (per IP, see
+    # accounts/throttles.py), since every new account gets free AI runs.
+    "DEFAULT_THROTTLE_RATES": {
+        "billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min"),
+        "signup": os.environ.get("SIGNUP_THROTTLE_RATE", "10/hour"),
+        "signup_attempt": os.environ.get("SIGNUP_ATTEMPT_THROTTLE_RATE", "60/min"),
+    },
+    # Reverse proxies in front of the API (1 behind nginx or a load balancer). The throttles trust only the
+    # X-Forwarded-For entry the last proxy added; with 0 they use the connection's address, so a client
+    # can't dodge the sign-up limit by sending a made-up header.
+    "NUM_PROXIES": int(os.environ.get("NUM_PROXIES") or 0),
 }
 
 SIMPLE_JWT = {
@@ -152,6 +161,9 @@ GEMINI_FREE_TIER = os.environ.get("GEMINI_FREE_TIER", "true").lower() not in ("f
 # training, only ever go to a paid-tier key: this one, or GEMINI_API_KEY when GEMINI_FREE_TIER is false.
 # With neither, paid plans get the rule-based engine rather than a free-tier key.
 GEMINI_PAID_API_KEY = os.environ.get("GEMINI_PAID_API_KEY", "")
+# An API key for Gemini on Vertex AI (Google Cloud). When set, every plan's jobs use it instead of the
+# keys above: it bills a Google Cloud project, so it's a paid tier, and it's far more reliable under load.
+VERTEX_API_KEY = os.environ.get("VERTEX_API_KEY", "")
 
 # Celery queue for priority plans (Pro Plus). A worker started without -Q serves both queues, so
 # nothing waits on a worker that isn't running; a dedicated `-Q priority` worker makes it a real

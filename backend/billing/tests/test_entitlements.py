@@ -38,9 +38,9 @@ def calls(settings):
     """A fake Gemini client that records the key and model each job used."""
     seen = []
 
-    def get_client(api_key=None):
+    def get_client(api_key=None, vertex=False):
         def generate_content(**kwargs):
-            seen.append({"api_key": api_key, "model": kwargs["model"]})
+            seen.append({"api_key": api_key, "model": kwargs["model"], **({"vertex": True} if vertex else {})})
             schema = kwargs["config"].response_json_schema
             if "tasks" in schema["properties"]:
                 body = {"summary": "plan", "tasks": [{"day": 1, "topic": "sql", "title": "t", "detail": "d", "minutes": 30}]}
@@ -97,6 +97,15 @@ def test_pro_plus_runs_on_the_better_model_and_priority_queue(api, user, applica
     assert calls == [{"api_key": "paid-key", "model": "pro-model"}]
     run = AnalysisRun.objects.get()
     assert (run.tier, run.model, run.priority) == ("pro_plus", "pro-model", True)
+
+
+def test_free_plan_jobs_go_to_vertex_when_its_key_is_set(api, application, settings, calls, django_capture_on_commit_callbacks):
+    settings.GEMINI_API_KEY = "free-key"
+    settings.VERTEX_API_KEY = "vertex-key"
+    settings.GEMINI_MODEL = "flash-model"
+    log_round(api, application, django_capture_on_commit_callbacks)
+    assert calls == [{"api_key": "vertex-key", "model": "flash-model", "vertex": True}]
+    assert AnalysisRun.objects.get().free is False
 
 
 def test_pro_and_free_use_flash_on_the_normal_queue(api, user, application, settings, calls, django_capture_on_commit_callbacks):
@@ -227,6 +236,16 @@ def test_route_rules(settings):
     assert entitlements.ai_route(pro).api_key == "k" and entitlements.ai_route(free).provider_may_train is False
     settings.GEMINI_API_KEY, settings.GEMINI_PAID_API_KEY = "", "paid"
     assert entitlements.ai_route(free).api_key == "paid"
+
+
+def test_vertex_key_is_used_for_every_plan(settings):
+    settings.GEMINI_API_KEY, settings.GEMINI_PAID_API_KEY, settings.GEMINI_FREE_TIER = "free", "paid", True
+    settings.VERTEX_API_KEY = "vertex"
+    for code in ("free", "pro", "pro_plus"):
+        route = entitlements.ai_route(tiers.get_tier(code))
+        # Vertex bills a Google Cloud project: a paid tier, so no training notice and paid plans are sold
+        assert route.api_key == "vertex" and route.vertex and not route.provider_may_train
+    assert entitlements.ai_ready("pro")
 
 
 # ---------------------------------------------------------------------------

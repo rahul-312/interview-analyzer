@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import TaskList from './TaskList';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
-import { ErrorMessage, Working } from '../ui/Feedback';
+import { ErrorMessage, JobFailed, Working } from '../ui/Feedback';
 import { useUsage } from '@/hooks/useUsage';
 import type { PrepPlan, PrepTask } from '@/models/PrepPlan';
+import { ApiError } from '@/services/ApiClient';
 import { prepPlanService } from '@/services/PrepPlanService';
 import { errorText } from '@/utils/errorText';
 import { daysUntil, formatDate, planLabel } from '@/utils/format';
@@ -28,26 +29,49 @@ const countdownStyle = (days: number) => {
   return 'bg-primary-light text-primary-dark';
 };
 
+const RELOAD_WAIT_MS = 10_000;
+
 /** A prep plan: summary, countdown, progress bar, tasks by day, Regenerate and Delete. */
 const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
   const [tasks, setTasks] = useState<PrepTask[]>(plan.tasks);
   const [prevTasks, setPrevTasks] = useState(plan.tasks);
   const [error, setError] = useState('');
+  // 'request': the regenerate call is running (it can take as long as the generation without a task queue).
+  // 'reload': it started; keep the spinner until the reloaded plan arrives, so the old one doesn't flash.
+  const [regenerating, setRegenerating] = useState<'request' | 'reload' | null>(null);
+  const [prevPlan, setPrevPlan] = useState(plan);
   const { usage, reloadUsage } = useUsage();
   const outOfPlans = usage?.prep_plans.remaining === 0;
+  const outOfPlansTitle = outOfPlans ? `No prep plans left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined;
 
   // Take the server's tasks when the plan is reloaded
   if (plan.tasks !== prevTasks) {
     setPrevTasks(plan.tasks);
     setTasks(plan.tasks);
   }
+  if (plan !== prevPlan) {
+    setPrevPlan(plan);
+    if (regenerating === 'reload') setRegenerating(null);
+  }
+  // If the reload fails, the page shows its error and keeps this plan, so stop waiting for a new one
+  useEffect(() => {
+    if (regenerating !== 'reload') return;
+    const timer = setTimeout(() => setRegenerating(null), RELOAD_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [regenerating]);
 
   const doneCount = tasks.filter((t) => t.done).length;
   const progress = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;
   const days = daysUntil(plan.interview_date);
-  const generating = plan.status === 'pending' || plan.status === 'running';
+  const failed = plan.status === 'failed';
+  const generating = regenerating !== null || plan.status === 'pending' || plan.status === 'running';
+
+  // Tasks with a save in flight. A second click (e.g. a double-click) waits, so saves can't land out of order.
+  const saving = useRef(new Set<number>());
 
   const handleToggle = async (task: PrepTask) => {
+    if (saving.current.has(task.id)) return;
+    saving.current.add(task.id);
     setError('');
     setTasks((ts) => ts.map((t) => (t.id === task.id ? { ...t, done: !t.done } : t)));
     try {
@@ -55,16 +79,27 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
     } catch (err) {
       setTasks((ts) => ts.map((t) => (t.id === task.id ? task : t)));
       setError(errorText(err));
+    } finally {
+      saving.current.delete(task.id);
     }
   };
 
   const handleRegenerate = async () => {
-    if (doneCount && !confirm('Regenerating replaces all tasks, including ticked ones. Continue?')) return;
+    // A failed plan's ticked tasks aren't on screen, so there's nothing to warn about
+    if (!failed && doneCount && !confirm('Regenerating replaces all tasks, including ticked ones. Continue?')) return;
+    setError('');
+    setRegenerating('request');
+    let started = true;
     try {
       await prepPlanService.regenerate(plan.id);
     } catch (err) {
-      setError(errorText(err));
+      // 409: it's already generating, which the reload below shows
+      if (!(err instanceof ApiError && err.status === 409)) {
+        setError(errorText(err));
+        started = false;
+      }
     }
+    setRegenerating(started ? 'reload' : null);
     // Reload either way: a 409/429 means the plan or usage changed elsewhere
     onChange();
     reloadUsage();
@@ -96,15 +131,15 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
 
       {generating ? (
         <Working text="Building your plan…" />
-      ) : plan.status === 'failed' ? (
-        <div className="flex flex-col gap-lg">
-          <ErrorMessage message={`Plan generation failed: ${plan.error}`} />
-          {plan.refunded && (
-            <p className="rounded-lg bg-pale-mint px-2xl py-lg text-sm text-deep-green">
-              This one didn&apos;t count towards your limit.
-            </p>
-          )}
-        </div>
+      ) : failed ? (
+        <JobFailed
+          title="We couldn't build this plan."
+          reason={plan.error}
+          refundedWhat={plan.refunded && 'one of your prep plans'}
+          onRetry={handleRegenerate}
+          retryDisabled={outOfPlans}
+          retryTitle={outOfPlansTitle}
+        />
       ) : (
         <>
           <p className="text-sm text-charcoal-gray">{plan.summary}</p>
@@ -133,14 +168,18 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
 
       {/* Actions */}
       <div className="flex justify-end gap-lg border-t border-smoke-white pt-2xl">
-        <Button
-          variant="secondary"
-          onClick={handleRegenerate}
-          disabled={generating || outOfPlans}
-          title={outOfPlans ? `No prep plans left in the last 24 hours on the ${planLabel(usage?.plan)} plan` : undefined}
-        >
-          Regenerate
-        </Button>
+        {/* A failed plan has its own Try again */}
+        {(!failed || regenerating) && (
+          <Button
+            variant="secondary"
+            onClick={handleRegenerate}
+            loading={regenerating !== null}
+            disabled={generating || outOfPlans}
+            title={outOfPlansTitle}
+          >
+            {regenerating ? 'Regenerating…' : 'Regenerate'}
+          </Button>
+        )}
         <Button variant="danger" onClick={handleDelete}>
           Delete
         </Button>

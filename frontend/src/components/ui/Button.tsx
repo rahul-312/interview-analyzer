@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { Spinner } from './Feedback';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'link';
 
@@ -11,6 +12,8 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   href?: string;
   target?: string;
   rel?: string;
+  /** Shows a spinner and disables the button while its action runs. */
+  loading?: boolean;
 }
 
 const base =
@@ -31,6 +34,8 @@ const Button: React.FC<ButtonProps> = ({
   target,
   rel,
   type = 'button',
+  loading = false,
+  disabled,
   ...props
 }) => {
   const classes = `cursor-pointer ${variant ? variants[variant] : ''} ${className}`;
@@ -50,7 +55,8 @@ const Button: React.FC<ButtonProps> = ({
   }
 
   return (
-    <button type={type} className={classes} {...props}>
+    <button type={type} className={classes} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
+      {loading && <Spinner />}
       {children}
     </button>
   );
