@@ -94,9 +94,9 @@ def resume_subscription(subscription_id):
     return _request("POST", f"/subscriptions/{subscription_id}/resume", {"resume_at": "now"})
 
 
-def refund_payment(payment_id, *, notes):
-    """Refunds the whole payment. Razorpay refuses a second full refund of the same payment."""
-    return _request("POST", f"/payments/{payment_id}/refund", {"speed": "normal", "notes": notes})
+def refund_payment(payment_id, *, amount_paise, notes):
+    """Refunds `amount_paise` of the payment. Razorpay refuses more than is left to refund."""
+    return _request("POST", f"/payments/{payment_id}/refund", {"amount": amount_paise, "speed": "normal", "notes": notes})
 
 
 def fetch_refunds(payment_id):

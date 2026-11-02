@@ -55,14 +55,20 @@ def _after_cancel(sub):
 
 def _refund_text(sub):
     """The money-back refund started with the cancellation, if any."""
-    refunding = sub.payments.exclude(
+    refunding = list(sub.payments.exclude(
         refund_status__in=[PaymentTransaction.RefundStatus.NONE, PaymentTransaction.RefundStatus.FAILED]
-    )
+    ))
     total = sum(p.amount_paise for p in refunding)
     if not total:
         return ""
-    return (f"We're refunding ₹{total / 100:g} to your original payment method. "
+    return (f"We're refunding {money(total, refunding[0].currency)} to your original payment method. "
             "It usually arrives within 5–7 working days. ")
+
+
+def money(paise, currency="INR"):
+    """₹1,699 or ₹12,345.67; other currencies by their code."""
+    amount = f"{paise / 100:,.2f}".removesuffix(".00")
+    return f"₹{amount}" if currency == "INR" else f"{currency} {amount}"
 
 
 def notify(sub, kind):

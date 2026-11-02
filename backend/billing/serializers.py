@@ -97,3 +97,5 @@ class VerifySerializer(serializers.Serializer):
 class CancelSerializer(serializers.Serializer):
     at_period_end = serializers.BooleanField(default=True)
     upcoming = serializers.BooleanField(default=False)
+    # The user was shown a refund for cancelling now: refuse rather than cancel without one.
+    expect_refund = serializers.BooleanField(default=False)

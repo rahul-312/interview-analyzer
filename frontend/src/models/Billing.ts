@@ -100,6 +100,8 @@ export interface CurrentSubscription {
   usage: Usage;
   /** Only after change-plan: when the change applies. */
   change?: "now" | "cycle_end";
+  /** Only after cancel: what the cancellation refunded. */
+  refunded?: Pick<RefundOffer, "amount_paise" | "currency"> | null;
   /** Only after resume: Razorpay's link to pay a failed charge. */
   payment_url?: string | null;
 }

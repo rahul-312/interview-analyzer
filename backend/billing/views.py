@@ -54,8 +54,7 @@ def current_data(user):
             # The same rule checkout applies.
             "subscribe": paid_ai and services.checkout_blocker(user) is None,
             "change_plan": active and not sub.cancel_at_period_end,
-            # Also after a cancellation at period end, while cancelling now would still refund it.
-            "cancel": open_ and (not sub.cancel_at_period_end or offer is not None),
+            "cancel": open_ and not sub.cancel_at_period_end,
             "cancel_upcoming": upcoming is not None,
             "cancel_at_period_end": active and not sub.cancel_at_period_end,
             "resume": bool(sub and sub.status == SubscriptionStatus.PAUSED),
@@ -186,7 +185,8 @@ class ChangePlanView(BillingActionView):
 class CancelView(BillingActionView):
     """
     POST {"at_period_end": true}: cancel at the end of the paid period (default) or now. Now, inside
-    the money-back window, also refunds the subscription.
+    the money-back window, also refunds the subscription; with "expect_refund": true it's refused
+    (409 refund_window_closed) if the window has closed since the user was offered the refund.
     POST {"upcoming": true}: cancel the subscription bought to start when the current one ends.
     """
 
@@ -195,10 +195,15 @@ class CancelView(BillingActionView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         try:
-            services.cancel(request.user, at_period_end=data["at_period_end"], upcoming=data["upcoming"])
+            _, refunded = services.cancel(
+                request.user, at_period_end=data["at_period_end"], upcoming=data["upcoming"], expect_refund=data["expect_refund"],
+            )
         except services.BillingError as exc:
             return billing_error(exc)
-        return Response(current_data(request.user))
+        return Response({
+            **current_data(request.user),
+            "refunded": {"amount_paise": refunded.amount_paise, "currency": refunded.currency} if refunded else None,
+        })
 
 
 class ResumeView(BillingActionView):

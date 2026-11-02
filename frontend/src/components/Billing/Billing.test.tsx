@@ -61,7 +61,7 @@ describe("billing dashboard", () => {
     expect(within(dialog).getByRole("radio", { name: /At the end of the period/ })).toHaveProperty("checked", true);
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel subscription" }));
 
-    expect(api.cancel).toHaveBeenCalledWith(true);
+    expect(api.cancel).toHaveBeenCalledWith(true, false);
     expect(await screen.findByText(/keep it until the end of the period/)).toBeTruthy();
     expect(screen.getByText("Cancelled at period end")).toBeTruthy();
     expect(screen.getByText("Access until")).toBeTruthy();
@@ -76,13 +76,16 @@ describe("billing dashboard", () => {
     const dialog = screen.getByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: /Now/ }));
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel subscription" }));
-    expect(api.cancel).toHaveBeenCalledWith(false);
+    expect(api.cancel).toHaveBeenCalledWith(false, false);
     expect(await screen.findByText(/You're on Free now/)).toBeTruthy();
   });
 
   it("offers a full refund for cancelling now inside the money-back window", async () => {
     api.current.mockResolvedValue(current("pro_monthly", { refund: { amount_paise: 19900, currency: "INR", until: "2026-10-08T00:00:00Z" } }));
-    api.cancel.mockResolvedValue(current(null, { subscription: subscription("pro_monthly", { status: "cancelled", status_label: "Cancelled", gives_access: false }) }));
+    api.cancel.mockResolvedValue({
+      ...current(null, { subscription: subscription("pro_monthly", { status: "cancelled", status_label: "Cancelled", gives_access: false }) }),
+      refunded: { amount_paise: 19900, currency: "INR" },
+    });
     render(<Billing />);
     await userEvent.click(await screen.findByRole("button", { name: "Cancel subscription" }));
     const dialog = screen.getByRole("dialog");
@@ -91,8 +94,22 @@ describe("billing dashboard", () => {
     await userEvent.click(within(dialog).getByRole("radio", { name: /Now, with a full refund of ₹199/ }));
     expect(within(dialog).getByText(/You can get a refund once, until .*2026/)).toBeTruthy();
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel subscription" }));
-    expect(api.cancel).toHaveBeenCalledWith(false);
+    expect(api.cancel).toHaveBeenCalledWith(false, true);
     expect(await screen.findByText(/We're refunding ₹199/)).toBeTruthy();
+  });
+
+  it("says so when the money-back window closed while the dialog was open", async () => {
+    api.current.mockResolvedValue(current("pro_monthly", { refund: { amount_paise: 19900, currency: "INR", until: "2026-10-08T00:00:00Z" } }));
+    api.cancel.mockRejectedValue(
+      new ApiError(409, { detail: "The money-back window has closed, so cancelling now wouldn't be refunded. Nothing was cancelled.", code: "refund_window_closed" }),
+    );
+    render(<Billing />);
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel subscription" }));
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("radio", { name: /Now, with a full refund/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel subscription" }));
+    expect(await screen.findByText(/Nothing was cancelled/)).toBeTruthy();
+    expect(screen.queryByText(/We're refunding/)).toBeNull();
   });
 
   it("shows a refund on its way in the payment history", async () => {

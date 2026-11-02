@@ -220,9 +220,12 @@ def refund_offer(user, sub):
     What cancelling `sub` now would refund, or None. Only an active subscription whose first payment
     was less than BILLING_REFUND_DAYS ago qualifies, and only for a user never refunded before. It
     covers every payment on it so far (an upgrade adds one).
+
+    Not once it's set to end at period end: that choice is final. Whether Razorpay lets it be
+    cancelled now as well is unconfirmed, and a plan bought to follow it would be left waiting.
     """
     days = settings.BILLING_REFUND_DAYS
-    if days <= 0 or sub is None or sub.status != SubscriptionStatus.ACTIVE:
+    if days <= 0 or sub is None or sub.status != SubscriptionStatus.ACTIVE or sub.cancel_at_period_end:
         return None
     refunded_before = PaymentTransaction.objects.filter(user=user).filter(
         ~Q(refund_status=PaymentTransaction.RefundStatus.NONE) | Q(status=PaymentTransaction.Status.REFUNDED)
@@ -238,11 +241,21 @@ def refund_offer(user, sub):
     return RefundOffer(payments=paid, amount_paise=sum(p.amount_paise for p in paid), currency=paid[0].currency, until=until)
 
 
-_REFUND_RANK = {"": 0, "requested": 1, "pending": 2, "processed": 3, "failed": 3}
+# A late "failed" can't undo "processed" (Razorpay doesn't fail a processed refund).
+_REFUND_RANK = {"": 0, "requested": 1, "pending": 2, "failed": 3, "processed": 4}
+
+
+def _is_full(payment, entity):
+    return int(entity.get("amount") or 0) >= payment.amount_paise
 
 
 def apply_refund(payment, entity):
-    """Copies a Razorpay refund onto its payment. A late update about the same refund can't undo a newer one."""
+    """
+    Copies a Razorpay refund onto its payment. A late update about the same refund can't undo a newer
+    one. A partial refund (made in the Dashboard) isn't tracked here: Razorpay keeps the payment captured.
+    """
+    if entity.get("id") != payment.razorpay_refund_id and not _is_full(payment, entity):
+        return payment
     status = entity.get("status")
     if status not in (PaymentTransaction.RefundStatus.PENDING, PaymentTransaction.RefundStatus.PROCESSED,
                       PaymentTransaction.RefundStatus.FAILED):
@@ -262,24 +275,41 @@ def apply_refund(payment, entity):
     return payment
 
 
+def _full_refund_at_razorpay(payment):
+    items = razorpay.fetch_refunds(payment.razorpay_payment_id).get("items") or []
+    return next((r for r in items if _is_full(payment, r)), None)
+
+
 def settle_refund(payment):
     """
-    Makes sure a payment marked for refund has one at Razorpay, and copies its state. Razorpay is
-    asked first, so a refund made by an attempt that failed afterwards is found, not made twice.
+    Makes sure a payment marked for refund has a full refund at Razorpay, and copies its state.
+
+    No row lock is held while Razorpay is called. Razorpay itself stops a second full refund of the
+    same payment: it's asked first, so a refund made by an earlier attempt is found, and if another
+    attempt gets in between, Razorpay refuses this one and that refund is found instead.
     Raises RazorpayError if Razorpay can't be reached (reconcile_subscriptions retries).
     """
+    payment = PaymentTransaction.objects.get(pk=payment.pk)
+    if payment.refund_status not in (PaymentTransaction.RefundStatus.REQUESTED, PaymentTransaction.RefundStatus.PENDING):
+        return payment
+    refund = _full_refund_at_razorpay(payment)
+    if refund is None and payment.refund_status == PaymentTransaction.RefundStatus.REQUESTED:
+        try:
+            refund = razorpay.refund_payment(
+                payment.razorpay_payment_id, amount_paise=payment.amount_paise,
+                notes={"reason": "money_back_window", "user_id": str(payment.user_id)},
+            )
+        except razorpay.RazorpayError as exc:
+            if not exc.status or exc.status >= 500:
+                raise
+            refund = _full_refund_at_razorpay(payment)  # refused because it's refunded already?
+            if refund is None:
+                raise
+    if refund is None:
+        return payment
     with transaction.atomic():
         payment = PaymentTransaction.objects.select_for_update().get(pk=payment.pk)
-        if payment.refund_status not in (PaymentTransaction.RefundStatus.REQUESTED, PaymentTransaction.RefundStatus.PENDING):
-            return payment
-        items = razorpay.fetch_refunds(payment.razorpay_payment_id).get("items") or []
-        if not items and payment.refund_status == PaymentTransaction.RefundStatus.REQUESTED:
-            items = [razorpay.refund_payment(
-                payment.razorpay_payment_id, notes={"reason": "money_back_window", "user_id": str(payment.user_id)}
-            )]
-        if items:
-            apply_refund(payment, items[0])
-        return payment
+        return apply_refund(payment, refund)
 
 
 # ---------------------------------------------------------------------------
@@ -510,14 +540,17 @@ def change_plan(user, plan_code):
         return sub, upgrade
 
 
-def cancel(user, *, at_period_end=True, upcoming=False):
+def cancel(user, *, at_period_end=True, upcoming=False, expect_refund=False):
     """
     Cancels the current subscription or, with `upcoming`, the one bought to start when it ends.
     That one hasn't charged anything yet, so it's always cancelled straight away.
 
     Cancelling now inside the money-back window (refund_offer) also refunds the subscription. The
     payments are marked for refund along with the cancellation, and refunded once that's saved; a
-    refund Razorpay doesn't take now is retried by reconcile_subscriptions.
+    refund Razorpay doesn't take now is retried by reconcile_subscriptions. With `expect_refund`
+    (the user was shown a refund), nothing is cancelled if the window has closed since.
+
+    Returns (subscription, the RefundOffer refunded or None).
     """
     offer = None
     with transaction.atomic():
@@ -537,6 +570,11 @@ def cancel(user, *, at_period_end=True, upcoming=False):
             )
         if not at_period_end and not upcoming:
             offer = refund_offer(user, sub)
+        if expect_refund and offer is None:
+            raise BillingError(
+                "The money-back window has closed, so cancelling now wouldn't be refunded. Nothing was cancelled.",
+                status=409, code="refund_window_closed",
+            )
         try:
             entity = razorpay.cancel_subscription(sub.razorpay_subscription_id, at_cycle_end=at_period_end)
         except razorpay.RazorpayError as exc:
@@ -551,14 +589,22 @@ def cancel(user, *, at_period_end=True, upcoming=False):
                 refund_status=PaymentTransaction.RefundStatus.REQUESTED, refund_requested_at=timezone.now(),
             )
         kind = "upcoming_cancelled" if upcoming else ("cancel_scheduled" if at_period_end else "cancelled")
-        transaction.on_commit(lambda: notify(sub, kind))
-    # Outside the transaction: a refund made at Razorpay must never be rolled back here.
-    for payment in offer.payments if offer else []:
+        if not offer:
+            transaction.on_commit(lambda: notify(sub, kind))
+    if not offer:
+        return sub, None
+    # Outside the transaction: a refund made at Razorpay must never be rolled back here. The
+    # cancellation is saved, so nothing from here on may fail the request; reconcile retries.
+    for payment in offer.payments:
         try:
             settle_refund(payment)
         except razorpay.RazorpayError as exc:
             logger.warning("Refund of payment %s not made yet, will retry: %s", payment.razorpay_payment_id, exc.description)
-    return sub
+        except Exception:
+            logger.exception("Refund of payment %s failed here, will retry", payment.razorpay_payment_id)
+    # After the refunds, so the email only mentions one that hasn't failed.
+    notify(sub, kind)
+    return sub, offer
 
 
 def resume(user):

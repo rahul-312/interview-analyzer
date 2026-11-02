@@ -46,14 +46,16 @@ const Billing = () => {
     }
   };
 
-  // What cancelling now refunds, read before the cancellation clears it.
-  const refund = current.data?.refund ?? null;
+  // The refund the dialog offered is sent along, so the server won't cancel without it.
   const cancel = (atPeriodEnd: boolean) =>
-    run('cancel', () => billingService.cancel(atPeriodEnd), (next) => {
+    run('cancel', () => billingService.cancel(atPeriodEnd, !atPeriodEnd && !!current.data?.refund), (next) => {
       setCancelOpen(null);
       if (atPeriodEnd) return "Your plan is cancelled. You'll keep it until the end of the period.";
       const ended = `Your plan has ended. You're on ${next.plan.name} now.`;
-      return refund ? `${ended} We're refunding ${formatPrice(refund.amount_paise, refund.currency)}; it usually arrives within 5–7 working days.` : ended;
+      const refunded = next.refunded;
+      return refunded
+        ? `${ended} We're refunding ${formatPrice(refunded.amount_paise, refunded.currency)}; it usually arrives within 5–7 working days.`
+        : ended;
     });
 
   const cancelUpcoming = () =>

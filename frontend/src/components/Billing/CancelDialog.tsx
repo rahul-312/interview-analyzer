@@ -37,7 +37,10 @@ const CancelDialog: React.FC<CancelDialogProps> = ({ subscription, canWaitForPer
               <input type="radio" name="when" checked={atPeriodEnd} onChange={() => setAtPeriodEnd(true)} className="mt-xs" />
               <span>
                 <span className="font-medium text-ink">At the end of the period ({end})</span>
-                <span className="block text-medium-gray">You keep paid features until then and won&apos;t be charged again.</span>
+                <span className="block text-medium-gray">
+                  You keep paid features until then and won&apos;t be charged again.
+                  {refund && " This isn't refunded, and you can't switch to a refund later."}
+                </span>
               </span>
             </label>
           )}

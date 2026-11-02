@@ -1,5 +1,6 @@
 import time
 from datetime import timedelta
+from unittest import mock
 
 import pytest
 from django.core.management import call_command
@@ -402,7 +403,6 @@ def test_checkout_while_subscribed_is_refused(api, anon, plans, rzp):
 
 def test_cancel_at_period_end_keeps_access_until_then(api, anon, plans, rzp):
     sub_id = subscribe(api, anon, rzp)
-    PaymentTransaction.objects.update(paid_at=timezone.now() - timedelta(days=10))  # past the money-back window
     res = api.post("/api/subscriptions/cancel/", {}, format="json")
     assert res.status_code == 200
     assert rzp.calls[-1] == ("POST", f"/subscriptions/{sub_id}/cancel", {"cancel_at_cycle_end": 1})
@@ -460,23 +460,44 @@ def test_cancelling_now_inside_the_window_refunds_the_payment(api, anon, plans, 
     res = api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
     assert res.status_code == 200 and res.data["plan"]["code"] == "free"
     assert res.data["refund"] is None
+    assert res.data["refunded"] == {"amount_paise": 19900, "currency": "INR"}
     [(_, path, payload)] = refund_calls(rzp)
-    assert path == "/payments/pay_1/refund" and "amount" not in payload  # the whole payment
+    assert path == "/payments/pay_1/refund" and payload["amount"] == 19900  # the whole payment
     assert payload["notes"]["reason"] == "money_back_window"
     payment = PaymentTransaction.objects.get()
     assert payment.refund_status == "pending" and payment.razorpay_refund_id.startswith("rfnd_")
     assert api.get("/api/subscriptions/payments/").data[0]["refund_status"] == "pending"
 
 
-def test_cancelling_at_period_end_doesnt_refund_but_cancelling_now_still_can(api, anon, plans, rzp):
+def test_cancelling_at_period_end_gives_up_the_refund(api, anon, plans, rzp):
     subscribe(api, anon, rzp)
     data = api.post("/api/subscriptions/cancel/", {}, format="json").data
+    assert data["refunded"] is None and data["refund"] is None
+    assert data["actions"]["cancel"] is False
     assert refund_calls(rzp) == []
-    # The refund is still on offer, so cancelling now stays open.
-    assert data["actions"]["cancel"] is True and data["actions"]["cancel_at_period_end"] is False
-    assert data["refund"]["amount_paise"] == 19900
-    res = api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
-    assert res.status_code == 200 and len(refund_calls(rzp)) == 1
+
+
+def test_a_plan_bought_to_follow_a_period_end_cancel_doesnt_reopen_the_refund(api, anon, plans, rzp):
+    subscribe(api, anon, rzp)
+    api.post("/api/subscriptions/cancel/", {}, format="json")
+    new_id = checkout(api, "pro_plus_monthly")
+    send_webhook(anon, "subscription.authenticated", subscription={**rzp.subscriptions[new_id], "status": "authenticated"},
+                 created_at=int(time.time()) + 1)
+    # Cancelling the first one now by calling the API directly: no refund, and the new one is untouched.
+    res = api.post("/api/subscriptions/cancel/", {"at_period_end": False, "expect_refund": True}, format="json")
+    assert res.status_code == 409 and res.data["code"] == "refund_window_closed"
+    assert refund_calls(rzp) == []
+    assert UserSubscription.objects.get(razorpay_subscription_id=new_id).status == "authenticated"
+
+
+def test_a_refund_shown_after_the_window_closed_cancels_nothing(api, anon, plans, rzp):
+    sub_id = subscribe(api, anon, rzp)
+    assert api.get("/api/subscriptions/current/").data["refund"] is not None  # the dialog opens with it
+    PaymentTransaction.objects.update(paid_at=timezone.now() - timedelta(days=7, minutes=1))
+    res = api.post("/api/subscriptions/cancel/", {"at_period_end": False, "expect_refund": True}, format="json")
+    assert res.status_code == 409 and res.data["code"] == "refund_window_closed"
+    assert not any(path == f"/subscriptions/{sub_id}/cancel" for _, path, _ in rzp.calls)
+    assert UserSubscription.objects.get().status == "active"
 
 
 def test_no_refund_after_the_window(api, anon, plans, rzp):
@@ -546,12 +567,57 @@ def test_a_refund_razorpay_doesnt_take_is_retried_by_reconcile(api, anon, plans,
 def test_a_refund_made_before_a_crash_isnt_made_twice(api, anon, plans, rzp):
     subscribe(api, anon, rzp)
     # Razorpay refunded it, but the answer never got saved here.
-    rzp.refunds["pay_1"] = [{"id": "rfnd_lost", "payment_id": "pay_1", "status": "processed", "created_at": int(time.time())}]
+    rzp.refunds["pay_1"] = [{"id": "rfnd_lost", "payment_id": "pay_1", "status": "processed", "amount": 19900,
+                             "created_at": int(time.time())}]
     PaymentTransaction.objects.update(refund_status="requested")
     call_command("reconcile_subscriptions")
     payment = PaymentTransaction.objects.get()
     assert refund_calls(rzp) == []
     assert (payment.razorpay_refund_id, payment.refund_status, payment.status) == ("rfnd_lost", "processed", "refunded")
+
+
+def test_a_refund_made_by_another_attempt_meanwhile_isnt_made_twice(api, anon, plans, rzp, monkeypatch):
+    subscribe(api, anon, rzp)
+    PaymentTransaction.objects.update(refund_status="requested")
+    # Another attempt refunds it between this one's check and its refund request.
+    real_fetch = razorpay.fetch_refunds
+    looks = iter([{"items": []}])
+
+    def fetch(payment_id):
+        try:
+            answer = next(looks)
+        except StopIteration:
+            return real_fetch(payment_id)
+        rzp.refunds["pay_1"] = [{"id": "rfnd_other", "payment_id": "pay_1", "status": "pending", "amount": 19900}]
+        return answer
+
+    monkeypatch.setattr(razorpay, "fetch_refunds", fetch)
+    services.settle_refund(PaymentTransaction.objects.get())
+    assert refund_calls(rzp) == [("POST", "/payments/pay_1/refund", mock.ANY)]  # refused by Razorpay
+    payment = PaymentTransaction.objects.get()
+    assert (payment.razorpay_refund_id, payment.refund_status) == ("rfnd_other", "pending")
+
+
+def test_an_unexpected_error_refunding_doesnt_fail_the_cancel(api, anon, plans, rzp, monkeypatch):
+    subscribe(api, anon, rzp)
+
+    def broken(payment):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(services, "settle_refund", broken)
+    res = api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+    assert res.status_code == 200 and res.data["subscription"]["status"] == "cancelled"
+    assert PaymentTransaction.objects.get().refund_status == "requested"  # reconcile retries it
+
+
+def test_a_partial_refund_in_the_dashboard_isnt_a_refund_here(api, anon, plans, rzp):
+    subscribe(api, anon, rzp, plan="pro_plus_monthly")
+    PaymentTransaction.objects.update(amount_paise=49900)
+    partial = {"id": "rfnd_goodwill", "payment_id": "pay_1", "status": "processed", "amount": 5000}
+    send_webhook(anon, "refund.processed", refund=partial, payment=payment_entity("pay_1", amount=49900))
+    payment = PaymentTransaction.objects.get()
+    assert (payment.refund_status, payment.status, payment.razorpay_refund_id) == ("", "captured", "")
+    assert api.get("/api/subscriptions/current/").data["refund"]["amount_paise"] == 49900
 
 
 def test_refund_webhooks_move_the_refund_forward_only(api, anon, plans, rzp):
@@ -562,6 +628,8 @@ def test_refund_webhooks_move_the_refund_forward_only(api, anon, plans, rzp):
     send_webhook(anon, "refund.processed", refund={**refund, "status": "processed"},
                  payment=payment_entity("pay_1", status="refunded"), created_at=now + 5)
     send_webhook(anon, "refund.created", refund=refund, payment=payment_entity("pay_1"), created_at=now + 1)
+    send_webhook(anon, "refund.failed", refund={**refund, "status": "failed"}, payment=payment_entity("pay_1"),
+                 created_at=now + 2)
     payment = PaymentTransaction.objects.get()
     assert (payment.refund_status, payment.status) == ("processed", "refunded")
     assert api.get("/api/subscriptions/payments/").data[0]["status_label"] == "Refunded"
@@ -588,6 +656,13 @@ def test_the_cancelled_email_mentions_the_refund(
     body = _cancelled_email(mailoutbox)
     assert "We're refunding ₹199 to your original payment method." in body
     assert body.endswith("Your account is back on Free.")
+
+
+@pytest.mark.parametrize("paise, currency, text", [
+    (19900, "INR", "₹199"), (1234567, "INR", "₹12,345.67"), (100000000, "INR", "₹1,000,000"), (1999, "USD", "USD 19.99"),
+])
+def test_email_amounts(paise, currency, text):
+    assert notifications.money(paise, currency) == text
 
 
 def test_resume_with_nothing_to_resume(api, plans, rzp):
