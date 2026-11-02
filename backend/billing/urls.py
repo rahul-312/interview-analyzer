@@ -9,6 +9,7 @@ from .views import (
     PlansView,
     RazorpayWebhookView,
     ResumeView,
+    UpgradeQuoteView,
     UsageView,
     VerifyView,
 )
@@ -20,6 +21,7 @@ urlpatterns = [
     path("subscriptions/payments/", PaymentsView.as_view()),
     path("subscriptions/checkout/", CheckoutView.as_view()),
     path("subscriptions/verify/", VerifyView.as_view()),
+    path("subscriptions/upgrade-quote/", UpgradeQuoteView.as_view()),
     path("subscriptions/change-plan/", ChangePlanView.as_view()),
     path("subscriptions/cancel/", CancelView.as_view()),
     path("subscriptions/resume/", ResumeView.as_view()),

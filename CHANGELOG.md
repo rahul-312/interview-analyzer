@@ -31,6 +31,11 @@ extension share one version number.
   subscription's first payment refunds it in full through Razorpay, once per
   user (`BILLING_REFUND_DAYS`). Add the `refund.*` events to the Razorpay
   webhook and run `migrate`.
+- Upgrades on UPI Autopay and eMandate, which Razorpay can't move to another
+  plan: the new plan is paid in Checkout, then the old one is cancelled and
+  its unused days refunded. The dialog shows the price and estimated refund
+  first. Run `migrate`; with a Celery broker, a worker finishes upgrades, and
+  `reconcile_subscriptions` retries any left unfinished.
 
 ### Changed
 - The free plan now includes 1 prep plan per 24 hours (was 2).

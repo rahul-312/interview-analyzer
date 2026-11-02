@@ -16,6 +16,7 @@ const statusClass: Record<Payment['status'], string> = {
 /** A refund still on its way, or one that needs support. A finished one shows as the payment's own status. */
 const refundBadge: Partial<Record<Payment['refund_status'], { text: string; className: string }>> = {
   requested: { text: 'Refund on the way', className: 'bg-sky-light text-sky-dark' },
+  sending: { text: 'Refund on the way', className: 'bg-sky-light text-sky-dark' },
   pending: { text: 'Refund on the way', className: 'bg-sky-light text-sky-dark' },
   failed: { text: 'Refund failed, contact support', className: 'bg-rose-pale text-rose-dark' },
 };
@@ -25,6 +26,14 @@ const StatusBadge = ({ payment }: { payment: Payment }) => {
   const [text, className] = refund ? [refund.text, refund.className] : [payment.status_label, statusClass[payment.status]];
   return <span className={`rounded-full px-lg py-xs text-xs font-medium ${className}`}>{text}</span>;
 };
+
+/** Part of a payment refunded: an upgrade's credit for the unused days of the plan it replaced. */
+function partialRefund(p: Payment) {
+  if (p.refund_paise === null || p.refund_paise >= p.amount_paise || p.refund_status === 'failed') return null;
+  const amount = formatPrice(p.refund_paise, p.currency);
+  const what = p.refund_reason === 'upgrade_credit' ? ' for unused days' : '';
+  return p.refund_status === 'processed' ? `${amount} refunded${what}` : `${amount} refund${what} on the way`;
+}
 
 /** "pro_plus_yearly" → "Pro Plus yearly". */
 function planName(code: string | null) {
@@ -58,11 +67,12 @@ const PaymentHistory: React.FC<PaymentHistoryProps> = ({ payments, loading, erro
                 {formatDate(p.paid_at || p.created_at)}
                 {p.method && ` · ${p.method_detail || p.method}`}
                 {p.failure_reason && ` · ${p.failure_reason}`}
+                {partialRefund(p) && ` · ${partialRefund(p)}`}
               </p>
             </div>
             <div className="flex items-center gap-xl">
               <span className="font-medium tabular-nums">{formatPrice(p.amount_paise, p.currency)}</span>
-              <StatusBadge payment={p} />
+              <StatusBadge payment={partialRefund(p) ? { ...p, refund_status: '' } : p} />
             </div>
           </li>
         ))}

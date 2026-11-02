@@ -130,6 +130,8 @@ export const payment = (overrides: Partial<Payment> = {}): Payment => ({
   method_detail: "Visa",
   failure_reason: "",
   refund_status: "",
+  refund_reason: "",
+  refund_paise: null,
   paid_at: "2026-10-01T00:00:00Z",
   created_at: "2026-10-01T00:00:00Z",
   ...overrides,

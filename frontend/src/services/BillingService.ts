@@ -4,6 +4,7 @@ import type {
   CurrentSubscription,
   Payment,
   PlansResponse,
+  UpgradeQuote,
 } from "@/models/Billing";
 import type { Usage } from "@/models/Auth";
 import ApiClient, { apiClient } from "./ApiClient";
@@ -40,6 +41,11 @@ export default class BillingService {
     return this.client.post<CurrentSubscription>("/subscriptions/verify/", response);
   }
 
+  upgradeQuote(plan: string) {
+    return this.client.get<UpgradeQuote>(`/subscriptions/upgrade-quote/?plan=${encodeURIComponent(plan)}`);
+  }
+
+  /** An upgrade that replaces the subscription returns change "checkout" and its Checkout config. */
   changePlan(plan: string) {
     return this.client.post<CurrentSubscription>("/subscriptions/change-plan/", { plan });
   }

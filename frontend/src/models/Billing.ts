@@ -98,8 +98,10 @@ export interface CurrentSubscription {
   refund_days: number;
   billing_enabled: boolean;
   usage: Usage;
-  /** Only after change-plan: when the change applies. */
-  change?: "now" | "cycle_end";
+  /** Only after change-plan: when the change applies, or "checkout" for an upgrade paid in Checkout first. */
+  change?: "now" | "cycle_end" | "checkout";
+  /** Only after change-plan with change "checkout": what Checkout needs to pay for the upgrade. */
+  checkout?: CheckoutConfig;
   /** Only after cancel: what the cancellation refunded. */
   refunded?: Pick<RefundOffer, "amount_paise" | "currency"> | null;
   /** Only after cancel: Razorpay refused a refund straight away, so support has to make it. */
@@ -119,10 +121,33 @@ export interface Payment {
   method: string;
   method_detail: string;
   failure_reason: string;
-  /** "" when not refunded. "requested" and "pending" are on the way. */
-  refund_status: "" | "requested" | "pending" | "processed" | "failed";
+  /** "" when not refunded. "requested", "sending" and "pending" are on the way. */
+  refund_status: "" | "requested" | "sending" | "pending" | "processed" | "failed";
+  /** "upgrade_credit": the unused days of a plan an upgrade replaced. */
+  refund_reason: "" | "money_back" | "upgrade_credit";
+  /** What the refund is for: all of amount_paise, or part of it. null without a refund. */
+  refund_paise: number | null;
   paid_at: string | null;
   created_at: string;
+}
+
+/**
+ * What upgrading would do. "native_change": Razorpay moves the subscription to the new plan and
+ * bills it by its own rules. "replacement" (UPI Autopay, eMandate): the new plan is paid in
+ * Checkout, then about `credit_paise` of the current one comes back.
+ */
+export interface UpgradeQuote {
+  strategy: "native_change" | "replacement";
+  plan: Price;
+  /** False when the current plan's unused days couldn't be refunded ("too_old"). */
+  available: boolean;
+  charge_paise: number | null;
+  /** An estimate: the server works out the credit when the new plan starts. */
+  credit_paise: number;
+  /** The current plan is refunded in full: it's still inside its money-back window. */
+  credit_full: boolean;
+  credit_reason: "" | "below_minimum" | "no_payment" | "too_old";
+  currency: string;
 }
 
 /** What cancelling now would refund, inside the money-back window. */

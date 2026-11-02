@@ -76,6 +76,9 @@ class FakeRazorpay:
     def __init__(self):
         self.subscriptions = {}
         self.refunds = {}  # payment ID -> its refunds, oldest first
+        # Payment ID -> amount paid, for payments that may be refunded in parts. Any other payment
+        # can only be refunded once, in full.
+        self.paid = {}
         self.calls = []
         self.fail_next = None  # a RazorpayError to raise on the next call
         self._ids = itertools.count(1)
@@ -92,11 +95,15 @@ class FakeRazorpay:
             refunds = self.refunds.setdefault(parts[1], [])
             if method == "GET":
                 return {"entity": "collection", "count": len(refunds), "items": [dict(r) for r in reversed(refunds)]}
-            if refunds:
+            if parts[1] in self.paid:
+                if sum(r["amount"] for r in refunds) + payload["amount"] > self.paid[parts[1]]:
+                    raise razorpay.RazorpayError("The refund amount is greater than the amount left to refund", status=400)
+            elif refunds:
                 raise razorpay.RazorpayError("The payment has been fully refunded already", status=400)
             refund = {
                 "id": f"rfnd_{next(self._ids)}", "entity": "refund", "payment_id": parts[1], "status": "pending",
-                "amount": payload.get("amount"), "notes": payload["notes"], "created_at": int(time.time()),
+                "amount": payload.get("amount"), "notes": payload["notes"], "receipt": payload.get("receipt"),
+                "created_at": int(time.time()),
             }
             refunds.append(refund)
             return dict(refund)
@@ -119,6 +126,8 @@ class FakeRazorpay:
                 sub["change_scheduled_at"] = sub["current_end"]
             return dict(sub)
         if parts[2] == "cancel":
+            if sub["status"] in ("cancelled", "completed", "expired"):
+                raise razorpay.RazorpayError("Subscription is not cancellable in cancelled status", status=400)
             if not payload["cancel_at_cycle_end"]:
                 sub["status"] = "cancelled"
                 sub["ended_at"] = int(time.time())

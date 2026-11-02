@@ -80,8 +80,14 @@ class PaymentSerializer(serializers.ModelSerializer):
         model = PaymentTransaction
         fields = [
             "id", "razorpay_payment_id", "plan", "amount_paise", "currency", "status", "status_label", "method",
-            "method_detail", "failure_reason", "refund_status", "paid_at", "created_at",
+            "method_detail", "failure_reason", "refund_status", "refund_reason", "refund_paise", "paid_at", "created_at",
         ]
+
+    # What the refund is for: the whole payment, or (an upgrade's credit) part of it. Null without one.
+    refund_paise = serializers.SerializerMethodField()
+
+    def get_refund_paise(self, payment):
+        return payment.refund_paise if payment.refund_status else None
 
 
 class PlanCodeSerializer(serializers.Serializer):
