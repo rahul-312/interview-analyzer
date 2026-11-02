@@ -638,6 +638,29 @@ def test_a_refund_razorpay_refuses_for_a_passing_reason_is_retried(api, anon, pl
     assert PaymentTransaction.objects.get().refund_status == "pending"
 
 
+def test_reconcile_flags_refunds_stuck_for_over_an_hour(api, anon, plans, rzp, monkeypatch, capsys):
+    subscribe(api, anon, rzp)
+    PaymentTransaction.objects.update(refund_status="requested", refund_requested_at=timezone.now() - timedelta(hours=2))
+
+    def bad_keys(payment_id):
+        raise razorpay.RazorpayError("Authentication failed", status=401)
+
+    monkeypatch.setattr(razorpay, "fetch_refunds", bad_keys)
+    call_command("reconcile_subscriptions")
+    out = capsys.readouterr()
+    assert "1 refund(s) stuck: pay_1." in out.err and "stuck 1." in out.out
+
+
+def test_reconcile_flags_refunds_razorpay_never_finished(api, anon, plans, rzp, capsys):
+    subscribe(api, anon, rzp)
+    api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+    call_command("reconcile_subscriptions")
+    assert "stuck" not in capsys.readouterr().err  # pending, but only just
+    PaymentTransaction.objects.update(refund_requested_at=timezone.now() - timedelta(days=11))
+    call_command("reconcile_subscriptions")
+    assert "1 refund(s) stuck: pay_1." in capsys.readouterr().err
+
+
 def test_expect_refund_only_applies_to_cancelling_now(api, anon, plans, rzp):
     subscribe(api, anon, rzp)
     PaymentTransaction.objects.update(paid_at=timezone.now() - timedelta(days=30))

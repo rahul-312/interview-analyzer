@@ -17,6 +17,8 @@ import { billingService } from '@/services/BillingService';
 import { formatPrice, subscriptionNotice } from '@/utils/billing';
 import { errorText } from '@/utils/errorText';
 
+type Message = { tone: 'success' | 'warn' | 'error'; text: string };
+
 /** Plans & billing: the current plan, usage, payments, and changing or cancelling the subscription. */
 const Billing = () => {
   const { refreshUser } = useAuth();
@@ -24,10 +26,11 @@ const Billing = () => {
   const payments = useApi('billing-payments', () => billingService.payments());
   const [cancelOpen, setCancelOpen] = useState<'current' | 'upcoming' | null>(null);
   const [busy, setBusy] = useState<'cancel' | 'resume' | 'pay' | null>(null);
-  const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessage] = useState<Message | null>(null);
 
   // Runs one action at a time, then shows the server's new state everywhere.
-  const run = async (kind: 'cancel' | 'resume' | 'pay', action: () => Promise<CurrentSubscription>, done: (next: CurrentSubscription) => string | null) => {
+  // `done` gives the message to show: plain text is a success.
+  const run = async (kind: 'cancel' | 'resume' | 'pay', action: () => Promise<CurrentSubscription>, done: (next: CurrentSubscription) => string | Message | null) => {
     if (busy) return;
     setBusy(kind);
     setMessage(null);
@@ -36,8 +39,8 @@ const Billing = () => {
       current.setData(next);
       payments.reload();
       await refreshUser();
-      const text = done(next);
-      if (text) setMessage({ tone: 'success', text });
+      const result = done(next);
+      if (result) setMessage(typeof result === 'string' ? { tone: 'success', text: result } : result);
     } catch (err) {
       setMessage({ tone: 'error', text: errorText(err) });
       current.reload();
@@ -56,8 +59,8 @@ const Billing = () => {
       const refunding = refunded
         ? ` We're refunding ${formatPrice(refunded.amount_paise, refunded.currency)}; it usually arrives within 5–7 working days.`
         : '';
-      const failed = next.refund_failed ? " We couldn't start your refund. Contact support and we'll sort it out." : '';
-      return `${ended}${refunding}${failed}`;
+      if (next.refund_failed) return { tone: 'warn', text: `${ended}${refunding} We couldn't start your refund. Contact support and we'll sort it out.` };
+      return `${ended}${refunding}`;
     });
 
   const cancelUpcoming = () =>

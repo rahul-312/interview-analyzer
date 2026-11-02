@@ -120,7 +120,8 @@ describe("billing dashboard", () => {
     const dialog = screen.getByRole("dialog");
     await userEvent.click(within(dialog).getByRole("radio", { name: /Now, with a full refund/ }));
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel subscription" }));
-    expect(await screen.findByText(/We couldn't start your refund. Contact support/)).toBeTruthy();
+    const notice = await screen.findByText(/We couldn't start your refund. Contact support/);
+    expect(notice.closest(".bg-amber-light")).toBeTruthy(); // a warning, not a success
     expect(screen.queryByText(/We're refunding/)).toBeNull();
   });
 

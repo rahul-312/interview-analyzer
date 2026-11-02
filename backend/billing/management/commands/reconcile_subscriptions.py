@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
@@ -8,7 +9,11 @@ from billing import razorpay, services
 from billing.models import PaymentTransaction, SubscriptionStatus, TERMINAL_STATUSES, UserSubscription
 
 
+logger = logging.getLogger(__name__)
+
 REFUND_SETTLE_DELAY = timedelta(minutes=10)
+REFUND_STUCK_AFTER = timedelta(hours=1)
+REFUND_PENDING_TOO_LONG = timedelta(days=10)
 
 
 class Command(BaseCommand):
@@ -46,7 +51,20 @@ class Command(BaseCommand):
             except razorpay.RazorpayError as exc:
                 refund_failed += 1
                 self.stderr.write(f"{payment.razorpay_payment_id} refund: {exc.description}")
+        # The user is being told these are on their way, so say so loudly. Not made after an hour
+        # usually means a setup problem such as bad API keys; Razorpay normally finishes one in 5–7
+        # working days.
+        now = timezone.now()
+        stuck_ids = list(PaymentTransaction.objects.filter(
+            Q(refund_status=PaymentTransaction.RefundStatus.REQUESTED, refund_requested_at__lt=now - REFUND_STUCK_AFTER)
+            | Q(refund_status=PaymentTransaction.RefundStatus.PENDING, refund_requested_at__lt=now - REFUND_PENDING_TOO_LONG)
+        ).order_by("refund_requested_at").values_list("razorpay_payment_id", flat=True))
+        stuck = len(stuck_ids)
+        if stuck:
+            shown = ", ".join(stuck_ids[:5]) + (", ..." if stuck > 5 else "")
+            logger.error("%s refund(s) stuck (not made after an hour, or unfinished after 10 days): %s", stuck, shown)
+            self.stderr.write(f"{stuck} refund(s) stuck: {shown}. Check the Razorpay keys, log and Dashboard.")
         self.stdout.write(
             f"Synced {synced}, failed {failed}, expired {expired} abandoned checkouts. "
-            f"Refunds synced {refunds}, failed {refund_failed}."
+            f"Refunds synced {refunds}, failed {refund_failed}, stuck {stuck}."
         )

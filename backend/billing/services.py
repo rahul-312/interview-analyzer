@@ -614,21 +614,22 @@ def cancel(user, *, at_period_end=True, upcoming=False, expect_refund=False):
         return sub, None, False
     # Outside the transaction: a refund made at Razorpay must never be rolled back here. The
     # cancellation is saved, so nothing from here on may fail the request; reconcile retries.
+    under_way = []
     for payment in offer.payments:
         try:
-            settle_refund(payment)
+            payment = settle_refund(payment)
         except razorpay.RazorpayError as exc:
             logger.warning("Refund of payment %s not made yet, will retry: %s", payment.razorpay_payment_id, exc.description)
         except Exception:
             logger.exception("Refund of payment %s failed here, will retry", payment.razorpay_payment_id)
+        if payment.refund_status != PaymentTransaction.RefundStatus.FAILED:
+            under_way.append(payment)  # including one still to be retried
     # After the refunds, so the email only mentions one that hasn't failed.
     notify(sub, kind)
-    settled = list(PaymentTransaction.objects.filter(pk__in=[p.pk for p in offer.payments]))
-    under_way = [p for p in settled if p.refund_status != PaymentTransaction.RefundStatus.FAILED]
     refunded = RefundOffer(
         payments=under_way, amount_paise=sum(p.amount_paise for p in under_way), currency=offer.currency, until=offer.until,
     ) if under_way else None
-    return sub, refunded, len(under_way) < len(settled)
+    return sub, refunded, len(under_way) < len(offer.payments)
 
 
 def resume(user):
