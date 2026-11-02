@@ -3,7 +3,7 @@ import json
 import logging
 
 from django.conf import settings
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.exceptions import APIException
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -42,6 +42,7 @@ def current_data(user):
     paid_ai = any(entitlements.ai_ready(code) for code in tiers.RANK if code != tiers.FREE)
     open_ = bool(sub and sub.status not in TERMINAL_STATUSES)
     comp = Profile.objects.filter(user=user).values_list("plan", flat=True).first() or "free"
+    offer = services.refund_offer(user, sub) if open_ else None
     return {
         "plan": tier_data(tier),
         # Where the plan comes from: a subscription, a complimentary plan set by an admin, or neither.
@@ -59,6 +60,13 @@ def current_data(user):
             "resume": bool(sub and sub.status == SubscriptionStatus.PAUSED),
             "pay": bool(sub and sub.status in (SubscriptionStatus.PENDING, SubscriptionStatus.HALTED) and sub.short_url),
         },
+        # What cancelling now would refund (the money-back window), or null.
+        "refund": {
+            "amount_paise": offer.amount_paise,
+            "currency": offer.currency,
+            "until": serializers.DateTimeField().to_representation(offer.until),
+        } if offer else None,
+        "refund_days": settings.BILLING_REFUND_DAYS,
         "billing_enabled": razorpay.enabled(),
         "usage": usage(user),
     }
@@ -91,6 +99,7 @@ class PlansView(APIView):
             "tiers": plans_data(),
             "billing_enabled": razorpay.enabled(),
             "grace_days": settings.BILLING_GRACE_DAYS,
+            "refund_days": settings.BILLING_REFUND_DAYS,
         })
 
 
@@ -175,7 +184,9 @@ class ChangePlanView(BillingActionView):
 
 class CancelView(BillingActionView):
     """
-    POST {"at_period_end": true}: cancel at the end of the paid period (default) or now.
+    POST {"at_period_end": true}: cancel at the end of the paid period (default) or now. Now, inside
+    the money-back window, also refunds the subscription; with "expect_refund": true cancelling now is refused
+    (409 refund_window_closed) if the window has closed since the user was offered the refund.
     POST {"upcoming": true}: cancel the subscription bought to start when the current one ends.
     """
 
@@ -184,10 +195,17 @@ class CancelView(BillingActionView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         try:
-            services.cancel(request.user, at_period_end=data["at_period_end"], upcoming=data["upcoming"])
+            _, refunded, refund_failed = services.cancel(
+                request.user, at_period_end=data["at_period_end"], upcoming=data["upcoming"], expect_refund=data["expect_refund"],
+            )
         except services.BillingError as exc:
             return billing_error(exc)
-        return Response(current_data(request.user))
+        return Response({
+            **current_data(request.user),
+            "refunded": {"amount_paise": refunded.amount_paise, "currency": refunded.currency} if refunded else None,
+            # Razorpay refused a refund on the spot: support has to make it.
+            "refund_failed": refund_failed,
+        })
 
 
 class ResumeView(BillingActionView):

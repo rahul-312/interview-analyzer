@@ -25,8 +25,8 @@ class UserSubscriptionAdmin(admin.ModelAdmin):
 
 @admin.register(PaymentTransaction)
 class PaymentTransactionAdmin(admin.ModelAdmin):
-    list_display = ["razorpay_payment_id", "user", "amount_paise", "status", "method", "paid_at", "created_at"]
-    list_filter = ["status", "method"]
+    list_display = ["razorpay_payment_id", "user", "amount_paise", "status", "refund_status", "method", "paid_at", "created_at"]
+    list_filter = ["status", "refund_status", "method"]
     search_fields = ["razorpay_payment_id", "user__username", "user__email"]
 
     def has_change_permission(self, request, obj=None):

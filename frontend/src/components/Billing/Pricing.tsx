@@ -61,7 +61,7 @@ const Pricing = () => {
   if ((plans.loading && !plans.data) || (current.loading && !current.data)) return <Loading />;
   if (!plans.data || !current.data) return <ErrorMessage message={plans.error || current.error || 'Plans could not be loaded.'} />;
 
-  const { tiers, billing_enabled } = plans.data;
+  const { tiers, billing_enabled, refund_days } = plans.data;
   const me = current.data;
   const sub = me.subscription?.gives_access ? me.subscription : null;
 
@@ -134,6 +134,12 @@ const Pricing = () => {
         <p>
           Upgrades apply straight away. Downgrades and monthly/yearly switches apply at your next renewal. Prices are in
           INR and billed by Razorpay.
+        </p>
+        <p>
+          {refund_days > 0 &&
+            `${refund_days}-day money-back guarantee: cancel within ${refund_days} days of a new subscription's first payment for a full refund, once per account. `}
+          After that, cancelling stops renewals and you keep your plan until the end of the period you paid for; that
+          period isn&apos;t refunded.
         </p>
       </div>
 

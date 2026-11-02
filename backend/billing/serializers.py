@@ -80,7 +80,7 @@ class PaymentSerializer(serializers.ModelSerializer):
         model = PaymentTransaction
         fields = [
             "id", "razorpay_payment_id", "plan", "amount_paise", "currency", "status", "status_label", "method",
-            "method_detail", "failure_reason", "paid_at", "created_at",
+            "method_detail", "failure_reason", "refund_status", "paid_at", "created_at",
         ]
 
 
@@ -97,3 +97,6 @@ class VerifySerializer(serializers.Serializer):
 class CancelSerializer(serializers.Serializer):
     at_period_end = serializers.BooleanField(default=True)
     upcoming = serializers.BooleanField(default=False)
+    # The user was shown a refund for cancelling now: refuse rather than cancel now without one.
+    # Ignored when cancelling at period end or the upcoming subscription.
+    expect_refund = serializers.BooleanField(default=False)

@@ -44,8 +44,9 @@ export default class BillingService {
     return this.client.post<CurrentSubscription>("/subscriptions/change-plan/", { plan });
   }
 
-  cancel(atPeriodEnd: boolean) {
-    return this.client.post<CurrentSubscription>("/subscriptions/cancel/", { at_period_end: atPeriodEnd });
+  /** `expectRefund`: the user was offered a refund, so the server refuses (409) rather than cancel without one. */
+  cancel(atPeriodEnd: boolean, expectRefund = false) {
+    return this.client.post<CurrentSubscription>("/subscriptions/cancel/", { at_period_end: atPeriodEnd, expect_refund: expectRefund });
   }
 
   /** Cancels the subscription bought to start when the current one ends. Nothing was charged for it yet. */
