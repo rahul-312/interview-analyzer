@@ -275,6 +275,9 @@ def apply_refund(payment, entity):
     return payment
 
 
+_REFUSED_STATUSES = (400, 422)
+
+
 def _full_refund_at_razorpay(payment):
     items = razorpay.fetch_refunds(payment.razorpay_payment_id).get("items") or []
     return next((r for r in items if _is_full(payment, r)), None)
@@ -287,8 +290,8 @@ def settle_refund(payment):
     No row lock is held while Razorpay is called. Razorpay itself stops a second full refund of the
     same payment: it's asked first, so a refund made by an earlier attempt is found, and if another
     attempt gets in between, Razorpay refuses this one and that refund is found instead. Any other
-    refusal is permanent (e.g. a partial refund left less than the full amount), so the refund is
-    marked failed for someone to handle in the Dashboard, not retried.
+    refusal (400 or 422, e.g. a partial refund left less than the full amount) is permanent, so the
+    refund is marked failed for someone to handle in the Dashboard, not retried.
     Raises RazorpayError if Razorpay can't be reached (reconcile_subscriptions retries).
     """
     payment = PaymentTransaction.objects.get(pk=payment.pk)
@@ -302,7 +305,9 @@ def settle_refund(payment):
                 notes={"reason": "money_back_window", "user_id": str(payment.user_id)},
             )
         except razorpay.RazorpayError as exc:
-            if not exc.status or exc.status >= 500:
+            # Razorpay refuses a refund for a business reason with 400 (or 422). Anything else
+            # (rate limits, bad keys, outages) is temporary or a setup problem: retry it.
+            if exc.status not in _REFUSED_STATUSES:
                 raise
             refund = _full_refund_at_razorpay(payment)  # refused because it's refunded already?
             if refund is None:
@@ -563,7 +568,8 @@ def cancel(user, *, at_period_end=True, upcoming=False, expect_refund=False):
     refund Razorpay doesn't take now is retried by reconcile_subscriptions. With `expect_refund`
     (the user was shown a refund), nothing is cancelled if the window has closed since.
 
-    Returns (subscription, the RefundOffer refunded or None).
+    Returns (subscription, the RefundOffer for the refunds under way or None, whether any refund
+    failed straight away).
     """
     offer = None
     with transaction.atomic():
@@ -605,7 +611,7 @@ def cancel(user, *, at_period_end=True, upcoming=False, expect_refund=False):
         if not offer:
             transaction.on_commit(lambda: notify(sub, kind))
     if not offer:
-        return sub, None
+        return sub, None, False
     # Outside the transaction: a refund made at Razorpay must never be rolled back here. The
     # cancellation is saved, so nothing from here on may fail the request; reconcile retries.
     for payment in offer.payments:
@@ -617,7 +623,12 @@ def cancel(user, *, at_period_end=True, upcoming=False, expect_refund=False):
             logger.exception("Refund of payment %s failed here, will retry", payment.razorpay_payment_id)
     # After the refunds, so the email only mentions one that hasn't failed.
     notify(sub, kind)
-    return sub, offer
+    settled = list(PaymentTransaction.objects.filter(pk__in=[p.pk for p in offer.payments]))
+    under_way = [p for p in settled if p.refund_status != PaymentTransaction.RefundStatus.FAILED]
+    refunded = RefundOffer(
+        payments=under_way, amount_paise=sum(p.amount_paise for p in under_way), currency=offer.currency, until=offer.until,
+    ) if under_way else None
+    return sub, refunded, len(under_way) < len(settled)
 
 
 def resume(user):

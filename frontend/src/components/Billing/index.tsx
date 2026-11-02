@@ -53,9 +53,11 @@ const Billing = () => {
       if (atPeriodEnd) return "Your plan is cancelled. You'll keep it until the end of the period.";
       const ended = `Your plan has ended. You're on ${next.plan.name} now.`;
       const refunded = next.refunded;
-      return refunded
-        ? `${ended} We're refunding ${formatPrice(refunded.amount_paise, refunded.currency)}; it usually arrives within 5–7 working days.`
-        : ended;
+      const refunding = refunded
+        ? ` We're refunding ${formatPrice(refunded.amount_paise, refunded.currency)}; it usually arrives within 5–7 working days.`
+        : '';
+      const failed = next.refund_failed ? " We couldn't start your refund. Contact support and we'll sort it out." : '';
+      return `${ended}${refunding}${failed}`;
     });
 
   const cancelUpcoming = () =>

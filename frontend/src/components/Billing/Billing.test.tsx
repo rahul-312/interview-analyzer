@@ -112,6 +112,18 @@ describe("billing dashboard", () => {
     expect(screen.queryByText(/We're refunding/)).toBeNull();
   });
 
+  it("says so when the refund couldn't be started", async () => {
+    api.current.mockResolvedValue(current("pro_monthly", { refund: { amount_paise: 19900, currency: "INR", until: "2026-10-08T00:00:00Z" } }));
+    api.cancel.mockResolvedValue({ ...current(null), refunded: null, refund_failed: true });
+    render(<Billing />);
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel subscription" }));
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("radio", { name: /Now, with a full refund/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel subscription" }));
+    expect(await screen.findByText(/We couldn't start your refund. Contact support/)).toBeTruthy();
+    expect(screen.queryByText(/We're refunding/)).toBeNull();
+  });
+
   it("shows a refund on its way in the payment history", async () => {
     api.payments.mockResolvedValue([payment({ refund_status: "pending" })]);
     render(<Billing />);

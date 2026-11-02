@@ -611,12 +611,31 @@ def test_a_refund_razorpay_refuses_for_good_is_marked_failed(api, anon, plans, r
     monkeypatch.setattr(razorpay, "refund_payment", refused)
     res = api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
     assert res.status_code == 200
+    assert res.data["refunded"] is None and res.data["refund_failed"] is True
     assert PaymentTransaction.objects.get().refund_status == "failed"
     assert api.get("/api/subscriptions/payments/").data[0]["refund_status"] == "failed"
     # Not retried: someone has to look at it in the Dashboard.
     PaymentTransaction.objects.update(refund_requested_at=timezone.now() - timedelta(hours=1))
     monkeypatch.setattr(razorpay, "refund_payment", lambda *a, **k: pytest.fail("retried a refused refund"))
     call_command("reconcile_subscriptions")
+
+
+@pytest.mark.parametrize("status", [401, 403, 429])
+def test_a_refund_razorpay_refuses_for_a_passing_reason_is_retried(api, anon, plans, rzp, monkeypatch, status):
+    subscribe(api, anon, rzp)
+
+    def refused(payment_id, *, amount_paise, notes):
+        raise razorpay.RazorpayError("Too many requests" if status == 429 else "Authentication failed", status=status)
+
+    with monkeypatch.context() as m:
+        m.setattr(razorpay, "refund_payment", refused)
+        res = api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+    assert res.status_code == 200 and res.data["refund_failed"] is False
+    assert res.data["refunded"]["amount_paise"] == 19900  # still on its way
+    assert PaymentTransaction.objects.get().refund_status == "requested"
+    PaymentTransaction.objects.update(refund_requested_at=timezone.now() - timedelta(minutes=11))
+    call_command("reconcile_subscriptions")
+    assert PaymentTransaction.objects.get().refund_status == "pending"
 
 
 def test_expect_refund_only_applies_to_cancelling_now(api, anon, plans, rzp):

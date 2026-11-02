@@ -102,6 +102,8 @@ export interface CurrentSubscription {
   change?: "now" | "cycle_end";
   /** Only after cancel: what the cancellation refunded. */
   refunded?: Pick<RefundOffer, "amount_paise" | "currency"> | null;
+  /** Only after cancel: Razorpay refused a refund straight away, so support has to make it. */
+  refund_failed?: boolean;
   /** Only after resume: Razorpay's link to pay a failed charge. */
   payment_url?: string | null;
 }

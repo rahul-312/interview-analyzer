@@ -195,7 +195,7 @@ class CancelView(BillingActionView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         try:
-            _, refunded = services.cancel(
+            _, refunded, refund_failed = services.cancel(
                 request.user, at_period_end=data["at_period_end"], upcoming=data["upcoming"], expect_refund=data["expect_refund"],
             )
         except services.BillingError as exc:
@@ -203,6 +203,8 @@ class CancelView(BillingActionView):
         return Response({
             **current_data(request.user),
             "refunded": {"amount_paise": refunded.amount_paise, "currency": refunded.currency} if refunded else None,
+            # Razorpay refused a refund on the spot: support has to make it.
+            "refund_failed": refund_failed,
         })
 
 
