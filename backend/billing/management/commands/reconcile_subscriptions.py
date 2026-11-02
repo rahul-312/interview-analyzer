@@ -1,8 +1,14 @@
+from datetime import timedelta
+
 from django.core.management.base import BaseCommand
+from django.db.models import Q
 from django.utils import timezone
 
 from billing import razorpay, services
 from billing.models import PaymentTransaction, SubscriptionStatus, TERMINAL_STATUSES, UserSubscription
+
+
+REFUND_SETTLE_DELAY = timedelta(minutes=10)
 
 
 class Command(BaseCommand):
@@ -27,8 +33,11 @@ class Command(BaseCommand):
                 failed += 1
                 self.stderr.write(f"{sub.razorpay_subscription_id}: {exc.description}")
         refunds = refund_failed = 0
+        # A refund requested in the last few minutes is left to the cancel that's making it, so the
+        # two don't race to Razorpay (only Razorpay's refusal of a second refund would stop that).
         open_refunds = PaymentTransaction.objects.filter(
-            refund_status__in=[PaymentTransaction.RefundStatus.REQUESTED, PaymentTransaction.RefundStatus.PENDING]
+            Q(refund_status=PaymentTransaction.RefundStatus.PENDING)
+            | Q(refund_status=PaymentTransaction.RefundStatus.REQUESTED, refund_requested_at__lt=timezone.now() - REFUND_SETTLE_DELAY)
         )
         for payment in open_refunds.iterator():
             try:

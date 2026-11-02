@@ -286,7 +286,9 @@ def settle_refund(payment):
 
     No row lock is held while Razorpay is called. Razorpay itself stops a second full refund of the
     same payment: it's asked first, so a refund made by an earlier attempt is found, and if another
-    attempt gets in between, Razorpay refuses this one and that refund is found instead.
+    attempt gets in between, Razorpay refuses this one and that refund is found instead. Any other
+    refusal is permanent (e.g. a partial refund left less than the full amount), so the refund is
+    marked failed for someone to handle in the Dashboard, not retried.
     Raises RazorpayError if Razorpay can't be reached (reconcile_subscriptions retries).
     """
     payment = PaymentTransaction.objects.get(pk=payment.pk)
@@ -304,12 +306,23 @@ def settle_refund(payment):
                 raise
             refund = _full_refund_at_razorpay(payment)  # refused because it's refunded already?
             if refund is None:
-                raise
+                return _refund_refused(payment, exc)
     if refund is None:
         return payment
     with transaction.atomic():
         payment = PaymentTransaction.objects.select_for_update().get(pk=payment.pk)
         return apply_refund(payment, refund)
+
+
+def _refund_refused(payment, exc):
+    with transaction.atomic():
+        payment = PaymentTransaction.objects.select_for_update().get(pk=payment.pk)
+        if payment.refund_status == PaymentTransaction.RefundStatus.REQUESTED:
+            payment.refund_status = PaymentTransaction.RefundStatus.FAILED
+            payment.save(update_fields=["refund_status", "updated_at"])
+            logger.error("Razorpay refused to refund payment %s (%s): refund it from the Razorpay Dashboard",
+                         payment.razorpay_payment_id, exc.description)
+        return payment
 
 
 # ---------------------------------------------------------------------------
@@ -570,11 +583,11 @@ def cancel(user, *, at_period_end=True, upcoming=False, expect_refund=False):
             )
         if not at_period_end and not upcoming:
             offer = refund_offer(user, sub)
-        if expect_refund and offer is None:
-            raise BillingError(
-                "The money-back window has closed, so cancelling now wouldn't be refunded. Nothing was cancelled.",
-                status=409, code="refund_window_closed",
-            )
+            if expect_refund and offer is None:
+                raise BillingError(
+                    "The money-back window has closed, so cancelling now wouldn't be refunded. Nothing was cancelled.",
+                    status=409, code="refund_window_closed",
+                )
         try:
             entity = razorpay.cancel_subscription(sub.razorpay_subscription_id, at_cycle_end=at_period_end)
         except razorpay.RazorpayError as exc:

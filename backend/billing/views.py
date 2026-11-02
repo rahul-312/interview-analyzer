@@ -185,7 +185,7 @@ class ChangePlanView(BillingActionView):
 class CancelView(BillingActionView):
     """
     POST {"at_period_end": true}: cancel at the end of the paid period (default) or now. Now, inside
-    the money-back window, also refunds the subscription; with "expect_refund": true it's refused
+    the money-back window, also refunds the subscription; with "expect_refund": true cancelling now is refused
     (409 refund_window_closed) if the window has closed since the user was offered the refund.
     POST {"upcoming": true}: cancel the subscription bought to start when the current one ends.
     """

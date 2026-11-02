@@ -558,6 +558,10 @@ def test_a_refund_razorpay_doesnt_take_is_retried_by_reconcile(api, anon, plans,
     assert res.status_code == 200 and res.data["subscription"]["status"] == "cancelled"
     assert PaymentTransaction.objects.get().refund_status == "requested"
 
+    # Left alone at first: the cancel that requested it may still be making it.
+    call_command("reconcile_subscriptions")
+    assert refund_calls(rzp) == []
+    PaymentTransaction.objects.update(refund_requested_at=timezone.now() - timedelta(minutes=11))
     call_command("reconcile_subscriptions")
     call_command("reconcile_subscriptions")
     assert len(refund_calls(rzp)) == 1
@@ -569,7 +573,7 @@ def test_a_refund_made_before_a_crash_isnt_made_twice(api, anon, plans, rzp):
     # Razorpay refunded it, but the answer never got saved here.
     rzp.refunds["pay_1"] = [{"id": "rfnd_lost", "payment_id": "pay_1", "status": "processed", "amount": 19900,
                              "created_at": int(time.time())}]
-    PaymentTransaction.objects.update(refund_status="requested")
+    PaymentTransaction.objects.update(refund_status="requested", refund_requested_at=timezone.now() - timedelta(hours=1))
     call_command("reconcile_subscriptions")
     payment = PaymentTransaction.objects.get()
     assert refund_calls(rzp) == []
@@ -596,6 +600,30 @@ def test_a_refund_made_by_another_attempt_meanwhile_isnt_made_twice(api, anon, p
     assert refund_calls(rzp) == [("POST", "/payments/pay_1/refund", mock.ANY)]  # refused by Razorpay
     payment = PaymentTransaction.objects.get()
     assert (payment.razorpay_refund_id, payment.refund_status) == ("rfnd_other", "pending")
+
+
+def test_a_refund_razorpay_refuses_for_good_is_marked_failed(api, anon, plans, rzp, monkeypatch):
+    subscribe(api, anon, rzp)
+
+    def refused(payment_id, *, amount_paise, notes):
+        raise razorpay.RazorpayError("The refund amount is greater than the amount left to refund", status=400)
+
+    monkeypatch.setattr(razorpay, "refund_payment", refused)
+    res = api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
+    assert res.status_code == 200
+    assert PaymentTransaction.objects.get().refund_status == "failed"
+    assert api.get("/api/subscriptions/payments/").data[0]["refund_status"] == "failed"
+    # Not retried: someone has to look at it in the Dashboard.
+    PaymentTransaction.objects.update(refund_requested_at=timezone.now() - timedelta(hours=1))
+    monkeypatch.setattr(razorpay, "refund_payment", lambda *a, **k: pytest.fail("retried a refused refund"))
+    call_command("reconcile_subscriptions")
+
+
+def test_expect_refund_only_applies_to_cancelling_now(api, anon, plans, rzp):
+    subscribe(api, anon, rzp)
+    PaymentTransaction.objects.update(paid_at=timezone.now() - timedelta(days=30))
+    res = api.post("/api/subscriptions/cancel/", {"at_period_end": True, "expect_refund": True}, format="json")
+    assert res.status_code == 200 and res.data["subscription"]["cancel_at_period_end"] is True
 
 
 def test_an_unexpected_error_refunding_doesnt_fail_the_cancel(api, anon, plans, rzp, monkeypatch):
