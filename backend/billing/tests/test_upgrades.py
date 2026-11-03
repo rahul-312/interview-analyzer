@@ -365,17 +365,19 @@ def test_a_renewal_recorded_before_the_upgrade_doesnt_refund_the_period_used(api
     ]
 
 
-def test_a_credit_whose_period_was_never_seen_is_left_for_someone(api, anon, plans, rzp,
+def test_a_credit_whose_period_was_never_seen_is_left_for_someone(api, anon, plans, rzp, settings, mailoutbox,
                                                                  django_capture_on_commit_callbacks):
+    settings.BILLING_EMAILS = True
     old = subscribe_upi(api, anon, rzp, days_ago=10)
     new_id = upgrade(api)
-    # Two renewals were missed here: the period recorded ended before the upgrade, and Razorpay's
-    # current one starts after it. The one the upgrade fell in was never seen.
+    # Renewals were missed here: the period recorded ended before the payment 10 days ago, and
+    # Razorpay's current one starts after the upgrade. The one that payment was for was never seen.
     now = int(time.time())
     UserSubscription.objects.filter(pk=old.pk).update(
-        current_start=timezone.now() - timedelta(days=40), current_end=timezone.now() - timedelta(days=10),
+        current_start=timezone.now() - timedelta(days=70), current_end=timezone.now() - timedelta(days=40),
     )
     rzp.subscriptions[old.razorpay_subscription_id].update(current_start=now + 3600, current_end=now + 3600 + 30 * DAY)
+    mailoutbox.clear()
     new = pay(anon, rzp, new_id, django_capture_on_commit_callbacks)
 
     assert (new.replacement_status, new.credit_paise, new.credit_reason) == ("needs_attention", 0, "no_period")
@@ -383,6 +385,27 @@ def test_a_credit_whose_period_was_never_seen_is_left_for_someone(api, anon, pla
     old.refresh_from_db()
     assert old.status == "cancelled"  # it still can't charge again
     assert refund_calls(rzp) == []
+    [mail] = mailoutbox
+    assert "We'll be in touch about the unused days of your previous plan." in mail.body
+
+
+def test_a_plan_whose_last_period_ran_out_unrenewed_gets_no_credit_and_no_flag(api, anon, plans, rzp,
+                                                                               django_capture_on_commit_callbacks):
+    old = subscribe_upi(api, anon, rzp, days_ago=10)
+    new_id = upgrade(api)
+    # Its renewal fails before the upgrade is paid: the period it was paid for has ended.
+    now = int(time.time())
+    ended = {"current_start": now - 31 * DAY, "current_end": now - DAY}
+    UserSubscription.objects.filter(pk=old.pk).update(
+        current_start=timezone.now() - timedelta(days=31), current_end=timezone.now() - timedelta(days=1),
+    )
+    PaymentTransaction.objects.filter(razorpay_payment_id="pay_pro").update(paid_at=timezone.now() - timedelta(days=31))
+    rzp.subscriptions[old.razorpay_subscription_id].update(status="pending", **ended)
+    new = pay(anon, rzp, new_id, django_capture_on_commit_callbacks)
+
+    assert (new.replacement_status, new.credit_paise, new.credit_reason) == ("done", 0, "no_payment")
+    old.refresh_from_db()
+    assert old.status == "cancelled" and refund_calls(rzp) == []
 
 
 def test_a_paid_abandoned_checkout_that_clashes_with_another_upgrade_is_flagged(api, anon, plans, rzp,

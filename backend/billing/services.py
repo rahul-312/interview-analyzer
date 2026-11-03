@@ -898,10 +898,14 @@ def _decide_credit(sub, old):
                 # period started with the payment for it and ended where the renewal began.
                 if payment:
                     start, end = payment.paid_at, min(s for s, _ in known)
-            else:
-                # One ended before it and one began after: a period in between was never seen here,
-                # so the credit can't be worked out. finish_replacement leaves it for someone to credit.
+            elif payment and payment.paid_at >= max(e for s, e in known if e <= at):
+                # Paid after the last period known here ended, for a period never seen here (renewals
+                # missed), so the credit can't be worked out. finish_replacement leaves it for someone.
                 credit = Credit(payment, 0, "no_period")
+            else:
+                # Its last period ran out before the upgrade without being renewed (a failed renewal,
+                # or the grace period): nothing of it was left unused.
+                credit = Credit(None, 0, "no_payment")
         credit = credit or _credit(old, at, start, end)
     sub.credit_payment = credit.payment
     sub.credit_paise = credit.amount_paise

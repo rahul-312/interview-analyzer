@@ -88,6 +88,8 @@ def notify(sub, kind):
             refund = _refund_text(sub)
         elif kind == "upgraded" and sub.replaces_id:
             refund = _refund_text(sub.replaces, " for the unused days of your previous plan")
+            if sub.credit_reason in ("too_old", "no_period"):  # left for someone to credit by hand
+                refund += "We'll be in touch about the unused days of your previous plan."
         else:
             refund = ""
         subject, body = (
