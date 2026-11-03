@@ -140,7 +140,8 @@ class UserSubscription(models.Model):
     # The credit, once decided: never worked out again, so a retry can't change it.
     credit_payment = models.ForeignKey("PaymentTransaction", on_delete=models.PROTECT, null=True, blank=True, related_name="+")
     credit_paise = models.PositiveIntegerField(null=True, blank=True)
-    # Why there's no credit ("below_minimum", "too_old", "no_payment", "already_ended"), or "".
+    # Why there's no credit ("below_minimum", "too_old", "no_payment", "already_ended", "no_period"), or "".
+    # "too_old" and "no_period" leave the upgrade NEEDS_ATTENTION, for someone to credit by hand.
     credit_reason = models.CharField(max_length=20, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

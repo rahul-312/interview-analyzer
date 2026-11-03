@@ -698,7 +698,8 @@ def upgrade_strategy(sub):
 class Credit:
     payment: PaymentTransaction | None
     amount_paise: int
-    # Why nothing is refunded ("no_payment", "below_minimum", "too_old"), or "". For "too_old",
+    # Why nothing is refunded ("no_payment", "below_minimum", "too_old", and from
+    # _decide_credit "already_ended" or "no_period"), or "". For "too_old",
     # amount_paise is what's owed but can't be refunded.
     reason: str = ""
 
@@ -846,11 +847,15 @@ def finish_replacement(sub_id):
         for renewal in old.payments.filter(status=PaymentTransaction.Status.CAPTURED, paid_at__gt=sub.credit_from):
             if renewal.pk != sub.credit_payment_id:
                 _request_refund(renewal, PaymentTransaction.RefundReason.UPGRADE_CREDIT)
-        if sub.credit_reason == "too_old":
+        if sub.credit_reason in ("too_old", "no_period"):
+            payment_id = sub.credit_payment.razorpay_payment_id if sub.credit_payment else "none found"
             sub.replacement_status = ReplacementStatus.NEEDS_ATTENTION
             sub.replacement_error = (
-                f"Credit of {sub.credit_paise} paise on payment {sub.credit_payment.razorpay_payment_id} is too old to "
-                "refund automatically: refund or credit it by hand."
+                f"Credit of {sub.credit_paise} paise on payment {payment_id} is too old to refund automatically: "
+                "refund or credit it by hand."
+                if sub.credit_reason == "too_old" else
+                f"The replaced plan's billing period at the upgrade isn't known (payment {payment_id}), so its credit "
+                "wasn't worked out: check its invoices in the Dashboard and credit it by hand."
             )
             logger.error("Upgrade %s: %s", sub.razorpay_subscription_id, sub.replacement_error)
         else:
@@ -885,14 +890,19 @@ def _decide_credit(sub, old):
         # upgrade was (the old plan renewed since).
         known = [(s, e) for s, e in ((old.current_start, old.current_end), (sub.credit_period_start, sub.credit_period_end)) if s and e]
         start, end = next(((s, e) for s, e in known if s <= at < e), (None, None))
-        if start is None and known and all(s > at for s, _ in known):
-            # Both began after it: the renewal was recorded before the upgrade was. The upgrade's
-            # period started with the payment for it and ended where the renewal began. (Otherwise
-            # no known period holds it, and there's no credit: "no_payment".)
+        credit = None
+        if start is None and known:
             payment = old.payments.filter(status=PaymentTransaction.Status.CAPTURED, paid_at__lte=at).order_by("-paid_at").first()
-            if payment:
-                start, end = payment.paid_at, min(s for s, _ in known)
-        credit = _credit(old, at, start, end)
+            if all(s > at for s, _ in known):
+                # Both began after it: the renewal was recorded before the upgrade was. The upgrade's
+                # period started with the payment for it and ended where the renewal began.
+                if payment:
+                    start, end = payment.paid_at, min(s for s, _ in known)
+            else:
+                # One ended before it and one began after: a period in between was never seen here,
+                # so the credit can't be worked out. finish_replacement leaves it for someone to credit.
+                credit = Credit(payment, 0, "no_period")
+        credit = credit or _credit(old, at, start, end)
     sub.credit_payment = credit.payment
     sub.credit_paise = credit.amount_paise
     sub.credit_reason = credit.reason
