@@ -885,9 +885,10 @@ def _decide_credit(sub, old):
         # upgrade was (the old plan renewed since).
         known = [(s, e) for s, e in ((old.current_start, old.current_end), (sub.credit_period_start, sub.credit_period_end)) if s and e]
         start, end = next(((s, e) for s, e in known if s <= at < e), (None, None))
-        if start is None and known:
+        if start is None and known and all(s > at for s, _ in known):
             # Both began after it: the renewal was recorded before the upgrade was. The upgrade's
-            # period started with the payment for it and ended where the renewal began.
+            # period started with the payment for it and ended where the renewal began. (Otherwise
+            # no known period holds it, and there's no credit: "no_payment".)
             payment = old.payments.filter(status=PaymentTransaction.Status.CAPTURED, paid_at__lte=at).order_by("-paid_at").first()
             if payment:
                 start, end = payment.paid_at, min(s for s, _ in known)
