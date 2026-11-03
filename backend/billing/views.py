@@ -174,15 +174,15 @@ class VerifyView(BillingActionView):
         return Response(current_data(request.user))
 
 
-class UpgradeQuoteView(APIView):
+class UpgradeQuoteView(BillingActionView):
     """
     GET ?plan=pro_plus_monthly: what upgrading would do, for the confirmation dialog. "native_change"
     moves the subscription to the new plan and Razorpay bills it by its own rules. "replacement" pays
     for the new plan in Checkout (charge_paise), then refunds about credit_paise of the current one:
     the final credit is worked out when the new plan starts. credit_reason says why there's none:
     "below_minimum", "no_payment", or "too_old" (the upgrade is refused; available is false).
+    Throttled, and unavailable without Razorpay keys, like the change it's for.
     """
-    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         serializer = PlanCodeSerializer(data=request.query_params)
@@ -198,7 +198,6 @@ class UpgradeQuoteView(APIView):
             "available": not (credit and credit.reason == "too_old"),
             "charge_paise": quote.plan.price_paise if credit else None,
             "credit_paise": credit.amount_paise if credit and credit.refundable else 0,
-            "credit_full": bool(credit and credit.full and credit.refundable),
             "credit_reason": credit.reason if credit else "",
             "currency": quote.plan.currency,
         })

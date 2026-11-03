@@ -12,7 +12,7 @@ import PageHeader from '../ui/PageHeader';
 import { useAuth } from '@/context/AuthContext';
 import { useApi } from '@/hooks/useApi';
 import { useCheckout } from '@/hooks/useCheckout';
-import type { CurrentSubscription, Interval, Price, TierWithPrices, UpgradeQuote } from '@/models/Billing';
+import type { CheckoutConfig, CurrentSubscription, Interval, Price, TierWithPrices, UpgradeQuote } from '@/models/Billing';
 import { billingService } from '@/services/BillingService';
 import { fairUseNote, formatPrice, priceLabel } from '@/utils/billing';
 import { errorText } from '@/utils/errorText';
@@ -22,7 +22,18 @@ const RANK = { free: 0, pro: 1, pro_plus: 2 } as const;
 
 /** The upgrade dialog's text, from the server's quote. */
 const UpgradeText = ({ price, quote }: { price: Price; quote: { data?: UpgradeQuote; error?: string } | null }) => {
-  if (quote?.error) return <ErrorMessage message={quote.error} />;
+  if (quote?.error) {
+    // The upgrade itself doesn't need the quote: the server decides how it's made either way.
+    return (
+      <>
+        <ErrorMessage message={`Couldn't load the upgrade details: ${quote.error}`} />
+        <p>
+          You can still upgrade to {priceLabel(price)} now. If you pay by UPI Autopay or eMandate, you&apos;ll pay for
+          the new plan in Razorpay, and the unused days of your current plan are refunded.
+        </p>
+      </>
+    );
+  }
   const data = quote?.data;
   if (!data) return <p className="text-medium-gray">Working out the price…</p>;
   if (data.strategy === 'native_change') {
@@ -41,9 +52,8 @@ const UpgradeText = ({ price, quote }: { price: Price; quote: { data?: UpgradeQu
       </p>
     );
   }
-  const credit = data.credit_full
-    ? `Your current plan is still inside its money-back window, so its ${formatPrice(data.credit_paise, data.currency)} is refunded in full.`
-    : data.credit_paise > 0
+  const credit =
+    data.credit_paise > 0
       ? `About ${formatPrice(data.credit_paise, data.currency)} for the unused days of your current plan is refunded to your original payment method, usually within 5–7 working days. The exact amount is worked out when the new plan starts.`
       : data.credit_reason === 'below_minimum'
         ? 'The unused days of your current plan are worth less than ₹1, so nothing is refunded for them.'
@@ -103,30 +113,41 @@ const Pricing = () => {
 
   const confirmChange = async () => {
     if (!changeTo || changing) return;
+    const price = changeTo;
     if (quote?.data?.strategy === 'replacement') {
-      const price = changeTo;
       closeChange();
       setChangeResult(null);
       await checkout.start(price, upgradeCheckout);
       return;
     }
     setChanging(true);
+    // Without a quote (it failed to load), the server may still answer with an upgrade to pay for.
+    let toPay: CheckoutConfig | undefined;
     try {
-      const next = await billingService.changePlan(changeTo.code);
-      setCurrent(next);
-      await refreshUser();
-      setChangeResult({
-        tone: 'success',
-        text:
-          next.change === 'now'
-            ? `You're now on ${next.plan.name}.`
-            : `You'll switch to ${priceLabel(changeTo)} on ${formatDate(next.subscription?.scheduled_change_at)}. You keep ${next.plan.name} until then.`,
-      });
+      const next = await billingService.changePlan(price.code);
+      if (next.change === 'checkout') {
+        toPay = next.checkout;
+      } else {
+        setCurrent(next);
+        await refreshUser();
+        setChangeResult({
+          tone: 'success',
+          text:
+            next.change === 'now'
+              ? `You're now on ${next.plan.name}.`
+              : `You'll switch to ${priceLabel(price)} on ${formatDate(next.subscription?.scheduled_change_at)}. You keep ${next.plan.name} until then.`,
+        });
+      }
     } catch (err) {
       setChangeResult({ tone: 'error', text: errorText(err) });
     } finally {
       setChanging(false);
       closeChange();
+    }
+    if (toPay) {
+      const config = toPay;
+      setChangeResult(null);
+      await checkout.start(price, async () => config);
     }
   };
 
@@ -136,17 +157,20 @@ const Pricing = () => {
   const { tiers, billing_enabled, refund_days } = plans.data;
   const me = current.data;
   const sub = me.subscription?.gives_access ? me.subscription : null;
+  // A plan change applies to the subscription, so it's an upgrade from the subscription's tier, as the
+  // server decides it, even when a higher complimentary plan is what the account is on.
+  const changingFrom = sub?.plan.tier ?? me.plan.code;
 
   const actionFor = (tier: TierWithPrices, price: Price | undefined): PlanAction | null => {
     const sameTier = tier.code === me.plan.code;
-    if (sameTier && (tier.code === 'free' || me.source === 'complimentary' || sub?.plan.code === price?.code)) {
+    if ((sub && sub.plan.code === price?.code) || (sameTier && (tier.code === 'free' || me.source === 'complimentary'))) {
       return { label: 'Current plan', disabled: true };
     }
     if (tier.code === 'free') return { label: 'Move to Free', href: '/billing' };
     if (!billing_enabled) return { label: 'Payments unavailable', disabled: true };
     if (!price?.available) return { label: 'Not available yet', disabled: true };
     if (me.actions.change_plan) {
-      const upgrade = RANK[tier.code] > RANK[me.plan.code];
+      const upgrade = RANK[tier.code] > RANK[changingFrom];
       const label = upgrade ? `Upgrade to ${tier.name}` : `Switch to ${priceLabel(price)}`;
       return {
         label,
@@ -225,7 +249,7 @@ const Pricing = () => {
       {changeTo && (
         <Modal title="Change plan" onClose={() => !changing && closeChange()}>
           <div className="flex flex-col gap-4xl text-sm">
-            {RANK[changeTo.tier] > RANK[me.plan.code] ? (
+            {RANK[changeTo.tier] > RANK[changingFrom] ? (
               <UpgradeText price={changeTo} quote={quote} />
             ) : (
               <p>
@@ -238,11 +262,11 @@ const Pricing = () => {
               <Button variant="secondary" onClick={closeChange} disabled={changing}>
                 Not now
               </Button>
-              {!(quote?.error || quote?.data?.available === false) && (
+              {quote?.data?.available !== false && (
                 <Button
                   variant="primary"
                   onClick={confirmChange}
-                  disabled={changing || (quote !== null && !quote.data)}
+                  disabled={changing || (quote !== null && !quote.data && !quote.error)}
                   aria-busy={changing || undefined}
                 >
                   {changing ? 'Changing…' : quote?.data?.strategy === 'replacement' ? 'Continue to payment' : 'Confirm'}

@@ -158,7 +158,7 @@ class UserSubscription(models.Model):
             ),
             models.UniqueConstraint(
                 fields=["replaces"], name="one_replacement_per_subscription",
-                condition=Q(replaces__isnull=False) & ~Q(replacement_status="abandoned") & ~Q(status="expired"),
+                condition=Q(replacement_status__in=["awaiting_payment", "finishing", "done"]) & ~Q(status="expired"),
             ),
         ]
 

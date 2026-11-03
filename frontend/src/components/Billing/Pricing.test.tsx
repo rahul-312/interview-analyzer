@@ -40,7 +40,6 @@ const upgradeQuote = (overrides: Partial<UpgradeQuote> = {}): UpgradeQuote => ({
   available: true,
   charge_paise: 49900,
   credit_paise: 13266,
-  credit_full: false,
   credit_reason: "",
   currency: "INR",
   ...overrides,
@@ -249,6 +248,35 @@ describe("pricing page", () => {
     expect(api.checkout).not.toHaveBeenCalled();
     expect(opened[0]).toMatchObject({ subscription_id: "sub_1" });
     expect(api.verify).toHaveBeenCalledWith(paid);
+  });
+
+  it("still upgrades when the quote can't load, paying in Checkout if the server asks", async () => {
+    api.current.mockResolvedValue(current("pro_monthly"));
+    api.upgradeQuote.mockRejectedValue(new ApiError(500, { detail: "Server error." }));
+    api.changePlan.mockResolvedValue({ ...current("pro_monthly"), change: "checkout", checkout: checkoutConfig });
+    api.verify.mockResolvedValue(current("pro_plus_monthly"));
+    const opened = stubCheckout((options) => options.handler(paid));
+    render(<Pricing />);
+    await screen.findByRole("heading", { name: /Pro Plus/ });
+    await userEvent.click(within(card("Pro Plus")).getByRole("button", { name: "Upgrade to Pro Plus" }));
+    const dialog = screen.getByRole("dialog", { name: "Change plan" });
+    await within(dialog).findByText(/Couldn't load the upgrade details: Server error./);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText(/You're on Pro Plus/)).toBeTruthy();
+    expect(opened[0]).toMatchObject({ subscription_id: "sub_1" });
+    expect(screen.queryByText(/You'll switch to/)).toBeNull();
+  });
+
+  it("counts a change from the subscription's plan, not a higher complimentary one", async () => {
+    api.current.mockResolvedValue(
+      current("pro_monthly", { plan: current("pro_plus_monthly").plan, source: "complimentary" }),
+    );
+    render(<Pricing />);
+    await screen.findByRole("heading", { name: /Pro Plus/ });
+    // The subscription's own plan isn't offered as a switch, and Pro Plus is already the account's.
+    expect(within(card("Pro")).getByRole("button", { name: "Current plan" })).toBeTruthy();
+    expect(within(card("Pro Plus Current")).getByRole("button", { name: "Current plan" })).toBeTruthy();
   });
 
   it("doesn't offer an upgrade whose credit couldn't be refunded", async () => {

@@ -144,8 +144,6 @@ export interface UpgradeQuote {
   charge_paise: number | null;
   /** An estimate: the server works out the credit when the new plan starts. */
   credit_paise: number;
-  /** The current plan is refunded in full: it's still inside its money-back window. */
-  credit_full: boolean;
   credit_reason: "" | "below_minimum" | "no_payment" | "too_old";
   currency: string;
 }

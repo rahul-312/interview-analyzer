@@ -139,7 +139,14 @@ def apply_snapshot(sub, entity, event_time=None):
     if sub.replaces_id and sub.status == SubscriptionStatus.ACTIVE and sub.replacement_status in (
         ReplacementStatus.AWAITING_PAYMENT, ReplacementStatus.ABANDONED,
     ):
-        _begin_finishing(sub)
+        conflict = _replacement_conflict(sub)
+        if conflict:
+            # Paid after it was given up on, while another upgrade went ahead: two plans are paid for.
+            sub.replacement_status = ReplacementStatus.NEEDS_ATTENTION
+            sub.replacement_error = f"Paid after it was abandoned, but {conflict}. Cancel and refund one by hand."
+            logger.error("Upgrade %s: %s", sub.razorpay_subscription_id, sub.replacement_error)
+        else:
+            _begin_finishing(sub)
     sub.save()
     if before != sub.status:
         logger.info("Subscription %s: %s -> %s", sub.razorpay_subscription_id, before, sub.status)
@@ -671,6 +678,9 @@ def change_plan(user, plan_code):
 NATIVE_CHANGE = "native_change"
 REPLACEMENT = "replacement"
 
+# A replacement that is, or is becoming, what replaced its subscription (one_replacement_per_subscription).
+_REPLACING = (ReplacementStatus.AWAITING_PAYMENT, ReplacementStatus.FINISHING, ReplacementStatus.DONE)
+
 # Razorpay only refunds a payment for a while after it's made (about six months; confirm in test
 # mode). A credit owed on an older payment couldn't be refunded, so that upgrade isn't offered.
 REFUND_MAX_AGE = timedelta(days=180)
@@ -688,8 +698,6 @@ def upgrade_strategy(sub):
 class Credit:
     payment: PaymentTransaction | None
     amount_paise: int
-    # The whole payment: the old plan was still inside the money-back window.
-    full: bool
     # Why nothing is refunded ("no_payment", "below_minimum", "too_old"), or "". For "too_old",
     # amount_paise is what's owed but can't be refunded.
     reason: str = ""
@@ -699,36 +707,25 @@ class Credit:
         return not self.reason and self.amount_paise > 0
 
 
-def _credit(user, old, at, period_start, period_end):
+def _credit(old, at, period_start, period_end):
     """
     What replacing `old` at `at` refunds: the unused part of the payment for the period `at` falls in
-    (the latest captured one before it), counted to the second in integer paise. The whole payment
-    if `old` was still inside the money-back window then.
+    (the latest captured one before it), counted to the second in integer paise. Never more: even
+    inside the money-back window it's pro-rata, so an upgrade can't refund two plans in full (the old
+    one now, the new one by its own window). A period that doesn't hold `at` gets nothing.
     """
     payment = old.payments.filter(status=PaymentTransaction.Status.CAPTURED, paid_at__lte=at).order_by("-paid_at").first()
-    if payment is None or payment.refund_status != PaymentTransaction.RefundStatus.NONE or not (period_start and period_end):
-        return Credit(None, 0, False, "no_payment")
-    full = _money_back_open(user, old, at)
-    if full:
-        amount = payment.amount_paise
-    else:
-        length = int((period_end - period_start).total_seconds())
-        left = max(0, int((period_end - at).total_seconds()))
-        amount = min(payment.amount_paise, payment.amount_paise * left // length) if length > 0 else 0
+    if (payment is None or payment.refund_status != PaymentTransaction.RefundStatus.NONE
+            or not (period_start and period_end and period_start <= at)):
+        return Credit(None, 0, "no_payment")
+    length = int((period_end - period_start).total_seconds())
+    left = max(0, int((period_end - at).total_seconds()))
+    amount = min(payment.amount_paise, payment.amount_paise * left // length) if length > 0 else 0
     if payment.paid_at < timezone.now() - REFUND_MAX_AGE:
-        return Credit(payment, amount, full, "too_old")
+        return Credit(payment, amount, "too_old")
     if amount < MIN_REFUND_PAISE:
-        return Credit(payment, 0, False, "below_minimum")
-    return Credit(payment, amount, full)
-
-
-def _money_back_open(user, sub, at):
-    """Whether `sub` was inside the money-back window at `at` (refund_offer's rule, at a given time)."""
-    days = settings.BILLING_REFUND_DAYS
-    if days <= 0 or _used_money_back(user):
-        return False
-    first = sub.payments.filter(status=PaymentTransaction.Status.CAPTURED).exclude(paid_at=None).order_by("paid_at").first()
-    return first is not None and at < first.paid_at + timedelta(days=days)
+        return Credit(payment, 0, "below_minimum")
+    return Credit(payment, amount)
 
 
 @dataclass
@@ -746,7 +743,7 @@ def upgrade_quote(user, plan_code):
         raise BillingError("That's not an upgrade.", code="not_an_upgrade")
     if upgrade_strategy(sub) == NATIVE_CHANGE:
         return UpgradeQuote(NATIVE_CHANGE, new, None)
-    return UpgradeQuote(REPLACEMENT, new, _credit(user, sub, timezone.now(), sub.current_start, sub.current_end))
+    return UpgradeQuote(REPLACEMENT, new, _credit(sub, timezone.now(), sub.current_start, sub.current_end))
 
 
 def start_replacement(user, old, plan):
@@ -757,7 +754,7 @@ def start_replacement(user, old, plan):
     if UserSubscription.objects.filter(user=user, replacement_status=ReplacementStatus.FINISHING).exists():
         raise BillingError("Your last upgrade is still being finished. Try again in a few minutes.",
                            status=409, code="upgrade_in_progress")
-    if _credit(user, old, timezone.now(), old.current_start, old.current_end).reason == "too_old":
+    if _credit(old, timezone.now(), old.current_start, old.current_end).reason == "too_old":
         raise BillingError(
             "Your current plan was paid too long ago for its unused days to be refunded, so it can't be upgraded now. "
             "Cancel it at the end of the period and subscribe to the new plan: it starts when your current plan ends.",
@@ -778,6 +775,27 @@ def _begin_finishing(sub):
     logger.info("Upgrade %s is paid: finishing the replacement of %s", sub.razorpay_subscription_id, old.razorpay_subscription_id)
     sub_id = sub.pk
     transaction.on_commit(lambda: _queue_finish(sub_id), robust=True)
+
+
+def _replacement_conflict(sub):
+    """
+    What stops the paid replacement `sub` from being finished, or "": another upgrade of the user's
+    under way, or another that replaced (or is replacing) the same subscription. The same rules as
+    the constraints on UserSubscription, checked first so a webhook doesn't fail on them every time.
+    """
+    others = UserSubscription.objects.exclude(pk=sub.pk)
+    under_way = others.filter(
+        user_id=sub.user_id, replacement_status__in=[ReplacementStatus.AWAITING_PAYMENT, ReplacementStatus.FINISHING],
+        status__in=[SubscriptionStatus.CREATED, SubscriptionStatus.AUTHENTICATED, SubscriptionStatus.ACTIVE],
+    ).first()
+    if under_way:
+        return f"another upgrade ({under_way.razorpay_subscription_id}) is under way"
+    replaced = others.filter(replaces_id=sub.replaces_id, replacement_status__in=_REPLACING).exclude(
+        status=SubscriptionStatus.EXPIRED,
+    ).first()
+    if replaced:
+        return f"{replaced.razorpay_subscription_id} replaced the same plan"
+    return ""
 
 
 def _queue_finish(sub_id):
@@ -859,14 +877,21 @@ def finish_replacement(sub_id):
 
 def _decide_credit(sub, old):
     """Decides and saves the credit, from Razorpay's state of the replaced subscription `old`."""
-    if old.status in TERMINAL_STATUSES and old.ended_at and old.ended_at <= sub.credit_from:
-        credit = Credit(None, 0, False, "already_ended")  # cancelled (or refunded) before the upgrade
+    at = sub.credit_from
+    if old.status in TERMINAL_STATUSES and old.ended_at and old.ended_at <= at:
+        credit = Credit(None, 0, "already_ended")  # cancelled (or refunded) before the upgrade
     else:
-        start, end = old.current_start, old.current_end
-        if start is None or start > sub.credit_from:
-            # Renewed since the upgrade (or no period known): the period it was in then.
-            start, end = sub.credit_period_start, sub.credit_period_end
-        credit = _credit(sub.user, old, sub.credit_from, start, end)
+        # The period the upgrade fell in: Razorpay's current one, or the one recorded when the
+        # upgrade was (the old plan renewed since).
+        known = [(s, e) for s, e in ((old.current_start, old.current_end), (sub.credit_period_start, sub.credit_period_end)) if s and e]
+        start, end = next(((s, e) for s, e in known if s <= at < e), (None, None))
+        if start is None and known:
+            # Both began after it: the renewal was recorded before the upgrade was. The upgrade's
+            # period started with the payment for it and ended where the renewal began.
+            payment = old.payments.filter(status=PaymentTransaction.Status.CAPTURED, paid_at__lte=at).order_by("-paid_at").first()
+            if payment:
+                start, end = payment.paid_at, min(s for s, _ in known)
+        credit = _credit(old, at, start, end)
     sub.credit_payment = credit.payment
     sub.credit_paise = credit.amount_paise
     sub.credit_reason = credit.reason

@@ -76,8 +76,8 @@ def test_the_quote_shows_the_charge_and_about_what_comes_back(api, anon, plans, 
     res = quote(api)
     assert res.status_code == 200
     data = res.data
-    assert (data["strategy"], data["available"], data["charge_paise"], data["credit_full"], data["credit_reason"]) == (
-        "replacement", True, 49900, False, "",
+    assert (data["strategy"], data["available"], data["charge_paise"], data["credit_reason"]) == (
+        "replacement", True, 49900, "",
     )
     assert abs(data["credit_paise"] - PRO * 20 // 30) <= 1  # 20 of 30 days left
 
@@ -179,17 +179,18 @@ def test_an_upgrade_credit_doesnt_use_up_the_money_back_window(api, anon, plans,
     assert api.get("/api/subscriptions/current/").data["refund"]["amount_paise"] == 49900
 
 
-def test_inside_the_money_back_window_the_old_plan_is_refunded_in_full(api, anon, plans, rzp, django_capture_on_commit_callbacks):
-    subscribe_upi(api, anon, rzp, days_ago=2)
-    assert quote(api).data["credit_full"] is True and quote(api).data["credit_paise"] == PRO
+def test_inside_the_money_back_window_only_one_plan_is_refunded_in_full(api, anon, plans, rzp, django_capture_on_commit_callbacks):
+    old = subscribe_upi(api, anon, rzp, days_ago=2)
+    # Still pro-rata: a full refund here, plus the new plan's own window, would refund both plans.
+    assert abs(quote(api).data["credit_paise"] - PRO * 28 // 30) <= 1
     new = pay(anon, rzp, upgrade(api), django_capture_on_commit_callbacks)
-    assert new.credit_paise == PRO
-    [(_, _, payload)] = refund_calls(rzp)
-    assert payload["amount"] == PRO
-    payment = PaymentTransaction.objects.get(razorpay_payment_id="pay_pro")
-    assert payment.refund_amount_paise is None  # the whole payment
-    # And the new plan still has its own money-back window.
-    assert api.get("/api/subscriptions/current/").data["refund"]["amount_paise"] == 49900
+    assert new.credit_paise == expected_credit(old, new) < PRO
+    # Cancelling the new plan inside its window refunds it, and only it, in full.
+    res = api.post("/api/subscriptions/cancel/", {"at_period_end": False, "expect_refund": True}, format="json")
+    assert res.status_code == 200 and res.data["refunded"]["amount_paise"] == 49900
+    assert sorted((path, payload["amount"]) for _, path, payload in refund_calls(rzp)) == [
+        ("/payments/pay_plus/refund", 49900), ("/payments/pay_pro/refund", new.credit_paise),
+    ]
 
 
 def test_a_repeated_activation_doesnt_cancel_or_refund_twice(api, anon, plans, rzp, django_capture_on_commit_callbacks):
@@ -335,6 +336,60 @@ def test_a_renewal_after_the_credit_was_decided_is_refunded_in_full(api, anon, p
     assert sorted((path, payload["amount"]) for _, path, payload in refund_calls(rzp)) == [
         ("/payments/pay_pro/refund", credit), ("/payments/pay_renewal/refund", PRO),
     ]
+
+
+def test_a_renewal_recorded_before_the_upgrade_doesnt_refund_the_period_used(api, anon, plans, rzp,
+                                                                           django_capture_on_commit_callbacks):
+    old = subscribe_upi(api, anon, rzp, days_ago=29.5)  # half a day left
+    new_id = upgrade(api)
+    renewal_at = rzp.subscriptions[old.razorpay_subscription_id]["current_end"]
+    new_entity = rzp.activate(new_id)  # paid now...
+
+    # ...but the old plan's renewal, half a day later, is recorded first (the activation webhook was missed).
+    entity = rzp.subscriptions[old.razorpay_subscription_id]
+    entity.update(current_start=renewal_at, current_end=renewal_at + 30 * DAY)
+    send_webhook(anon, "subscription.charged", subscription=entity, created_at=renewal_at,
+                 payment=payment_entity("pay_renewal", method="upi"))
+    with django_capture_on_commit_callbacks(execute=True):
+        send_webhook(anon, "subscription.activated", subscription=new_entity)
+    new = UserSubscription.objects.get(razorpay_subscription_id=new_id)
+
+    # The credit is the half day of the period the upgrade fell in, not the whole payment.
+    paid_at = PaymentTransaction.objects.get(razorpay_payment_id="pay_pro").paid_at
+    period = renewal_at - int(paid_at.timestamp())
+    assert new.replacement_status == "done"
+    assert new.credit_paise == PRO * (renewal_at - int(new.credit_from.timestamp())) // period
+    assert new.credit_paise < PRO // 30
+    assert sorted((path, payload["amount"]) for _, path, payload in refund_calls(rzp)) == [
+        ("/payments/pay_pro/refund", new.credit_paise), ("/payments/pay_renewal/refund", PRO),
+    ]
+
+
+def test_a_paid_abandoned_checkout_that_clashes_with_another_upgrade_is_flagged(api, anon, plans, rzp,
+                                                                                django_capture_on_commit_callbacks):
+    old = subscribe_upi(api, anon, rzp)
+    first = upgrade(api)
+    UserSubscription.objects.filter(razorpay_subscription_id=first).update(
+        status="expired", replacement_status="abandoned", created_at=timezone.now() - timedelta(days=2),
+    )
+    second = upgrade(api)
+    assert second != first
+    # Razorpay says the abandoned one was paid after all.
+    entity = rzp.activate(first)
+    with django_capture_on_commit_callbacks(execute=True):
+        res = send_webhook(anon, "subscription.activated", subscription=entity)
+    assert res.status_code == 200
+    paid = UserSubscription.objects.get(razorpay_subscription_id=first)
+    assert (paid.status, paid.replacement_status) == ("active", "needs_attention")
+    assert second in paid.replacement_error
+    old.refresh_from_db()
+    assert old.status == "active" and refund_calls(rzp) == []
+
+
+def test_the_quote_is_unavailable_without_razorpay_keys(api, anon, plans, rzp, settings):
+    subscribe_upi(api, anon, rzp)
+    settings.RAZORPAY_KEY_ID = ""
+    assert quote(api).status_code == 503
 
 
 def test_a_partial_refund_razorpay_made_without_answering_isnt_made_twice(api, anon, plans, rzp, monkeypatch,
