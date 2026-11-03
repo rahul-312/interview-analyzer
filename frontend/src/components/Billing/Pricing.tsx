@@ -28,8 +28,8 @@ const UpgradeText = ({ price, quote }: { price: Price; quote: { data?: UpgradeQu
       <>
         <ErrorMessage message={`Couldn't load the upgrade details: ${quote.error}`} />
         <p>
-          You can still upgrade to {priceLabel(price)} now. If you pay by UPI Autopay or eMandate, you&apos;ll pay for
-          the new plan in Razorpay, and the unused days of your current plan are refunded.
+          You can still upgrade to {priceLabel(price)} now. If the new plan has to be paid for first, Razorpay opens
+          for it before anything changes.
         </p>
       </>
     );
