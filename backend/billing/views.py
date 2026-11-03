@@ -19,6 +19,7 @@ from .serializers import (
     CancelSerializer,
     PaymentSerializer,
     PlanCodeSerializer,
+    PriceSerializer,
     SubscriptionSerializer,
     VerifySerializer,
     plans_data,
@@ -138,16 +139,20 @@ class CheckoutView(BillingActionView):
             sub = services.start_checkout(request.user, serializer.validated_data["plan"])
         except services.BillingError as exc:
             return billing_error(exc)
-        user = request.user
-        return Response({
-            "key_id": settings.RAZORPAY_KEY_ID,
-            "subscription_id": sub.razorpay_subscription_id,
-            "plan": sub.plan.code,
-            "name": "Interview Analyzer",
-            "description": str(sub.plan),
-            "starts_at": sub.start_at.isoformat() if sub.start_at else None,
-            "prefill": {"name": user.first_name or user.username, "email": user.email},
-        }, status=status.HTTP_201_CREATED)
+        return Response(checkout_config(request.user, sub), status=status.HTTP_201_CREATED)
+
+
+def checkout_config(user, sub):
+    """What Razorpay Checkout needs to pay for the subscription the server created."""
+    return {
+        "key_id": settings.RAZORPAY_KEY_ID,
+        "subscription_id": sub.razorpay_subscription_id,
+        "plan": sub.plan.code,
+        "name": "Interview Analyzer",
+        "description": str(sub.plan),
+        "starts_at": sub.start_at.isoformat() if sub.start_at else None,
+        "prefill": {"name": user.first_name or user.username, "email": user.email},
+    }
 
 
 class VerifyView(BillingActionView):
@@ -169,17 +174,53 @@ class VerifyView(BillingActionView):
         return Response(current_data(request.user))
 
 
+class UpgradeQuoteView(BillingActionView):
+    """
+    GET ?plan=pro_plus_monthly: what upgrading would do, for the confirmation dialog. "native_change"
+    moves the subscription to the new plan and Razorpay bills it by its own rules. "replacement" pays
+    for the new plan in Checkout (charge_paise), then refunds about credit_paise of the current one:
+    the final credit is worked out when the new plan starts. credit_reason says why there's none:
+    "below_minimum", "no_payment", or "too_old" (the upgrade is refused; available is false).
+    Throttled, and unavailable without Razorpay keys, like the change it's for.
+    """
+
+    def get(self, request):
+        serializer = PlanCodeSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        try:
+            quote = services.upgrade_quote(request.user, serializer.validated_data["plan"])
+        except services.BillingError as exc:
+            return billing_error(exc)
+        credit = quote.credit
+        return Response({
+            "strategy": quote.strategy,
+            "plan": PriceSerializer(quote.plan).data,
+            "available": not (credit and credit.reason == "too_old"),
+            "charge_paise": quote.plan.price_paise if credit else None,
+            "credit_paise": credit.amount_paise if credit and credit.refundable else 0,
+            "credit_reason": credit.reason if credit else "",
+            "currency": quote.plan.currency,
+        })
+
+
 class ChangePlanView(BillingActionView):
-    """POST {"plan": "pro_plus_monthly"}: upgrade now, or downgrade at the end of the cycle."""
+    """
+    POST {"plan": "pro_plus_monthly"}: upgrade now, or downgrade at the end of the cycle. An upgrade
+    that replaces the subscription (UPI Autopay, eMandate) returns change "checkout" and the
+    Checkout config to pay for it; nothing changes until it's paid.
+    """
 
     def post(self, request):
         serializer = PlanCodeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            _, upgrade = services.change_plan(request.user, serializer.validated_data["plan"])
+            sub, change = services.change_plan(request.user, serializer.validated_data["plan"])
         except services.BillingError as exc:
             return billing_error(exc)
-        return Response({**current_data(request.user), "change": "now" if upgrade else "cycle_end"})
+        data = {**current_data(request.user), "change": change}
+        if change == "checkout":
+            data["checkout"] = checkout_config(request.user, sub)
+        return Response(data)
 
 
 class CancelView(BillingActionView):

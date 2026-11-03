@@ -28,6 +28,10 @@ _MESSAGES = {
     ),
     "cancel_scheduled": ("Your {plan} plan will end on {end}", "Your {plan} plan is cancelled. You keep it until {end}."),
     "cancelled": ("Your {plan} plan has ended", "Your {plan} plan has ended. {refund}{after}"),
+    "upgraded": (
+        "You're now on {plan}",
+        "Your upgrade to {plan} is done, and your previous plan has ended. {refund}",
+    ),
     "upcoming_cancelled": (
         "Your new {plan} subscription is cancelled",
         "Your {plan} subscription that was due to start won't start, and you won't be charged for it. "
@@ -53,15 +57,15 @@ def _after_cancel(sub):
     return "Your account is back on Free."
 
 
-def _refund_text(sub):
-    """The money-back refund started with the cancellation, if any."""
+def _refund_text(sub, what=""):
+    """The refunds started for `sub`'s payments, if any: the money-back refund, or an upgrade's credit."""
     refunding = list(sub.payments.exclude(
         refund_status__in=[PaymentTransaction.RefundStatus.NONE, PaymentTransaction.RefundStatus.FAILED]
     ))
-    total = sum(p.amount_paise for p in refunding)
+    total = sum(p.refund_paise for p in refunding)
     if not total:
         return ""
-    return (f"We're refunding {money(total, refunding[0].currency)} to your original payment method. "
+    return (f"We're refunding {money(total, refunding[0].currency)}{what} to your original payment method. "
             "It usually arrives within 5–7 working days. ")
 
 
@@ -80,7 +84,14 @@ def notify(sub, kind):
     try:
         end = timezone.localtime(sub.current_end).strftime("%d %b %Y") if sub.current_end else "the end of the period"
         after = _after_cancel(sub) if kind == "cancelled" else ""
-        refund = _refund_text(sub) if kind == "cancelled" else ""
+        if kind == "cancelled":
+            refund = _refund_text(sub)
+        elif kind == "upgraded" and sub.replaces_id:
+            refund = _refund_text(sub.replaces, " for the unused days of your previous plan")
+            if sub.credit_reason in ("too_old", "no_period"):  # left for someone to credit by hand
+                refund += "We'll be in touch about the unused days of your previous plan."
+        else:
+            refund = ""
         subject, body = (
             text.format(plan=sub.plan.get_tier_display(), end=end, after=after, refund=refund) for text in _MESSAGES[kind]
         )

@@ -369,12 +369,14 @@ def test_downgrade_waits_for_the_end_of_the_cycle(api, anon, plans, rzp):
     assert data["plan"]["code"] == "pro" and data["subscription"]["scheduled_plan"] is None
 
 
-def test_plan_change_is_refused_for_upi_subscriptions(api, anon, plans, rzp):
-    sub_id = checkout(api)
+def test_downgrades_are_refused_for_upi_subscriptions(api, anon, plans, rzp):
+    # Upgrades replace the subscription instead (test_upgrades.py).
+    sub_id = checkout(api, "pro_plus_monthly")
     entity = rzp.activate(sub_id)
     send_webhook(anon, "subscription.charged", subscription=entity, payment=payment_entity("pay_1", method="upi"))
-    res = api.post("/api/subscriptions/change-plan/", {"plan": "pro_plus_monthly"}, format="json")
-    assert res.status_code == 409 and res.data["code"] == "change_unsupported"
+    for plan in ("pro_monthly", "pro_plus_yearly"):
+        res = api.post("/api/subscriptions/change-plan/", {"plan": plan}, format="json")
+        assert res.status_code == 409 and res.data["code"] == "change_unsupported"
     assert not any(c[0] == "PATCH" for c in rzp.calls)
 
 
@@ -548,20 +550,22 @@ def test_the_refund_covers_an_upgrade_charge_too(api, anon, plans, rzp):
 def test_a_refund_razorpay_doesnt_take_is_retried_by_reconcile(api, anon, plans, rzp, monkeypatch):
     subscribe(api, anon, rzp)
 
-    def unreachable(payment_id, *, notes):
+    def unreachable(payment_id, **kwargs):
         raise razorpay.RazorpayError("Couldn't reach the payment provider. Try again.")
 
     with monkeypatch.context() as m:
         m.setattr(razorpay, "refund_payment", unreachable)
         res = api.post("/api/subscriptions/cancel/", {"at_period_end": False}, format="json")
-    # The cancellation stands, and the payment waits for its refund.
+    # The cancellation stands, and the payment waits for its refund. No answer doesn't mean no
+    # refund, so the attempt keeps its claim until Razorpay has been asked.
     assert res.status_code == 200 and res.data["subscription"]["status"] == "cancelled"
-    assert PaymentTransaction.objects.get().refund_status == "requested"
+    assert PaymentTransaction.objects.get().refund_status == "sending"
 
-    # Left alone at first: the cancel that requested it may still be making it.
+    # Left alone at first: the attempt that claimed it may still be making it.
+    PaymentTransaction.objects.update(refund_requested_at=timezone.now() - timedelta(minutes=11))
     call_command("reconcile_subscriptions")
     assert refund_calls(rzp) == []
-    PaymentTransaction.objects.update(refund_requested_at=timezone.now() - timedelta(minutes=11))
+    PaymentTransaction.objects.update(refund_claimed_at=timezone.now() - timedelta(minutes=11))
     call_command("reconcile_subscriptions")
     call_command("reconcile_subscriptions")
     assert len(refund_calls(rzp)) == 1
@@ -605,7 +609,7 @@ def test_a_refund_made_by_another_attempt_meanwhile_isnt_made_twice(api, anon, p
 def test_a_refund_razorpay_refuses_for_good_is_marked_failed(api, anon, plans, rzp, monkeypatch):
     subscribe(api, anon, rzp)
 
-    def refused(payment_id, *, amount_paise, notes):
+    def refused(payment_id, **kwargs):
         raise razorpay.RazorpayError("The refund amount is greater than the amount left to refund", status=400)
 
     monkeypatch.setattr(razorpay, "refund_payment", refused)
@@ -624,7 +628,7 @@ def test_a_refund_razorpay_refuses_for_good_is_marked_failed(api, anon, plans, r
 def test_a_refund_razorpay_refuses_for_a_passing_reason_is_retried(api, anon, plans, rzp, monkeypatch, status):
     subscribe(api, anon, rzp)
 
-    def refused(payment_id, *, amount_paise, notes):
+    def refused(payment_id, **kwargs):
         raise razorpay.RazorpayError("Too many requests" if status == 429 else "Authentication failed", status=status)
 
     with monkeypatch.context() as m:

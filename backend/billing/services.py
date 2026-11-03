@@ -8,7 +8,9 @@ billing requests are applied one at a time, and a slow Razorpay call holds up no
 
 Policies (see README "Plans and billing"):
 - Upgrades (to a higher tier) apply now: Razorpay moves the subscription to the new plan straight
-  away and bills it by its own rules; no proration is calculated here.
+  away and bills it by its own rules; no proration is calculated here. Razorpay can't do that for
+  UPI Autopay or eMandate, so those buy a replacement subscription instead: once it's paid, the old
+  one is cancelled and its unused days refunded (see "Upgrades that replace the subscription").
 - Downgrades and monthly/yearly switches apply at the end of the current cycle; paid access to
   the current plan lasts until then.
 - Cancelling at period end keeps access until the paid period ends; cancelling now ends it now.
@@ -21,6 +23,7 @@ Policies (see README "Plans and billing"):
   that was never completed is cancelled at Razorpay before a new one is created.
 """
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone as dt_timezone
 
@@ -36,6 +39,7 @@ from .models import (
     OPEN_STATUSES,
     BillingLock,
     PaymentTransaction,
+    ReplacementStatus,
     SubscriptionPlan,
     SubscriptionStatus,
     TERMINAL_STATUSES,
@@ -130,6 +134,19 @@ def apply_snapshot(sub, entity, event_time=None):
         sub.ended_at = event_time or timezone.now()
     if event_time:
         sub.last_event_at = max(event_time, sub.last_event_at) if sub.last_event_at else event_time
+    # An upgrade's subscription is paid: the one it replaces is cancelled and credited next. Also
+    # one given up on as abandoned that Razorpay says was paid after all.
+    if sub.replaces_id and sub.status == SubscriptionStatus.ACTIVE and sub.replacement_status in (
+        ReplacementStatus.AWAITING_PAYMENT, ReplacementStatus.ABANDONED,
+    ):
+        conflict = _replacement_conflict(sub)
+        if conflict:
+            # Paid after it was given up on, while another upgrade went ahead: two plans are paid for.
+            sub.replacement_status = ReplacementStatus.NEEDS_ATTENTION
+            sub.replacement_error = f"Paid after it was abandoned, but {conflict}. Cancel and refund one by hand."
+            logger.error("Upgrade %s: %s", sub.razorpay_subscription_id, sub.replacement_error)
+        else:
+            _begin_finishing(sub)
     sub.save()
     if before != sub.status:
         logger.info("Subscription %s: %s -> %s", sub.razorpay_subscription_id, before, sub.status)
@@ -227,10 +244,7 @@ def refund_offer(user, sub):
     days = settings.BILLING_REFUND_DAYS
     if days <= 0 or sub is None or sub.status != SubscriptionStatus.ACTIVE or sub.cancel_at_period_end:
         return None
-    refunded_before = PaymentTransaction.objects.filter(user=user).filter(
-        ~Q(refund_status=PaymentTransaction.RefundStatus.NONE) | Q(status=PaymentTransaction.Status.REFUNDED)
-    )
-    if refunded_before.exists():
+    if _used_money_back(user):
         return None
     paid = list(sub.payments.filter(status=PaymentTransaction.Status.CAPTURED).exclude(paid_at=None).order_by("paid_at"))
     if not paid:
@@ -241,20 +255,60 @@ def refund_offer(user, sub):
     return RefundOffer(payments=paid, amount_paise=sum(p.amount_paise for p in paid), currency=paid[0].currency, until=until)
 
 
+def _used_money_back(user):
+    """Whether any refund but an upgrade credit was ever made or started for the user."""
+    return (
+        PaymentTransaction.objects.filter(user=user)
+        .filter(~Q(refund_status=PaymentTransaction.RefundStatus.NONE) | Q(status=PaymentTransaction.Status.REFUNDED))
+        .exclude(refund_reason=PaymentTransaction.RefundReason.UPGRADE_CREDIT)
+        .exists()
+    )
+
+
+def _request_refund(payment, reason, amount_paise=None):
+    """
+    Marks a payment for refund (settle_refund makes it). A payment is only ever refunded once: this
+    does nothing if a refund of it was asked for already, or seen at Razorpay. Returns whether it marked it.
+    """
+    return bool(PaymentTransaction.objects.filter(pk=payment.pk, refund_status=PaymentTransaction.RefundStatus.NONE).update(
+        refund_status=PaymentTransaction.RefundStatus.REQUESTED, refund_reason=reason, refund_amount_paise=amount_paise,
+        refund_op_id=f"{reason}:{payment.pk}", refund_requested_at=timezone.now(),
+    ))
+
+
 # A late "failed" can't undo "processed" (Razorpay doesn't fail a processed refund).
-_REFUND_RANK = {"": 0, "requested": 1, "pending": 2, "failed": 3, "processed": 4}
+_REFUND_RANK = {"": 0, "requested": 1, "sending": 2, "pending": 3, "failed": 4, "processed": 5}
+
+# How long an attempt holds a refund's claim. Razorpay calls time out long before this, so an older
+# claim belongs to an attempt that died, maybe after Razorpay made the refund: Razorpay is asked
+# before anyone tries again.
+REFUND_CLAIM_TIMEOUT = timedelta(minutes=10)
 
 
 def _is_full(payment, entity):
     return int(entity.get("amount") or 0) >= payment.amount_paise
 
 
+def _is_ours(payment, entity):
+    """
+    Whether a Razorpay refund is the one this payment is tracking: ours by its ID or receipt, or (for
+    a whole-payment refund) any full refund, which is also what one made in the Dashboard looks like.
+    """
+    if entity.get("id") and entity.get("id") == payment.razorpay_refund_id:
+        return True
+    notes = entity.get("notes") if isinstance(entity.get("notes"), dict) else {}
+    if payment.refund_op_id and payment.refund_op_id in (entity.get("receipt"), notes.get("op_id")):
+        return True
+    return payment.refund_amount_paise is None and _is_full(payment, entity)
+
+
 def apply_refund(payment, entity):
     """
     Copies a Razorpay refund onto its payment. A late update about the same refund can't undo a newer
-    one. A partial refund (made in the Dashboard) isn't tracked here: Razorpay keeps the payment captured.
+    one. Only a full refund marks the payment refunded: after a partial one Razorpay keeps it captured.
+    Partial refunds made in the Dashboard aren't tracked.
     """
-    if entity.get("id") != payment.razorpay_refund_id and not _is_full(payment, entity):
+    if not _is_ours(payment, entity):
         return payment
     status = entity.get("status")
     if status not in (PaymentTransaction.RefundStatus.PENDING, PaymentTransaction.RefundStatus.PROCESSED,
@@ -264,9 +318,10 @@ def apply_refund(payment, entity):
         return payment
     payment.razorpay_refund_id = entity.get("id") or payment.razorpay_refund_id
     payment.refund_status = status
+    payment.refund_claim = ""
     if payment.refund_requested_at is None:
         payment.refund_requested_at = ts(entity.get("created_at")) or timezone.now()
-    if status == PaymentTransaction.RefundStatus.PROCESSED:
+    if status == PaymentTransaction.RefundStatus.PROCESSED and _is_full(payment, entity):
         payment.status = PaymentTransaction.Status.REFUNDED
     if status == PaymentTransaction.RefundStatus.FAILED:
         logger.error("Refund %s of payment %s failed: refund it from the Razorpay Dashboard",
@@ -278,40 +333,57 @@ def apply_refund(payment, entity):
 _REFUSED_STATUSES = (400, 422)
 
 
-def _full_refund_at_razorpay(payment):
+def _our_refund_at_razorpay(payment):
     items = razorpay.fetch_refunds(payment.razorpay_payment_id).get("items") or []
-    return next((r for r in items if _is_full(payment, r)), None)
+    return next((r for r in items if _is_ours(payment, r)), None)
 
 
 def settle_refund(payment):
     """
-    Makes sure a payment marked for refund has a full refund at Razorpay, and copies its state.
+    Makes sure a payment marked for refund has its refund at Razorpay, and copies its state.
 
-    No row lock is held while Razorpay is called. Razorpay itself stops a second full refund of the
-    same payment: it's asked first, so a refund made by an earlier attempt is found, and if another
-    attempt gets in between, Razorpay refuses this one and that refund is found instead. Any other
-    refusal (400 or 422, e.g. a partial refund left less than the full amount) is permanent, so the
-    refund is marked failed for someone to handle in the Dashboard, not retried.
-    Raises RazorpayError if Razorpay can't be reached (reconcile_subscriptions retries).
+    No row lock is held while Razorpay is called. Razorpay is asked first, so a refund made by an
+    earlier attempt is found (by its receipt, or as a full refund). Only the attempt that claims the
+    payment (REQUESTED -> SENDING) asks for a refund, so two can't both make one; Razorpay would also
+    refuse a second full refund, but not a second partial one. A claim is kept when Razorpay may have
+    made the refund without our hearing back (no answer, or a 5xx): it's checked at Razorpay again
+    after REFUND_CLAIM_TIMEOUT. A refusal (400 or 422, e.g. a partial refund in the Dashboard left
+    less than this asks for) is permanent, so the refund is marked failed for someone to handle in the
+    Dashboard, not retried. Raises RazorpayError if Razorpay can't be reached (reconcile_subscriptions retries).
     """
     payment = PaymentTransaction.objects.get(pk=payment.pk)
-    if payment.refund_status not in (PaymentTransaction.RefundStatus.REQUESTED, PaymentTransaction.RefundStatus.PENDING):
+    Status = PaymentTransaction.RefundStatus
+    if payment.refund_status not in (Status.REQUESTED, Status.SENDING, Status.PENDING):
         return payment
-    refund = _full_refund_at_razorpay(payment)
-    if refund is None and payment.refund_status == PaymentTransaction.RefundStatus.REQUESTED:
+    if payment.refund_status == Status.SENDING and payment.refund_claimed_at > timezone.now() - REFUND_CLAIM_TIMEOUT:
+        return payment  # another attempt is making it
+    refund = _our_refund_at_razorpay(payment)
+    if refund is None and payment.refund_status in (Status.REQUESTED, Status.SENDING):
+        claim = uuid.uuid4().hex
+        claimed = PaymentTransaction.objects.filter(
+            pk=payment.pk, refund_status=payment.refund_status, refund_claim=payment.refund_claim,
+        ).update(refund_status=Status.SENDING, refund_claim=claim, refund_claimed_at=timezone.now())
+        if not claimed:
+            return PaymentTransaction.objects.get(pk=payment.pk)  # another attempt got there first
         try:
             refund = razorpay.refund_payment(
-                payment.razorpay_payment_id, amount_paise=payment.amount_paise,
-                notes={"reason": "money_back_window", "user_id": str(payment.user_id)},
+                payment.razorpay_payment_id, amount_paise=payment.refund_paise, receipt=payment.refund_op_id,
+                notes={
+                    "reason": "upgrade_credit" if payment.refund_reason == PaymentTransaction.RefundReason.UPGRADE_CREDIT
+                    else "money_back_window",
+                    "user_id": str(payment.user_id), "op_id": payment.refund_op_id,
+                },
             )
         except razorpay.RazorpayError as exc:
-            # Razorpay refuses a refund for a business reason with 400 (or 422). Anything else
-            # (rate limits, bad keys, outages) is temporary or a setup problem: retry it.
+            # Razorpay refuses a refund for a business reason with 400 (or 422). Other 4xx (rate
+            # limits, bad keys) made nothing, so the claim is let go and the refund retried.
             if exc.status not in _REFUSED_STATUSES:
+                if exc.status is not None and exc.status < 500:
+                    _release_refund_claim(payment, claim)
                 raise
-            refund = _full_refund_at_razorpay(payment)  # refused because it's refunded already?
+            refund = _our_refund_at_razorpay(payment)  # refused because it's refunded already?
             if refund is None:
-                return _refund_refused(payment, exc)
+                return _refund_refused(payment, exc, claim)
     if refund is None:
         return payment
     with transaction.atomic():
@@ -319,12 +391,19 @@ def settle_refund(payment):
         return apply_refund(payment, refund)
 
 
-def _refund_refused(payment, exc):
+def _release_refund_claim(payment, claim):
+    PaymentTransaction.objects.filter(
+        pk=payment.pk, refund_status=PaymentTransaction.RefundStatus.SENDING, refund_claim=claim,
+    ).update(refund_status=PaymentTransaction.RefundStatus.REQUESTED, refund_claim="")
+
+
+def _refund_refused(payment, exc, claim):
     with transaction.atomic():
         payment = PaymentTransaction.objects.select_for_update().get(pk=payment.pk)
-        if payment.refund_status == PaymentTransaction.RefundStatus.REQUESTED:
+        if payment.refund_status == PaymentTransaction.RefundStatus.SENDING and payment.refund_claim == claim:
             payment.refund_status = PaymentTransaction.RefundStatus.FAILED
-            payment.save(update_fields=["refund_status", "updated_at"])
+            payment.refund_claim = ""
+            payment.save(update_fields=["refund_status", "refund_claim", "updated_at"])
             logger.error("Razorpay refused to refund payment %s (%s): refund it from the Razorpay Dashboard",
                          payment.razorpay_payment_id, exc.description)
         return payment
@@ -356,7 +435,9 @@ def abandon_checkout(sub):
                 raise
         sub.status = SubscriptionStatus.EXPIRED
         sub.ended_at = timezone.now()
-        sub.save(update_fields=["status", "ended_at", "updated_at"])
+        if sub.replacement_status == ReplacementStatus.AWAITING_PAYMENT:
+            sub.replacement_status = ReplacementStatus.ABANDONED
+        sub.save(update_fields=["status", "ended_at", "replacement_status", "updated_at"])
         return True
 
 
@@ -447,50 +528,60 @@ def start_checkout(user, plan_code):
             raise blocker
         if tiers.RANK[get_profile(user).plan] >= tiers.RANK[plan.tier]:
             raise BillingError("Your account already includes this plan.", status=409, code="already_included")
-
-        # A repeated click, or a retry after closing Checkout, reuses the subscription already created.
-        # Any other checkout not completed (another plan, another tab, or too old) is cancelled first,
-        # so only one can ever be paid.
-        reuse_after = timezone.now() - timedelta(minutes=settings.BILLING_CHECKOUT_REUSE_MINUTES)
-        for old in UserSubscription.objects.filter(user=user, status=SubscriptionStatus.CREATED):
-            if old.plan_id == plan.id and old.created_at > reuse_after:
-                return old
-            try:
-                expired = abandon_checkout(old)
-            except razorpay.RazorpayError as exc:
-                raise _from_razorpay(exc) from exc
-            if not expired:
-                raise BillingError(
-                    "An earlier checkout went through. Wait a minute for the payment to be confirmed.",
-                    status=409, code="activation_pending",
-                )
-
         # Replacing a subscription that ends at period end: start billing when it runs out.
         current = entitlements.entitled_subscription(user)
-        start_at = current.current_end if current else None
+        return _create_checkout(user, plan, start_at=current.current_end if current else None)
+
+
+def _create_checkout(user, plan, *, start_at=None, replaces=None):
+    """
+    Creates the Razorpay subscription for a checkout, under the user's BillingLock. A repeated click,
+    or a retry after closing Checkout, reuses the subscription already created. Any other checkout
+    not completed (another plan, another tab, or too old) is cancelled first, so only one can ever be paid.
+    """
+    reuse_after = timezone.now() - timedelta(minutes=settings.BILLING_CHECKOUT_REUSE_MINUTES)
+    for old in UserSubscription.objects.filter(user=user, status=SubscriptionStatus.CREATED):
+        if old.plan_id == plan.id and old.replaces_id == getattr(replaces, "pk", None) and old.created_at > reuse_after:
+            return old
         try:
-            entity = razorpay.create_subscription(
-                plan_id=plan.razorpay_plan_id,
-                total_count=settings.RAZORPAY_TOTAL_COUNT[plan.interval],
-                notes={"user_id": str(user.id), "plan": plan.code},
-                start_at=start_at,
-                expire_by=timezone.now() + CHECKOUT_EXPIRY,
-            )
+            expired = abandon_checkout(old)
         except razorpay.RazorpayError as exc:
             raise _from_razorpay(exc) from exc
+        if not expired:
+            raise BillingError(
+                "An earlier checkout went through. Wait a minute for the payment to be confirmed.",
+                status=409, code="activation_pending",
+            )
+
+    notes = {"user_id": str(user.id), "plan": plan.code}
+    if replaces:
+        notes["replaces"] = replaces.razorpay_subscription_id
+    try:
+        entity = razorpay.create_subscription(
+            plan_id=plan.razorpay_plan_id,
+            total_count=settings.RAZORPAY_TOTAL_COUNT[plan.interval],
+            notes=notes,
+            start_at=start_at,
+            expire_by=timezone.now() + CHECKOUT_EXPIRY,
+        )
+    except razorpay.RazorpayError as exc:
+        raise _from_razorpay(exc) from exc
+    try:
+        with transaction.atomic():
+            return UserSubscription.objects.create(
+                user=user, plan=plan, interval=plan.interval, razorpay_subscription_id=entity["id"],
+                status=SubscriptionStatus.CREATED, short_url=entity.get("short_url") or "", start_at=start_at,
+                replaces=replaces, replacement_status=ReplacementStatus.AWAITING_PAYMENT if replaces else ReplacementStatus.NONE,
+            )
+    except Exception as exc:
+        # Not saved, so nothing here would ever track it: don't leave it payable at Razorpay.
         try:
-            with transaction.atomic():
-                return UserSubscription.objects.create(
-                    user=user, plan=plan, interval=plan.interval, razorpay_subscription_id=entity["id"],
-                    status=SubscriptionStatus.CREATED, short_url=entity.get("short_url") or "", start_at=start_at,
-                )
-        except Exception:
-            # Not saved, so nothing here would ever track it: don't leave it payable at Razorpay.
-            try:
-                razorpay.cancel_subscription(entity["id"], at_cycle_end=False)
-            except razorpay.RazorpayError:
-                logger.error("Razorpay subscription %s was created but not saved, and couldn't be cancelled", entity["id"])
-            raise
+            razorpay.cancel_subscription(entity["id"], at_cycle_end=False)
+        except razorpay.RazorpayError:
+            logger.error("Razorpay subscription %s was created but not saved, and couldn't be cancelled", entity["id"])
+        if isinstance(exc, IntegrityError) and replaces:
+            raise BillingError("An upgrade is already under way.", status=409, code="upgrade_in_progress") from exc
+        raise
 
 
 def verify_checkout(user, *, payment_id, subscription_id, signature):
@@ -518,31 +609,47 @@ def verify_checkout(user, *, payment_id, subscription_id, signature):
     return sub
 
 
+def _plan_change(user, plan_code):
+    """The subscription to change and the plan to change it to, or a BillingError saying why not."""
+    sub = entitlements.entitled_subscription(user)
+    if sub is None or sub.status != SubscriptionStatus.ACTIVE:
+        raise BillingError("You need an active subscription to change plan.", status=409, code="no_active_subscription")
+    if sub.cancel_at_period_end:
+        raise BillingError(
+            "This subscription is cancelled at the end of its period. Subscribe to the new plan instead.",
+            status=409, code="cancellation_scheduled",
+        )
+    new = available_plan(plan_code)
+    if new.id == sub.plan_id:
+        raise BillingError("You're already on this plan.", code="same_plan")
+    if new.id == sub.scheduled_plan_id:
+        raise BillingError("This change is already scheduled.", status=409, code="already_scheduled")
+    return sub, new
+
+
+def _is_upgrade(sub, plan):
+    return tiers.RANK[plan.tier] > tiers.RANK[sub.tier]
+
+
+_CHANGE_UNSUPPORTED = (
+    "Plans paid by UPI Autopay or eMandate can't be changed. Cancel at the end of the period and subscribe to the new plan."
+)
+
+
 def change_plan(user, plan_code):
-    """Upgrades now, or schedules a downgrade or interval switch for the end of the cycle."""
+    """
+    Upgrades now, or schedules a downgrade or interval switch for the end of the cycle. An upgrade
+    Razorpay can't apply in place (upgrade_strategy) starts a checkout for a replacement instead.
+    Returns (subscription, "now", "cycle_end" or "checkout"); for "checkout" it's the new one, to pay.
+    """
     with transaction.atomic():
         _lock_user(user)
-        sub = entitlements.entitled_subscription(user)
-        if sub is None or sub.status != SubscriptionStatus.ACTIVE:
-            raise BillingError("You need an active subscription to change plan.", status=409, code="no_active_subscription")
-        if sub.cancel_at_period_end:
-            raise BillingError(
-                "This subscription is cancelled at the end of its period. Subscribe to the new plan instead.",
-                status=409, code="cancellation_scheduled",
-            )
-        new = available_plan(plan_code)
-        if new.id == sub.plan_id:
-            raise BillingError("You're already on this plan.", code="same_plan")
-        if new.id == sub.scheduled_plan_id:
-            raise BillingError("This change is already scheduled.", status=409, code="already_scheduled")
-        method = sub.payments.exclude(method="").values_list("method", flat=True).first()
-        if method in NO_PLAN_CHANGE_METHODS:
-            raise BillingError(
-                "Plans paid by UPI Autopay or eMandate can't be changed. Cancel at the end of the period and subscribe to the new plan.",
-                status=409, code="change_unsupported",
-            )
-
-        upgrade = tiers.RANK[new.tier] > tiers.RANK[sub.tier]
+        sub, new = _plan_change(user, plan_code)
+        upgrade = _is_upgrade(sub, new)
+        if upgrade_strategy(sub) == REPLACEMENT:
+            if not upgrade:
+                raise BillingError(_CHANGE_UNSUPPORTED, status=409, code="change_unsupported")
+            return start_replacement(user, sub, new), "checkout"
         try:
             entity = razorpay.update_subscription(
                 sub.razorpay_subscription_id, plan_id=new.razorpay_plan_id, schedule_change_at="now" if upgrade else "cycle_end"
@@ -555,7 +662,278 @@ def change_plan(user, plan_code):
             sub.scheduled_plan = new
             sub.scheduled_change_at = ts(entity.get("change_scheduled_at")) or sub.current_end
             sub.save(update_fields=["scheduled_plan", "scheduled_change_at", "updated_at"])
-        return sub, upgrade
+        return sub, "now" if upgrade else "cycle_end"
+
+
+# ---------------------------------------------------------------------------
+# Upgrades that replace the subscription
+# ---------------------------------------------------------------------------
+#
+# Razorpay can't move a UPI Autopay or eMandate subscription to another plan. Upgrading one buys a
+# new subscription to start now instead. Nothing happens to the old one until the new one is paid
+# and active; then finish_replacement cancels the old one now and refunds its unused days (the
+# credit) to the payment for its current period. Once the new one is active the upgrade stands:
+# failures from there are retried (a task, then reconcile_subscriptions), never undone.
+
+NATIVE_CHANGE = "native_change"
+REPLACEMENT = "replacement"
+
+# A replacement that is, or is becoming, what replaced its subscription (one_replacement_per_subscription).
+_REPLACING = (ReplacementStatus.AWAITING_PAYMENT, ReplacementStatus.FINISHING, ReplacementStatus.DONE)
+
+# Razorpay only refunds a payment for a while after it's made (about six months; confirm in test
+# mode). A credit owed on an older payment couldn't be refunded, so that upgrade isn't offered.
+REFUND_MAX_AGE = timedelta(days=180)
+# Razorpay's smallest refund.
+MIN_REFUND_PAISE = 100
+
+
+def upgrade_strategy(sub):
+    """How `sub` is upgraded: moved to the new plan by Razorpay, or replaced. Decided from its latest payment."""
+    method = sub.payments.exclude(method="").values_list("method", flat=True).first()
+    return REPLACEMENT if method in NO_PLAN_CHANGE_METHODS else NATIVE_CHANGE
+
+
+@dataclass
+class Credit:
+    payment: PaymentTransaction | None
+    amount_paise: int
+    # Why nothing is refunded ("no_payment", "below_minimum", "too_old", and from
+    # _decide_credit "already_ended" or "no_period"), or "". For "too_old",
+    # amount_paise is what's owed but can't be refunded.
+    reason: str = ""
+
+    @property
+    def refundable(self):
+        return not self.reason and self.amount_paise > 0
+
+
+def _credit(old, at, period_start, period_end):
+    """
+    What replacing `old` at `at` refunds: the unused part of the payment for the period `at` falls in
+    (the latest captured one before it), counted to the second in integer paise. Never more: even
+    inside the money-back window it's pro-rata, so an upgrade can't refund two plans in full (the old
+    one now, the new one by its own window). A period that doesn't hold `at` gets nothing.
+    """
+    payment = old.payments.filter(status=PaymentTransaction.Status.CAPTURED, paid_at__lte=at).order_by("-paid_at").first()
+    if (payment is None or payment.refund_status != PaymentTransaction.RefundStatus.NONE
+            or not (period_start and period_end and period_start <= at)):
+        return Credit(None, 0, "no_payment")
+    length = int((period_end - period_start).total_seconds())
+    left = max(0, int((period_end - at).total_seconds()))
+    amount = min(payment.amount_paise, payment.amount_paise * left // length) if length > 0 else 0
+    if payment.paid_at < timezone.now() - REFUND_MAX_AGE:
+        return Credit(payment, amount, "too_old")
+    if amount < MIN_REFUND_PAISE:
+        return Credit(payment, 0, "below_minimum")
+    return Credit(payment, amount)
+
+
+@dataclass
+class UpgradeQuote:
+    strategy: str
+    plan: SubscriptionPlan
+    # Only for a replacement: an estimate, since the credit is worked out when the new plan starts.
+    credit: Credit | None
+
+
+def upgrade_quote(user, plan_code):
+    """What upgrading to the plan would do now, for the confirmation dialog."""
+    sub, new = _plan_change(user, plan_code)
+    if not _is_upgrade(sub, new):
+        raise BillingError("That's not an upgrade.", code="not_an_upgrade")
+    if upgrade_strategy(sub) == NATIVE_CHANGE:
+        return UpgradeQuote(NATIVE_CHANGE, new, None)
+    return UpgradeQuote(REPLACEMENT, new, _credit(sub, timezone.now(), sub.current_start, sub.current_end))
+
+
+def start_replacement(user, old, plan):
+    """
+    Creates the checkout for a subscription to replace `old`, under the user's BillingLock. `old`
+    isn't touched. Refused when its credit couldn't be refunded, before anything is charged.
+    """
+    if UserSubscription.objects.filter(user=user, replacement_status=ReplacementStatus.FINISHING).exists():
+        raise BillingError("Your last upgrade is still being finished. Try again in a few minutes.",
+                           status=409, code="upgrade_in_progress")
+    if _credit(old, timezone.now(), old.current_start, old.current_end).reason == "too_old":
+        raise BillingError(
+            "Your current plan was paid too long ago for its unused days to be refunded, so it can't be upgraded now. "
+            "Cancel it at the end of the period and subscribe to the new plan: it starts when your current plan ends.",
+            status=409, code="upgrade_at_renewal",
+        )
+    return _create_checkout(user, plan, replaces=old)
+
+
+def _begin_finishing(sub):
+    """
+    The replacement `sub` is paid. Records when it started and the replaced subscription's period
+    then (the credit counts from these), and queues finish_replacement. Called by apply_snapshot.
+    """
+    old = sub.replaces
+    sub.replacement_status = ReplacementStatus.FINISHING
+    sub.credit_from = sub.current_start or timezone.now()
+    sub.credit_period_start, sub.credit_period_end = old.current_start, old.current_end
+    logger.info("Upgrade %s is paid: finishing the replacement of %s", sub.razorpay_subscription_id, old.razorpay_subscription_id)
+    sub_id = sub.pk
+    transaction.on_commit(lambda: _queue_finish(sub_id), robust=True)
+
+
+def _replacement_conflict(sub):
+    """
+    What stops the paid replacement `sub` from being finished, or "": another upgrade of the user's
+    under way, or another that replaced (or is replacing) the same subscription. The same rules as
+    the constraints on UserSubscription, checked first so a webhook doesn't fail on them every time.
+    """
+    others = UserSubscription.objects.exclude(pk=sub.pk)
+    under_way = others.filter(
+        user_id=sub.user_id, replacement_status__in=[ReplacementStatus.AWAITING_PAYMENT, ReplacementStatus.FINISHING],
+        status__in=[SubscriptionStatus.CREATED, SubscriptionStatus.AUTHENTICATED, SubscriptionStatus.ACTIVE],
+    ).first()
+    if under_way:
+        return f"another upgrade ({under_way.razorpay_subscription_id}) is under way"
+    replaced = others.filter(replaces_id=sub.replaces_id, replacement_status__in=_REPLACING).exclude(
+        status=SubscriptionStatus.EXPIRED,
+    ).first()
+    if replaced:
+        return f"{replaced.razorpay_subscription_id} replaced the same plan"
+    return ""
+
+
+def _queue_finish(sub_id):
+    from .tasks import finish_replacement_task  # tasks imports this module
+
+    finish_replacement_task.delay(sub_id)
+
+
+def finish_replacement(sub_id):
+    """
+    Cancels the subscription the paid replacement `sub_id` replaces, and refunds its credit. Safe to
+    run any number of times, at once too: each step checks what's done, under the user's BillingLock.
+
+    1. Razorpay's state of the old subscription is fetched, and the credit decided from it once
+       (saved, so a retry can't change it). One that had ended before the upgrade gets none.
+    2. It's cancelled now. If Razorpay refuses, one already set to end at period end is left to end
+       (it can't renew); any other is left for someone to look at (NEEDS_ATTENTION), unrefunded.
+    3. Only then is anything marked for refund: the credit, and in full any renewal the old
+       subscription charged after the upgrade. The refunds are made after the lock is let go.
+
+    Raises RazorpayError if Razorpay can't be reached; the task, then reconcile_subscriptions, retry.
+    """
+    sub = UserSubscription.objects.select_related("user").get(pk=sub_id)
+    with transaction.atomic():
+        _lock_user(sub.user)
+        sub = UserSubscription.objects.select_for_update().select_related("user", "plan").get(pk=sub_id)
+        if sub.replacement_status != ReplacementStatus.FINISHING:
+            return sub
+        old = UserSubscription.objects.select_for_update().get(pk=sub.replaces_id)
+        apply_fresh(old, razorpay.fetch_subscription(old.razorpay_subscription_id))
+        if sub.credit_paise is None:
+            _decide_credit(sub, old)
+
+    with transaction.atomic():
+        _lock_user(sub.user)
+        sub = UserSubscription.objects.select_for_update().select_related("user", "plan").get(pk=sub_id)
+        if sub.replacement_status != ReplacementStatus.FINISHING:
+            return sub
+        old = UserSubscription.objects.select_for_update().get(pk=sub.replaces_id)
+        problem = _end_now(old)
+        if problem:
+            sub.replacement_status = ReplacementStatus.NEEDS_ATTENTION
+            sub.replacement_error = problem[:300]
+            sub.save(update_fields=["replacement_status", "replacement_error", "updated_at"])
+            logger.error("Upgrade %s: %s", sub.razorpay_subscription_id, problem)
+            return sub
+        # Renewals charged after the upgrade paid for a period it replaced.
+        for renewal in old.payments.filter(status=PaymentTransaction.Status.CAPTURED, paid_at__gt=sub.credit_from):
+            if renewal.pk != sub.credit_payment_id:
+                _request_refund(renewal, PaymentTransaction.RefundReason.UPGRADE_CREDIT)
+        if sub.credit_reason in ("too_old", "no_period"):
+            payment_id = sub.credit_payment.razorpay_payment_id if sub.credit_payment else "none found"
+            sub.replacement_status = ReplacementStatus.NEEDS_ATTENTION
+            sub.replacement_error = (
+                f"Credit of {sub.credit_paise} paise on payment {payment_id} is too old to refund automatically: "
+                "refund or credit it by hand."
+                if sub.credit_reason == "too_old" else
+                f"The replaced plan's billing period at the upgrade isn't known (payment {payment_id}), so its credit "
+                "wasn't worked out: check its invoices in the Dashboard and credit it by hand."
+            )
+            logger.error("Upgrade %s: %s", sub.razorpay_subscription_id, sub.replacement_error)
+        else:
+            if sub.credit_paise:
+                payment = sub.credit_payment
+                _request_refund(payment, PaymentTransaction.RefundReason.UPGRADE_CREDIT,
+                                None if sub.credit_paise >= payment.amount_paise else sub.credit_paise)
+            sub.replacement_status = ReplacementStatus.DONE
+        sub.save(update_fields=["replacement_status", "replacement_error", "updated_at"])
+
+    # Outside the transaction, as in cancel(): a refund made at Razorpay must never be rolled back here.
+    for payment in old.payments.filter(
+        refund_reason=PaymentTransaction.RefundReason.UPGRADE_CREDIT, refund_status=PaymentTransaction.RefundStatus.REQUESTED,
+    ):
+        try:
+            settle_refund(payment)
+        except razorpay.RazorpayError as exc:
+            logger.warning("Refund of payment %s not made yet, will retry: %s", payment.razorpay_payment_id, exc.description)
+        except Exception:
+            logger.exception("Refund of payment %s failed here, will retry", payment.razorpay_payment_id)
+    notify(sub, "upgraded")
+    return sub
+
+
+def _decide_credit(sub, old):
+    """Decides and saves the credit, from Razorpay's state of the replaced subscription `old`."""
+    at = sub.credit_from
+    if old.status in TERMINAL_STATUSES and old.ended_at and old.ended_at <= at:
+        credit = Credit(None, 0, "already_ended")  # cancelled (or refunded) before the upgrade
+    else:
+        # The period the upgrade fell in: Razorpay's current one, or the one recorded when the
+        # upgrade was (the old plan renewed since).
+        known = [(s, e) for s, e in ((old.current_start, old.current_end), (sub.credit_period_start, sub.credit_period_end)) if s and e]
+        start, end = next(((s, e) for s, e in known if s <= at < e), (None, None))
+        credit = None
+        if start is None and known:
+            payment = old.payments.filter(status=PaymentTransaction.Status.CAPTURED, paid_at__lte=at).order_by("-paid_at").first()
+            if all(s > at for s, _ in known):
+                # Both began after it: the renewal was recorded before the upgrade was. The upgrade's
+                # period started with the payment for it and ended where the renewal began.
+                if payment:
+                    start, end = payment.paid_at, min(s for s, _ in known)
+            elif payment and payment.paid_at >= max(e for s, e in known if e <= at):
+                # Paid after the last period known here ended, for a period never seen here (renewals
+                # missed), so the credit can't be worked out. finish_replacement leaves it for someone.
+                credit = Credit(payment, 0, "no_period")
+            else:
+                # Its last period ran out before the upgrade without being renewed (a failed renewal,
+                # or the grace period): nothing of it was left unused.
+                credit = Credit(None, 0, "no_payment")
+        credit = credit or _credit(old, at, start, end)
+    sub.credit_payment = credit.payment
+    sub.credit_paise = credit.amount_paise
+    sub.credit_reason = credit.reason
+    sub.save(update_fields=["credit_payment", "credit_paise", "credit_reason", "updated_at"])
+
+
+def _end_now(old):
+    """
+    Cancels the replaced subscription now, under the lock. Returns None once it can't charge again,
+    or what's wrong if Razorpay refused to cancel one that still renews. Raises RazorpayError if
+    Razorpay can't be reached.
+    """
+    if old.status in TERMINAL_STATUSES:
+        return None
+    try:
+        entity = razorpay.cancel_subscription(old.razorpay_subscription_id, at_cycle_end=False)
+    except razorpay.RazorpayError as exc:
+        if exc.status not in _REFUSED_STATUSES:
+            raise
+        apply_fresh(old, razorpay.fetch_subscription(old.razorpay_subscription_id))
+        if old.status in TERMINAL_STATUSES or old.cancel_at_period_end:
+            return None
+        return f"Razorpay wouldn't cancel the replaced subscription {old.razorpay_subscription_id}: {exc.description}"
+    old.cancel_requested_at = timezone.now()
+    old.save(update_fields=["cancel_requested_at", "updated_at"])
+    apply_fresh(old, entity)
+    return None
 
 
 def cancel(user, *, at_period_end=True, upcoming=False, expect_refund=False):
@@ -604,9 +982,8 @@ def cancel(user, *, at_period_end=True, upcoming=False, expect_refund=False):
         sub.save(update_fields=["cancel_requested_at", "cancel_at_period_end", "updated_at"])
         apply_fresh(sub, entity)
         if offer:
-            PaymentTransaction.objects.filter(pk__in=[p.pk for p in offer.payments]).update(
-                refund_status=PaymentTransaction.RefundStatus.REQUESTED, refund_requested_at=timezone.now(),
-            )
+            for payment in offer.payments:
+                _request_refund(payment, PaymentTransaction.RefundReason.MONEY_BACK)
         kind = "upcoming_cancelled" if upcoming else ("cancel_scheduled" if at_period_end else "cancelled")
         if not offer:
             transaction.on_commit(lambda: notify(sub, kind))

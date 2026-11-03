@@ -12,8 +12,9 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
 @admin.register(UserSubscription)
 class UserSubscriptionAdmin(admin.ModelAdmin):
     """Read-only: subscription state comes from Razorpay. Fix a wrong one with `manage.py reconcile_subscriptions`."""
-    list_display = ["user", "plan", "status", "current_end", "cancel_at_period_end", "razorpay_subscription_id"]
-    list_filter = ["status", "plan"]
+    list_display = ["user", "plan", "status", "current_end", "cancel_at_period_end", "replacement_status", "razorpay_subscription_id"]
+    # "Needs attention": an upgrade Razorpay refused to finish, see replacement_error.
+    list_filter = ["status", "plan", "replacement_status"]
     search_fields = ["user__username", "user__email", "razorpay_subscription_id"]
 
     def has_change_permission(self, request, obj=None):
@@ -25,8 +26,8 @@ class UserSubscriptionAdmin(admin.ModelAdmin):
 
 @admin.register(PaymentTransaction)
 class PaymentTransactionAdmin(admin.ModelAdmin):
-    list_display = ["razorpay_payment_id", "user", "amount_paise", "status", "refund_status", "method", "paid_at", "created_at"]
-    list_filter = ["status", "refund_status", "method"]
+    list_display = ["razorpay_payment_id", "user", "amount_paise", "status", "refund_status", "refund_reason", "method", "paid_at", "created_at"]
+    list_filter = ["status", "refund_status", "refund_reason", "method"]
     search_fields = ["razorpay_payment_id", "user__username", "user__email"]
 
     def has_change_permission(self, request, obj=None):

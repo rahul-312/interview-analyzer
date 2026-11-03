@@ -2,6 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Pricing from "./Pricing";
+import type { UpgradeQuote } from "@/models/Billing";
 import { ApiError } from "@/services/ApiClient";
 import { current, plansResponse } from "@/test/fixtures";
 
@@ -15,6 +16,7 @@ vi.mock("@/services/BillingService", () => ({
     checkout: vi.fn(),
     verify: vi.fn(),
     changePlan: vi.fn(),
+    upgradeQuote: vi.fn(),
   },
 }));
 const { billingService } = await import("@/services/BillingService");
@@ -30,6 +32,18 @@ const checkoutConfig = {
   prefill: { name: "Alice", email: "alice@example.com" },
 };
 const paid = { razorpay_payment_id: "pay_1", razorpay_subscription_id: "sub_1", razorpay_signature: "sig" };
+
+/** A UPI subscriber's upgrade from Pro monthly, 10 days in. */
+const upgradeQuote = (overrides: Partial<UpgradeQuote> = {}): UpgradeQuote => ({
+  strategy: "replacement",
+  plan: plansResponse().tiers[2].prices[0],
+  available: true,
+  charge_paise: 49900,
+  credit_paise: 13266,
+  credit_reason: "",
+  currency: "INR",
+  ...overrides,
+});
 
 type Options = { handler: (r: typeof paid) => void; modal: { ondismiss: () => void }; [key: string]: unknown };
 
@@ -193,6 +207,7 @@ describe("pricing page", () => {
 
   it("upgrades a subscriber after confirming", async () => {
     api.current.mockResolvedValue(current("pro_monthly"));
+    api.upgradeQuote.mockResolvedValue(upgradeQuote({ strategy: "native_change", charge_paise: null, credit_paise: 0 }));
     api.changePlan.mockResolvedValue({ ...current("pro_plus_monthly"), change: "now" });
     render(<Pricing />);
     await screen.findByRole("heading", { name: /Pro Plus/ });
@@ -206,6 +221,74 @@ describe("pricing page", () => {
     expect(api.changePlan).toHaveBeenCalledWith("pro_plus_monthly");
     expect(await screen.findByText("You're now on Pro Plus.")).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("upgrades a UPI subscriber by paying for the new plan, showing what comes back", async () => {
+    api.current.mockResolvedValue(current("pro_monthly"));
+    api.upgradeQuote.mockResolvedValue(upgradeQuote());
+    api.changePlan.mockResolvedValue({
+      ...current("pro_monthly"),
+      change: "checkout",
+      checkout: { ...checkoutConfig, plan: "pro_plus_monthly" },
+    });
+    api.verify.mockResolvedValue(current("pro_plus_monthly"));
+    const opened = stubCheckout((options) => options.handler(paid));
+    render(<Pricing />);
+    await screen.findByRole("heading", { name: /Pro Plus/ });
+
+    await userEvent.click(within(card("Pro Plus")).getByRole("button", { name: "Upgrade to Pro Plus" }));
+    const dialog = screen.getByRole("dialog", { name: "Change plan" });
+    await within(dialog).findByText(/You'll pay ₹499 in Razorpay/);
+    expect(dialog.textContent).toContain("About ₹132.66 for the unused days of your current plan is refunded");
+    expect(api.upgradeQuote).toHaveBeenCalledWith("pro_plus_monthly");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Continue to payment" }));
+
+    expect(await screen.findByText(/You're on Pro Plus/)).toBeTruthy();
+    expect(api.changePlan).toHaveBeenCalledWith("pro_plus_monthly");
+    expect(api.checkout).not.toHaveBeenCalled();
+    expect(opened[0]).toMatchObject({ subscription_id: "sub_1" });
+    expect(api.verify).toHaveBeenCalledWith(paid);
+  });
+
+  it("still upgrades when the quote can't load, paying in Checkout if the server asks", async () => {
+    api.current.mockResolvedValue(current("pro_monthly"));
+    api.upgradeQuote.mockRejectedValue(new ApiError(500, { detail: "Server error." }));
+    api.changePlan.mockResolvedValue({ ...current("pro_monthly"), change: "checkout", checkout: checkoutConfig });
+    api.verify.mockResolvedValue(current("pro_plus_monthly"));
+    const opened = stubCheckout((options) => options.handler(paid));
+    render(<Pricing />);
+    await screen.findByRole("heading", { name: /Pro Plus/ });
+    await userEvent.click(within(card("Pro Plus")).getByRole("button", { name: "Upgrade to Pro Plus" }));
+    const dialog = screen.getByRole("dialog", { name: "Change plan" });
+    await within(dialog).findByText(/Couldn't load the upgrade details: Server error./);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText(/You're on Pro Plus/)).toBeTruthy();
+    expect(opened[0]).toMatchObject({ subscription_id: "sub_1" });
+    expect(screen.queryByText(/You'll switch to/)).toBeNull();
+  });
+
+  it("counts a change from the subscription's plan, not a higher complimentary one", async () => {
+    api.current.mockResolvedValue(
+      current("pro_monthly", { plan: current("pro_plus_monthly").plan, source: "complimentary" }),
+    );
+    render(<Pricing />);
+    await screen.findByRole("heading", { name: /Pro Plus/ });
+    // The subscription's own plan isn't offered as a switch, and Pro Plus is already the account's.
+    expect(within(card("Pro")).getByRole("button", { name: "Current plan" })).toBeTruthy();
+    expect(within(card("Pro Plus Current")).getByRole("button", { name: "Current plan" })).toBeTruthy();
+  });
+
+  it("doesn't offer an upgrade whose credit couldn't be refunded", async () => {
+    api.current.mockResolvedValue(current("pro_yearly"));
+    api.upgradeQuote.mockResolvedValue(upgradeQuote({ available: false, credit_paise: 0, credit_reason: "too_old" }));
+    render(<Pricing />);
+    await screen.findByRole("heading", { name: /Pro Plus/ });
+    await userEvent.click(within(card("Pro Plus")).getByRole("button", { name: "Upgrade to Pro Plus" }));
+    const dialog = screen.getByRole("dialog", { name: "Change plan" });
+    await within(dialog).findByText(/paid too long ago/);
+    expect(within(dialog).queryByRole("button", { name: /Confirm|Continue/ })).toBeNull();
+    expect(api.changePlan).not.toHaveBeenCalled();
   });
 
   it("can't be bought when payments aren't set up", async () => {

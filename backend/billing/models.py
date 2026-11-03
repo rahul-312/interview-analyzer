@@ -84,6 +84,17 @@ OPEN_STATUSES = (
 )
 
 
+class ReplacementStatus(models.TextChoices):
+    NONE = "", "Not a replacement"
+    AWAITING_PAYMENT = "awaiting_payment", "Awaiting payment"
+    # Paid and active: the replaced subscription still has to be cancelled, or its credit refunded.
+    FINISHING = "finishing", "Finishing"
+    DONE = "done", "Done"
+    ABANDONED = "abandoned", "Checkout abandoned"
+    # Razorpay refused something for good: see replacement_error.
+    NEEDS_ATTENTION = "needs_attention", "Needs attention"
+
+
 class UserSubscription(models.Model):
     """
     A Razorpay subscription. Its state is only ever written from Razorpay: webhooks, or the API
@@ -115,12 +126,42 @@ class UserSubscription(models.Model):
     checkout_verified_at = models.DateTimeField(null=True, blank=True)
     # Time of the newest Razorpay event applied, so an older one delivered late can't undo it.
     last_event_at = models.DateTimeField(null=True, blank=True)
+
+    # An upgrade Razorpay can't apply in place (UPI Autopay, eMandate) buys this subscription to
+    # replace `replaces`: once this one is active, that one is cancelled and its unused days refunded
+    # (services.finish_replacement).
+    replaces = models.ForeignKey("self", on_delete=models.PROTECT, null=True, blank=True, related_name="replacements")
+    replacement_status = models.CharField(max_length=20, choices=ReplacementStatus.choices, blank=True, default="")
+    replacement_error = models.CharField(max_length=300, blank=True)
+    # When this subscription started, and the replaced one's period then: the credit counts from here.
+    credit_from = models.DateTimeField(null=True, blank=True)
+    credit_period_start = models.DateTimeField(null=True, blank=True)
+    credit_period_end = models.DateTimeField(null=True, blank=True)
+    # The credit, once decided: never worked out again, so a retry can't change it.
+    credit_payment = models.ForeignKey("PaymentTransaction", on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    credit_paise = models.PositiveIntegerField(null=True, blank=True)
+    # Why there's no credit ("below_minimum", "too_old", "no_payment", "already_ended", "no_period"), or "".
+    # "too_old" and "no_period" leave the upgrade NEEDS_ATTENTION, for someone to credit by hand.
+    credit_reason = models.CharField(max_length=20, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["user", "status"], name="subscription_user_status")]
+        constraints = [
+            # Backstops for the checks made under the user's BillingLock. An expired checkout never
+            # counts, even one whose replacement_status wasn't updated.
+            models.UniqueConstraint(
+                fields=["user"], name="one_replacement_in_progress_per_user",
+                condition=Q(replacement_status__in=["awaiting_payment", "finishing"], status__in=["created", "authenticated", "active"]),
+            ),
+            models.UniqueConstraint(
+                fields=["replaces"], name="one_replacement_per_subscription",
+                condition=Q(replacement_status__in=["awaiting_payment", "finishing", "done"]) & ~Q(status="expired"),
+            ),
+        ]
 
     def __str__(self):
         return f"{self.user} {self.plan} ({self.status})"
@@ -140,12 +181,20 @@ class PaymentTransaction(models.Model):
 
     class RefundStatus(models.TextChoices):
         # REQUESTED: we've decided to refund it but Razorpay hasn't confirmed a refund yet
-        # (services.settle_refund, retried by reconcile_subscriptions). The rest are Razorpay's.
+        # (services.settle_refund, retried by reconcile_subscriptions). SENDING: one attempt holds
+        # the claim (refund_claim) and is asking Razorpay. The rest are Razorpay's.
         NONE = "", "None"
         REQUESTED = "requested", "Requested"
+        SENDING = "sending", "Sending"
         PENDING = "pending", "Processing"
         PROCESSED = "processed", "Refunded"
         FAILED = "failed", "Refund failed"
+
+    class RefundReason(models.TextChoices):
+        DASHBOARD = "", "Dashboard"
+        MONEY_BACK = "money_back", "Money-back window"
+        # The unused part of a plan replaced by an upgrade. Doesn't use up the money-back window.
+        UPGRADE_CREDIT = "upgrade_credit", "Upgrade credit"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payments")
     subscription = models.ForeignKey(UserSubscription, on_delete=models.SET_NULL, null=True, blank=True, related_name="payments")
@@ -160,8 +209,16 @@ class PaymentTransaction(models.Model):
     method_detail = models.CharField(max_length=40, blank=True)
     failure_reason = models.CharField(max_length=300, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
-    # A full refund: the money-back window's (services.refund_offer) or one made in the Razorpay Dashboard.
+    # Our refund of this payment (the money-back window's or an upgrade credit), or a full refund made
+    # in the Razorpay Dashboard. Partial refunds made in the Dashboard aren't tracked.
     refund_status = models.CharField(max_length=10, choices=RefundStatus.choices, blank=True, default=RefundStatus.NONE)
+    refund_reason = models.CharField(max_length=20, choices=RefundReason.choices, blank=True, default=RefundReason.DASHBOARD)
+    # Null for the whole payment.
+    refund_amount_paise = models.PositiveIntegerField(null=True, blank=True)
+    # Sent to Razorpay as the refund's receipt and in its notes, to recognise it in fetch_refunds.
+    refund_op_id = models.CharField(max_length=64, blank=True)
+    refund_claim = models.CharField(max_length=32, blank=True)
+    refund_claimed_at = models.DateTimeField(null=True, blank=True)
     razorpay_refund_id = models.CharField(max_length=40, blank=True)
     refund_requested_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -173,6 +230,11 @@ class PaymentTransaction(models.Model):
 
     def __str__(self):
         return f"{self.razorpay_payment_id} ₹{self.amount_paise / 100:g} ({self.status})"
+
+    @property
+    def refund_paise(self):
+        """What our refund of it asks for."""
+        return self.amount_paise if self.refund_amount_paise is None else self.refund_amount_paise
 
 
 class WebhookEvent(models.Model):

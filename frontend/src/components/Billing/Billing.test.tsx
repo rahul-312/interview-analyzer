@@ -131,6 +131,15 @@ describe("billing dashboard", () => {
     expect(await screen.findByText("Refund on the way")).toBeTruthy();
   });
 
+  it("shows an upgrade's credit as part of a payment refunded, which stays paid", async () => {
+    api.payments.mockResolvedValue([
+      payment({ method: "upi", method_detail: "", refund_status: "processed", refund_reason: "upgrade_credit", refund_paise: 13266 }),
+    ]);
+    render(<Billing />);
+    expect(await screen.findByText(/₹132.66 refunded for unused days/)).toBeTruthy();
+    expect(screen.getByText("Paid")).toBeTruthy();
+  });
+
   it("offers a way to fix a failed payment", async () => {
     const failing = current("pro_monthly", {
       subscription: subscription("pro_monthly", { status: "halted", status_label: "Halted", gives_access: false }),

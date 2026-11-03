@@ -72,7 +72,8 @@ def _notification(event_type, before, sub, sub_entity):
     # Razorpay sends both activated and charged for the first payment, in either order: whichever
     # arrives first starts the subscription, and a renewal is a charge after the first.
     if event_type in ("subscription.activated", "subscription.charged") and before in _NOT_STARTED:
-        return "activated" if sub.status == SubscriptionStatus.ACTIVE else None
+        # An upgrade's is emailed once it's finished (services.finish_replacement), with its credit.
+        return "activated" if sub.status == SubscriptionStatus.ACTIVE and not sub.replaces_id else None
     if event_type == "subscription.charged" and int(sub_entity.get("paid_count") or 0) > 1:
         return "renewed"
     if event_type == "subscription.cancelled":

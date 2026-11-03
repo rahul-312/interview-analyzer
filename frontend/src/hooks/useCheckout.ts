@@ -102,14 +102,15 @@ export function useCheckout(onChange?: (current: CurrentSubscription) => void) {
   // A ref, not state: two quick clicks must not both start a checkout.
   const busy = useRef(false);
 
+  /** `create` makes the subscription to pay for: a new one by default, or an upgrade's replacement. */
   const start = useCallback(
-    async (price: Price) => {
+    async (price: Price, create: (plan: string) => Promise<CheckoutConfig> = (plan) => billingService.checkout(plan)) => {
       if (busy.current) return;
       busy.current = true;
       const plan = price.code;
       try {
         setState({ phase: 'starting', plan });
-        const config = await billingService.checkout(plan);
+        const config = await create(plan);
         setState({ phase: 'checkout', plan });
         const outcome = await openCheckout(config);
         if (outcome.kind === 'dismissed') {

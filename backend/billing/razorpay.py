@@ -94,9 +94,16 @@ def resume_subscription(subscription_id):
     return _request("POST", f"/subscriptions/{subscription_id}/resume", {"resume_at": "now"})
 
 
-def refund_payment(payment_id, *, amount_paise, notes):
-    """Refunds `amount_paise` of the payment. Razorpay refuses more than is left to refund."""
-    return _request("POST", f"/payments/{payment_id}/refund", {"amount": amount_paise, "speed": "normal", "notes": notes})
+def refund_payment(payment_id, *, amount_paise, notes, receipt=""):
+    """
+    Refunds `amount_paise` of the payment. Razorpay refuses more than is left to refund, but not a
+    second partial refund that still fits: `receipt` (ours, echoed back in fetch_refunds) is how an
+    earlier attempt's refund is recognised.
+    """
+    payload = {"amount": amount_paise, "speed": "normal", "notes": notes}
+    if receipt:
+        payload["receipt"] = receipt
+    return _request("POST", f"/payments/{payment_id}/refund", payload)
 
 
 def fetch_refunds(payment_id):
