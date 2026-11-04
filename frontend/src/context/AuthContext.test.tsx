@@ -4,7 +4,12 @@ import { AuthProvider, useAuth } from "./AuthContext";
 import type { User } from "@/models/Auth";
 import { authService, SessionCheckTimeout } from "@/services/AuthService";
 
-const fakeLocation = { href: "/pricing" };
+const fakeLocation = { href: "/pricing", replace: vi.fn() };
+const restoredFromCache = () => {
+  const event = new Event("pageshow") as PageTransitionEvent;
+  Object.defineProperty(event, "persisted", { value: true });
+  act(() => void window.dispatchEvent(event));
+};
 let logout: () => void;
 
 const Probe = () => {
@@ -39,6 +44,35 @@ describe("restoring a session", () => {
     show();
     await screen.findByText("Logged out");
     expect(authService.logout).not.toHaveBeenCalled();
+  });
+});
+
+describe("a page restored by the Back button", () => {
+  const showLoggedIn = async () => {
+    vi.spyOn(authService, "restore").mockResolvedValue({ id: 1, usage: {} } as User);
+    show();
+    await screen.findByText("Logged in");
+  };
+
+  it("leaves if it held a user who has since logged out", async () => {
+    await showLoggedIn();
+    vi.mocked(authService.hasToken).mockReturnValue(false);
+    restoredFromCache();
+    expect(fakeLocation.replace).toHaveBeenCalledWith("/login");
+  });
+
+  it("stays if the user is still logged in", async () => {
+    await showLoggedIn();
+    restoredFromCache();
+    expect(fakeLocation.replace).not.toHaveBeenCalled();
+  });
+
+  it("stays if it's a public page that never held a user", async () => {
+    vi.mocked(authService.hasToken).mockReturnValue(false);
+    show();
+    await screen.findByText("Logged out");
+    restoredFromCache();
+    expect(fakeLocation.replace).not.toHaveBeenCalled();
   });
 });
 

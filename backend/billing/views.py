@@ -4,6 +4,7 @@ import logging
 
 from django.conf import settings
 from django.core.cache import cache
+from redis.exceptions import RedisError
 from rest_framework import serializers, status
 from rest_framework.exceptions import APIException
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -29,6 +30,7 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 
+PLANS_CACHE_KEY = "billing:plans"
 PLANS_CACHE_SECONDS = 60
 
 
@@ -99,7 +101,12 @@ class PlansView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        return Response(cache.get_or_set("billing:plans", self.plans, PLANS_CACHE_SECONDS))
+        try:
+            return Response(cache.get_or_set(PLANS_CACHE_KEY, self.plans, PLANS_CACHE_SECONDS))
+        except RedisError:
+            # The cache only saves work: the pricing page shouldn't go down with it
+            logger.warning("Plans cache unavailable", exc_info=True)
+            return Response(self.plans())
 
     @staticmethod
     def plans():

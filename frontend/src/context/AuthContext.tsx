@@ -42,6 +42,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .finally(() => setReady(true));
   }, []);
 
+  // Back after logging out can restore this page, private data included, from the browser's cache.
+  // Only pages that held a user: logged-out visitors can go back to public pages as usual.
+  useEffect(() => {
+    if (!user) return;
+    const leaveIfLoggedOut = (e: PageTransitionEvent) => {
+      if (e.persisted && !authService.hasToken()) window.location.replace('/login');
+    };
+    window.addEventListener('pageshow', leaveIfLoggedOut);
+    return () => window.removeEventListener('pageshow', leaveIfLoggedOut);
+  }, [user]);
+
   const refreshUser = useCallback(async () => {
     if (!authService.hasToken()) return;
     try {

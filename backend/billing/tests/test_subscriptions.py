@@ -5,6 +5,7 @@ from unittest import mock
 import pytest
 from django.core.management import call_command
 from django.utils import timezone
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from accounts.models import Profile
 from billing import entitlements, notifications, razorpay, services, webhooks
@@ -51,6 +52,12 @@ def test_plans_are_cached_so_the_public_page_costs_no_queries(anon, plans, djang
     first = anon.get("/api/subscriptions/plans/").data
     with django_assert_num_queries(0):
         assert anon.get("/api/subscriptions/plans/").data == first
+
+
+def test_plans_still_load_when_the_cache_is_down(anon, plans):
+    with mock.patch("billing.views.cache.get_or_set", side_effect=RedisConnectionError):
+        response = anon.get("/api/subscriptions/plans/")
+    assert response.status_code == 200 and len(response.data["tiers"]) == 3
 
 
 def test_plans_are_public_and_list_every_tier(anon, plans):

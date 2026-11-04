@@ -13,6 +13,7 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import SimpleRateThrottle
 
 from billing import razorpay
+from billing.views import PLANS_CACHE_KEY
 from billing.models import SubscriptionPlan
 
 KEY_SECRET = "test_key_secret"
@@ -23,7 +24,7 @@ DAY = 86_400
 @pytest.fixture(autouse=True)
 def billing_settings(settings, monkeypatch):
     """Razorpay test keys, a paid-tier Gemini key (no real AI calls: tests that run jobs mock them) and no broker."""
-    cache.clear()  # the plans API is cached, and tests change what it returns
+    cache.delete(PLANS_CACHE_KEY)  # tests change what it returns
     settings.RAZORPAY_KEY_ID = "rzp_test_key"
     settings.RAZORPAY_KEY_SECRET = KEY_SECRET
     settings.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET
