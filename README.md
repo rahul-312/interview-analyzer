@@ -53,12 +53,13 @@ The tests (`extension/tests`, run with jsdom) sit outside `src` so their package
 
 ```
 frontend/src/
-├── pages/          thin route wrappers: _app, _document, login, register,
+├── pages/          thin route wrappers: _app, _document, index (home), login, register,
 │                   applications, applications/[id], interviews, interviews/[id], analysis, prep,
 │                   pricing, billing
 ├── components/     one folder per feature, index.tsx composes small section files
 │   ├── MainLayout/   auth guard, sticky navbar, page container
 │   ├── Navbar/       NavLinks, NavButton, UserMenu, HamburgerMenu (mobile)
+│   ├── Home/         public landing page, top bar and footer for logged-out pages
 │   ├── Applications/, Interviews/, Analysis/, Prep/
 │   ├── Billing/      pricing page, plans & billing dashboard, cancel dialog
 │   ├── ApplicationForm/, RoundForm/, Modal/, Badges/, Charts/, Auth/, Logo/

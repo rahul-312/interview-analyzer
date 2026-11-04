@@ -38,6 +38,10 @@ extension share one version number.
   `reconcile_subscriptions` retries any left unfinished.
 
 ### Changed
+- `/` is now a public home page. Logged-in users still go straight to their
+  applications, and the logo on the login and register pages links to it.
+- The pricing page is public. Logged-out visitors see the plans and sign up
+  from there, and anyone picking a paid plan comes back to it to pay.
 - The free plan now includes 1 prep plan per 24 hours (was 2).
 - An admin-set plan on a profile is now a complimentary plan. Users get
   whichever is higher: that plan or their subscription.

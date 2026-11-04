@@ -57,6 +57,7 @@
   --spacing-16xl: 2.5rem;   /* (40px) */
   --spacing-20xl: 3rem;     /* (48px) */
   --spacing-fab: 3.5rem;            /* (56px) */
+  --spacing-section: 6rem;          /* (96px) */
   --spacing-score-ring: 6rem;       /* (96px) */
   --spacing-search: 36rem;          /* (576px) */
   --spacing-modal: 32rem;           /* (512px) */
@@ -68,6 +69,8 @@
 
   /* Font Sizes and Line Heights */
   --text-xxs: 0.625rem;           /* (10px) */
+  --text-display: 3.75rem;        /* (60px) */
+  --text-display--line-height: 1.05;
   --text-title: 2.75rem;          /* (44px) */
   --text-title--line-height: 1.1;
   --text-heading: 1.75rem;        /* (28px) */
