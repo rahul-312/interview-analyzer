@@ -94,6 +94,11 @@ body {
   font-variant-numeric: lining-nums;
 }
 
+/* The home page, while a saved session is being checked (see _document) */
+html[data-session] [data-landing] {
+  visibility: hidden;
+}
+
 /* Frosted glass panel */
 @utility glass {
   background-color: rgb(255 255 255 / 0.55);

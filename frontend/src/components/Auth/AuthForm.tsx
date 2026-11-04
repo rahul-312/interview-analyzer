@@ -26,7 +26,9 @@ const AuthForm: React.FC<AuthFormProps> = ({ mode }) => {
   const [busy, setBusy] = useState(false);
   const isLogin = mode === 'login';
   // Someone picking a plan goes back to pricing. Only this page: `next` comes from the address bar.
-  const next = router.query.next === '/pricing' ? '/pricing' : '/applications';
+  const toPricing = router.query.next === '/pricing';
+  const plan = typeof router.query.plan === 'string' && /^[a-z_]+$/.test(router.query.plan) ? router.query.plan : undefined;
+  const next = !toPricing ? '/applications' : plan ? `/pricing?plan=${plan}` : '/pricing';
 
   // Already logged in: skip the form
   useEffect(() => {
@@ -52,7 +54,7 @@ const AuthForm: React.FC<AuthFormProps> = ({ mode }) => {
   };
 
   return (
-    <section className="flex min-h-screen flex-col items-center justify-center gap-8xl px-4xl">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-8xl px-4xl">
       <Logo href="/" />
       <Card className="w-full max-w-auth-card">
         <form onSubmit={handleSubmit} className="flex flex-col gap-4xl">
@@ -94,13 +96,13 @@ const AuthForm: React.FC<AuthFormProps> = ({ mode }) => {
 
           <p className="text-center text-sm text-medium-gray">
             {isLogin ? 'New here? ' : 'Already have an account? '}
-            <Link href={{ pathname: isLogin ? '/register' : '/login', query: next === '/pricing' ? { next } : {} }} className="font-medium text-primary hover:underline">
+            <Link href={{ pathname: isLogin ? '/register' : '/login', query: toPricing ? { next: '/pricing', ...(plan && { plan }) } : {} }} className="font-medium text-primary hover:underline">
               {isLogin ? 'Create an account' : 'Log in'}
             </Link>
           </p>
         </form>
       </Card>
-    </section>
+    </main>
   );
 };
 

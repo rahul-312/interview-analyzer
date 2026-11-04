@@ -298,6 +298,26 @@ describe("pricing page", () => {
     expect(within(card("Pro")).getByRole("button", { name: "Payments unavailable" })).toHaveProperty("disabled", true);
   });
 
+  it("opens on the plan picked before signing up, and leaves buying to the user", async () => {
+    render(<Pricing chosenPlan="pro_plus_yearly" />);
+    const notice = await screen.findByText(/You picked Pro Plus/);
+    expect(notice.textContent).toContain("/year");
+    expect(within(card("Pro Plus")).getByText("₹3,999")).toBeTruthy();
+    expect(api.checkout).not.toHaveBeenCalled();
+  });
+
+  it("ignores a picked plan it doesn't know, or one the user already has", async () => {
+    render(<Pricing chosenPlan="nonsense" />);
+    await screen.findByRole("region", { name: "Pro" });
+    expect(screen.queryByText(/You picked/)).toBeNull();
+    cleanup();
+
+    api.current.mockResolvedValue(current("pro_monthly"));
+    render(<Pricing chosenPlan="pro_monthly" />);
+    await screen.findByRole("button", { name: "Current plan" });
+    expect(screen.queryByText(/You picked/)).toBeNull();
+  });
+
   it("shows an error when plans can't load", async () => {
     api.plans.mockRejectedValue(new Error("Network down"));
     render(<Pricing />);

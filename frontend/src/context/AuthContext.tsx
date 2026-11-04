@@ -33,7 +33,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     authService
-      .me()
+      .restore()
       .then(setUser)
       .catch(() => authService.logout())
       .finally(() => setReady(true));

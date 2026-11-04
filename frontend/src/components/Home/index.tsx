@@ -7,32 +7,37 @@ import Hero from './Hero';
 import HowItWorks from './HowItWorks';
 import PublicPage from './PublicPage';
 import Button from '../ui/Button';
-import { authService } from '@/services/AuthService';
+import { useAuth } from '@/context/AuthContext';
 
 /** The public landing page. Anyone with a session goes straight to the app. */
 const Home: React.FC = () => {
   const router = useRouter();
+  const { user, ready } = useAuth();
 
-  // Checks the token, not the user, so returning users don't sit on this page waiting for /me
+  // _document hides this page while there's a saved session, so show it if the session turns out to be over
   useEffect(() => {
-    if (authService.hasToken()) router.replace('/applications');
-  }, [router]);
+    if (!ready) return;
+    if (user) router.replace('/applications');
+    else delete document.documentElement.dataset.session;
+  }, [ready, user, router]);
 
   return (
     <PublicPage>
-      <Hero />
-      <HowItWorks />
-      <Extension />
+      <div data-landing>
+        <Hero />
+        <HowItWorks />
+        <Extension />
 
-      {/* Closing call to action */}
-      <section className="flex flex-col items-center gap-6xl border-t border-light-gray py-20xl text-center lg:py-section">
-        <h2 className="max-w-modal-wide font-serif text-heading font-medium tracking-tight md:text-title">
-          Make your next interview better than your last.
-        </h2>
-        <Button href="/register" variant="primary">
-          Create a free account
-        </Button>
-      </section>
+        {/* Closing call to action */}
+        <section className="flex flex-col items-center gap-6xl border-t border-light-gray py-20xl text-center lg:py-section">
+          <h2 className="max-w-modal-wide font-serif text-heading font-medium tracking-tight md:text-title">
+            Make your next interview better than your last.
+          </h2>
+          <Button href="/register" variant="primary">
+            Create a free account
+          </Button>
+        </section>
+      </div>
     </PublicPage>
   );
 };

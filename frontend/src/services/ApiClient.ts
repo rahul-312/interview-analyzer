@@ -1,6 +1,6 @@
 import { errorText } from "@/utils/errorText";
 
-const ACCESS_KEY = "ia_access";
+export const ACCESS_KEY = "ia_access";
 const REFRESH_KEY = "ia_refresh";
 
 export class ApiError extends Error {
@@ -18,6 +18,8 @@ interface RequestOptions {
   method?: string;
   body?: unknown;
   auth?: boolean;
+  /** Send the user to /login when the session has expired. Off when the caller handles that itself. */
+  redirectOnExpiry?: boolean;
 }
 
 /**
@@ -96,7 +98,7 @@ export default class ApiClient {
         res = await this.send(path, options);
       } else {
         this.clearTokens();
-        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        if (options.redirectOnExpiry !== false && typeof window !== "undefined" && window.location.pathname !== "/login") {
           window.location.href = "/login";
         }
       }

@@ -29,6 +29,11 @@ export default class AuthService {
     return this.client.get<User>("/auth/me/");
   }
 
+  /** Loads the user for a saved session. An expired one just fails: public pages stay open. */
+  restore() {
+    return this.client.request<User>("/auth/me/", { redirectOnExpiry: false });
+  }
+
   logout() {
     this.client.clearTokens();
   }

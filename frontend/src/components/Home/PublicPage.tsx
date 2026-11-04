@@ -2,8 +2,16 @@ import React from 'react';
 import Logo from '../Logo';
 import Button from '../ui/Button';
 
+interface PublicPageProps {
+  children: React.ReactNode;
+  /** Where logging in or signing up from this page comes back to. */
+  returnTo?: string;
+}
+
 /** The top bar and footer around pages for logged-out visitors. */
-const PublicPage: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const PublicPage: React.FC<PublicPageProps> = ({ children, returnTo }) => {
+  const query = returnTo ? `?next=${returnTo}` : '';
+
   return (
     <div className="mx-auto flex min-h-screen max-w-page flex-col px-4xl md:px-12xl">
       {/* Top bar */}
@@ -13,19 +21,19 @@ const PublicPage: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <Button href="/pricing" className="rounded-xl px-lg py-xl text-sm font-medium text-charcoal-gray hover:text-ink sm:px-2xl">
             Pricing
           </Button>
-          <Button href="/login" className="rounded-xl px-lg py-xl text-sm font-medium text-charcoal-gray hover:text-ink sm:px-2xl">
+          <Button href={`/login${query}`} className="rounded-xl px-lg py-xl text-sm font-medium text-charcoal-gray hover:text-ink sm:px-2xl">
             Log in
           </Button>
-          <Button href="/register" variant="primary">
+          <Button href={`/register${query}`} variant="primary">
             Sign up
           </Button>
         </nav>
       </header>
 
-      <div className="flex-1">{children}</div>
+      <main className="flex-1">{children}</main>
 
       <footer className="border-t border-light-gray py-8xl text-sm text-medium-gray">
-        © {new Date().getFullYear()} Interview Analyzer
+        © Interview Analyzer
       </footer>
     </div>
   );

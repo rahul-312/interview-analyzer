@@ -1,17 +1,25 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from ".";
+import type { User } from "@/models/Auth";
 
 const replace = vi.fn();
+const auth = { user: null as User | null, ready: true };
 vi.mock("next/router", () => ({ useRouter: () => ({ replace }) }));
-vi.mock("@/services/AuthService", () => ({ authService: { hasToken: vi.fn() } }));
-const { authService } = await import("@/services/AuthService");
+vi.mock("@/context/AuthContext", () => ({ useAuth: () => auth }));
 
-afterEach(cleanup);
+beforeEach(() => {
+  auth.user = null;
+  auth.ready = true;
+});
+
+afterEach(() => {
+  cleanup();
+  delete document.documentElement.dataset.session;
+});
 
 describe("Home", () => {
   it("shows logged-out visitors the page, with ways to sign up and log in", () => {
-    vi.mocked(authService.hasToken).mockReturnValue(false);
     render(<Home />);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("costing you the offer");
     expect(screen.getByRole("link", { name: "Pricing" }).getAttribute("href")).toBe("/pricing");
@@ -20,9 +28,24 @@ describe("Home", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
-  it("sends anyone with a session to the app", () => {
-    vi.mocked(authService.hasToken).mockReturnValue(true);
+  it("sends a confirmed user to the app", () => {
+    auth.user = { id: 1 } as User;
     render(<Home />);
     expect(replace).toHaveBeenCalledWith("/applications");
+  });
+
+  it("keeps the page hidden and stays put while a saved session is being checked", () => {
+    auth.ready = false;
+    document.documentElement.dataset.session = "1";
+    render(<Home />);
+    expect(document.documentElement.dataset.session).toBe("1");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("shows the page when a saved session turns out to be over", () => {
+    document.documentElement.dataset.session = "1";
+    render(<Home />);
+    expect(document.documentElement.dataset.session).toBeUndefined();
+    expect(replace).not.toHaveBeenCalled();
   });
 });

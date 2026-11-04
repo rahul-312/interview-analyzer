@@ -21,11 +21,11 @@ const PublicPricing = () => {
     if (tier.code === 'free') return { label: 'Get started', href: '/register' };
     if (!plans.data?.billing_enabled) return { label: 'Payments unavailable', disabled: true };
     if (!price?.available) return { label: 'Not available yet', disabled: true };
-    return { label: `Get ${tier.name}`, href: '/register?next=/pricing' };
+    return { label: `Get ${tier.name}`, href: `/register?next=/pricing&plan=${price.code}` };
   };
 
   return (
-    <PublicPage>
+    <PublicPage returnTo="/pricing">
       <div className="flex flex-col gap-8xl py-12xl">
         <PageHeader
           title="Plans"

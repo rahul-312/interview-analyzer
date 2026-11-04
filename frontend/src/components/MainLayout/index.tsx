@@ -52,8 +52,8 @@ const MainLayout = ({ children }: LayoutProps) => {
     if (ready && !user && !isPublic && !isOpen) router.replace('/login');
   }, [ready, user, isPublic, isOpen, router]);
 
-  // Home, login and register render without the navbar
-  if (isPublic || (isOpen && ready && !user)) return <main>{children}</main>;
+  // Public pages render without the navbar, and have their own <main>
+  if (isPublic || (isOpen && ready && !user)) return <>{children}</>;
 
   if (!ready || !user) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-medium-gray">Loading…</div>;

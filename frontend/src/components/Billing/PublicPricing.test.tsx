@@ -15,7 +15,7 @@ describe("PublicPricing", () => {
     api.plans.mockResolvedValue(plansResponse());
     render(<PublicPricing />);
     expect((await screen.findByRole("link", { name: "Get started" })).getAttribute("href")).toBe("/register");
-    expect(screen.getByRole("link", { name: "Get Pro Plus" }).getAttribute("href")).toBe("/register?next=/pricing");
+    expect(screen.getByRole("link", { name: "Get Pro Plus" }).getAttribute("href")).toBe("/register?next=/pricing&plan=pro_plus_monthly");
     expect(api.current).not.toHaveBeenCalled();
   });
 

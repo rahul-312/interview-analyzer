@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import CheckoutStatus from './CheckoutStatus';
 import IntervalToggle from './IntervalToggle';
 import Notice from './Notice';
@@ -70,13 +70,19 @@ const UpgradeText = ({ price, quote }: { price: Price; quote: { data?: UpgradeQu
   );
 };
 
-/** The pricing page: every plan side by side, with subscribe, upgrade and switch buttons. */
-const Pricing = () => {
+/** The pricing page: every plan side by side, with subscribe, upgrade and switch buttons. `chosenPlan` is a price code picked before signing up. */
+const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
   const { refreshUser } = useAuth();
   const [interval, setBillingInterval] = useState<Interval>('month');
   const plans = useApi('billing-plans', () => billingService.plans());
   const current = useApi('billing-current', () => billingService.current());
   const setCurrent = current.setData;
+
+  const chosen = plans.data?.tiers.flatMap((t) => t.prices).find((p) => p.code === chosenPlan);
+  const chosenInterval = chosen?.interval;
+  useEffect(() => {
+    if (chosenInterval) setBillingInterval(chosenInterval);
+  }, [chosenInterval]);
 
   const onCheckoutChange = useCallback((next: CurrentSubscription) => setCurrent(next), [setCurrent]);
   const checkout = useCheckout(onCheckoutChange);
@@ -191,6 +197,9 @@ const Pricing = () => {
     return { label: 'Manage plan', href: '/billing' };
   };
 
+  const chosenTier = tiers.find((t) => t.code === chosen?.tier);
+  const chosenAction = chosenTier && actionFor(chosenTier, chosen);
+
   return (
     <div className="flex flex-col gap-8xl">
       <PageHeader
@@ -200,6 +209,11 @@ const Pricing = () => {
       />
 
       <CheckoutStatus state={checkout.state} />
+      {chosen && chosenAction?.onClick && checkout.state.phase === 'idle' && (
+        <Notice tone="info" action={<Button variant="link" onClick={chosenAction.onClick}>{chosenAction.label}</Button>}>
+          You picked {chosenTier?.name} at {priceLabel(chosen)}.
+        </Notice>
+      )}
       {changeResult && <Notice tone={changeResult.tone}>{changeResult.text}</Notice>}
       {!billing_enabled && <Notice tone="warn">Payments aren&apos;t set up on this server yet, so plans can&apos;t be bought.</Notice>}
       {me.subscription && !me.subscription.gives_access && me.actions.pay && (
