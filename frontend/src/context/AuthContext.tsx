@@ -42,8 +42,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .finally(() => setReady(true));
   }, []);
 
-  // Back after logging out can restore this page, private data included, from the browser's cache.
-  // Only pages that held a user: logged-out visitors can go back to public pages as usual.
+  // A session that expires leaves for /login with the user still set, and Back can restore that page,
+  // private data included, from the browser's cache. Logged-out visitors can go back to public pages as usual.
   useEffect(() => {
     if (!user) return;
     const leaveIfLoggedOut = (e: PageTransitionEvent) => {
@@ -86,8 +86,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const logout = useCallback(() => {
-    // The user stays set until the page goes, so nothing renders as logged out on the way
+    // Clear the user before leaving: Back can restore this page from the browser's cache, even for whoever logs in next
     authService.logout();
+    setUser(null);
     window.location.href = '/login';
   }, []);
 

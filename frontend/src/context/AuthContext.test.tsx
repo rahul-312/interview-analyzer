@@ -54,7 +54,7 @@ describe("a page restored by the Back button", () => {
     await screen.findByText("Logged in");
   };
 
-  it("leaves if it held a user who has since logged out", async () => {
+  it("leaves if it held a user whose session has since ended", async () => {
     await showLoggedIn();
     vi.mocked(authService.hasToken).mockReturnValue(false);
     restoredFromCache();
@@ -77,13 +77,13 @@ describe("a page restored by the Back button", () => {
 });
 
 describe("logging out", () => {
-  it("leaves for the login page without rendering as logged out first", async () => {
+  it("clears the user before leaving, so the page Back restores holds no data", async () => {
     vi.spyOn(authService, "restore").mockResolvedValue({ id: 1, usage: {} } as User);
     show();
     await screen.findByText("Logged in");
     act(() => logout());
     await waitFor(() => expect(fakeLocation.href).toBe("/login"));
     expect(authService.logout).toHaveBeenCalledOnce();
-    expect(screen.getByText("Logged in")).toBeTruthy();
+    expect(screen.getByText("Logged out")).toBeTruthy();
   });
 });
