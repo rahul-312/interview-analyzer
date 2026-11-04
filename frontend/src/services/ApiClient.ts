@@ -1,6 +1,6 @@
 import { errorText } from "@/utils/errorText";
 
-const ACCESS_KEY = "ia_access";
+export const ACCESS_KEY = "ia_access";
 const REFRESH_KEY = "ia_refresh";
 
 export class ApiError extends Error {
@@ -18,6 +18,9 @@ interface RequestOptions {
   method?: string;
   body?: unknown;
   auth?: boolean;
+  /** Send the user to /login when the session has expired. Off when the caller handles that itself. */
+  redirectOnExpiry?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -74,7 +77,7 @@ export default class ApiClient {
     return this.refreshing;
   }
 
-  private send(path: string, { method = "GET", body, auth = true }: RequestOptions) {
+  private send(path: string, { method = "GET", body, auth = true, signal }: RequestOptions) {
     // The browser's time zone, so the server's "today" (e.g. applying to a saved job) is the user's day.
     const headers: Record<string, string> = { "X-Timezone": Intl.DateTimeFormat().resolvedOptions().timeZone };
     if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -84,6 +87,7 @@ export default class ApiClient {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   }
 
@@ -96,7 +100,7 @@ export default class ApiClient {
         res = await this.send(path, options);
       } else {
         this.clearTokens();
-        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        if (options.redirectOnExpiry !== false && typeof window !== "undefined" && window.location.pathname !== "/login") {
           window.location.href = "/login";
         }
       }

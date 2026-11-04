@@ -6,7 +6,7 @@ import { Plus } from 'lucide-react';
 import Navbar from '../Navbar';
 import Sidebar from '../Navbar/Sidebar';
 import Button from '../ui/Button';
-import { publicRoutes } from '@/config/navItems';
+import { openRoutes, publicRoutes } from '@/config/navItems';
 import { useAuth } from '@/context/AuthContext';
 import { DialogsProvider } from '@/context/DialogsContext';
 import { useAddApplication } from '@/hooks/useAddApplication';
@@ -36,6 +36,7 @@ const MainLayout = ({ children }: LayoutProps) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebarCollapsed();
   const isPublic = publicRoutes.includes(router.pathname);
+  const isOpen = openRoutes.includes(router.pathname);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -48,11 +49,11 @@ const MainLayout = ({ children }: LayoutProps) => {
 
   // Send logged-out users to the login page
   useEffect(() => {
-    if (ready && !user && !isPublic) router.replace('/login');
-  }, [ready, user, isPublic, router]);
+    if (ready && !user && !isPublic && !isOpen) router.replace('/login');
+  }, [ready, user, isPublic, isOpen, router]);
 
-  // Login and register render without the navbar
-  if (isPublic) return <main>{children}</main>;
+  // Public pages render without the navbar, and have their own <main>
+  if (isPublic || (isOpen && !user)) return <>{children}</>;
 
   if (!ready || !user) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-medium-gray">Loading…</div>;

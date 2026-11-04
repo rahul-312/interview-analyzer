@@ -20,6 +20,11 @@ export default class BillingService {
     return this.client.get<PlansResponse>("/subscriptions/plans/");
   }
 
+  /** The plans for logged-out pages and prerendering: sends no token, so an expired one can't get in the way. */
+  publicPlans() {
+    return this.client.request<PlansResponse>("/subscriptions/plans/", { auth: false, signal: AbortSignal.timeout(5000) });
+  }
+
   current() {
     return this.client.get<CurrentSubscription>("/subscriptions/current/");
   }

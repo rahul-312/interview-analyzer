@@ -1,6 +1,11 @@
 import type { RegisterInput, TokenPair, User } from "@/models/Auth";
 import ApiClient, { apiClient } from "./ApiClient";
 
+const SESSION_CHECK_TIMEOUT_MS = 15000;
+
+/** The server didn't answer in time, which says nothing about the session itself. */
+export class SessionCheckTimeout extends Error {}
+
 export default class AuthService {
   private client: ApiClient;
 
@@ -27,6 +32,19 @@ export default class AuthService {
 
   me() {
     return this.client.get<User>("/auth/me/");
+  }
+
+  /** Loads the user for a saved session. An expired one just fails: public pages stay open. */
+  async restore() {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new SessionCheckTimeout()), SESSION_CHECK_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([this.client.request<User>("/auth/me/", { redirectOnExpiry: false }), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   logout() {

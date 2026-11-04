@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { RegisterInput, User } from '@/models/Auth';
-import { authService } from '@/services/AuthService';
+import { authService, SessionCheckTimeout } from '@/services/AuthService';
 
 interface AuthState {
   user: User | null;
@@ -33,11 +33,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     authService
-      .me()
+      .restore()
       .then(setUser)
-      .catch(() => authService.logout())
+      .catch((err) => {
+        // A slow server isn't a reason to lose the session: the next visit can still use it
+        if (!(err instanceof SessionCheckTimeout)) authService.logout();
+      })
       .finally(() => setReady(true));
   }, []);
+
+  // A session that expires leaves for /login with the user still set, and Back can restore that page,
+  // private data included, from the browser's cache. Logged-out visitors can go back to public pages as usual.
+  useEffect(() => {
+    if (!user) return;
+    const leaveIfLoggedOut = (e: PageTransitionEvent) => {
+      if (e.persisted && !authService.hasToken()) window.location.replace('/login');
+    };
+    window.addEventListener('pageshow', leaveIfLoggedOut);
+    return () => window.removeEventListener('pageshow', leaveIfLoggedOut);
+  }, [user]);
 
   const refreshUser = useCallback(async () => {
     if (!authService.hasToken()) return;
@@ -72,6 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const logout = useCallback(() => {
+    // Clear the user before leaving: Back can restore this page from the browser's cache, even for whoever logs in next
     authService.logout();
     setUser(null);
     window.location.href = '/login';

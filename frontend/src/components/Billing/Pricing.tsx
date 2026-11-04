@@ -5,6 +5,7 @@ import CheckoutStatus from './CheckoutStatus';
 import IntervalToggle from './IntervalToggle';
 import Notice from './Notice';
 import PlanColumn, { type PlanAction } from './PlanColumn';
+import PlanNotes from './PlanNotes';
 import Modal from '../Modal';
 import Button from '../ui/Button';
 import { ErrorMessage, Loading } from '../ui/Feedback';
@@ -14,7 +15,7 @@ import { useApi } from '@/hooks/useApi';
 import { useCheckout } from '@/hooks/useCheckout';
 import type { CheckoutConfig, CurrentSubscription, Interval, Price, TierWithPrices, UpgradeQuote } from '@/models/Billing';
 import { billingService } from '@/services/BillingService';
-import { fairUseNote, formatPrice, priceLabel } from '@/utils/billing';
+import { formatPrice, priceLabel } from '@/utils/billing';
 import { errorText } from '@/utils/errorText';
 import { formatDate } from '@/utils/format';
 
@@ -69,13 +70,16 @@ const UpgradeText = ({ price, quote }: { price: Price; quote: { data?: UpgradeQu
   );
 };
 
-/** The pricing page: every plan side by side, with subscribe, upgrade and switch buttons. */
-const Pricing = () => {
+/** The pricing page: every plan side by side, with subscribe, upgrade and switch buttons. `chosenPlan` is a price code picked before signing up. */
+const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
   const { refreshUser } = useAuth();
-  const [interval, setBillingInterval] = useState<Interval>('month');
+  const [toggledInterval, setBillingInterval] = useState<Interval | null>(null);
   const plans = useApi('billing-plans', () => billingService.plans());
   const current = useApi('billing-current', () => billingService.current());
   const setCurrent = current.setData;
+
+  const chosen = plans.data?.tiers.flatMap((t) => t.prices).find((p) => p.code === chosenPlan);
+  const interval = toggledInterval ?? chosen?.interval ?? 'month';
 
   const onCheckoutChange = useCallback((next: CurrentSubscription) => setCurrent(next), [setCurrent]);
   const checkout = useCheckout(onCheckoutChange);
@@ -190,7 +194,8 @@ const Pricing = () => {
     return { label: 'Manage plan', href: '/billing' };
   };
 
-  const proPlus = tiers.find((t) => t.code === 'pro_plus');
+  const chosenTier = tiers.find((t) => t.code === chosen?.tier);
+  const chosenAction = chosenTier && actionFor(chosenTier, chosen);
 
   return (
     <div className="flex flex-col gap-8xl">
@@ -201,6 +206,11 @@ const Pricing = () => {
       />
 
       <CheckoutStatus state={checkout.state} />
+      {chosen && chosenAction?.onClick && !chosenAction.disabled && checkout.state.phase === 'idle' && (
+        <Notice tone="info" action={<Button variant="link" onClick={chosenAction.onClick}>{chosenAction.label}</Button>}>
+          You picked {chosenTier?.name} at {priceLabel(chosen)}.
+        </Notice>
+      )}
       {changeResult && <Notice tone={changeResult.tone}>{changeResult.text}</Notice>}
       {!billing_enabled && <Notice tone="warn">Payments aren&apos;t set up on this server yet, so plans can&apos;t be bought.</Notice>}
       {me.subscription && !me.subscription.gives_access && me.actions.pay && (
@@ -226,25 +236,7 @@ const Pricing = () => {
         })}
       </div>
 
-      <div className="flex flex-col gap-md text-xs text-medium-gray">
-        {proPlus && <p>* {fairUseNote(proPlus)}</p>}
-        <p>
-          Limits count over a rolling 24 hours: each run frees up 24 hours after it started. Runs that fail for reasons
-          that aren&apos;t yours are given back. On Free, your debriefs may be used to improve the AI; on Pro and Pro
-          Plus they never are.
-        </p>
-        <p>
-          Upgrades apply straight away. Paying by UPI Autopay or eMandate, an upgrade starts a new subscription and
-          refunds the unused days of your current one. Downgrades and monthly/yearly switches apply at your next
-          renewal. Prices are in INR and billed by Razorpay.
-        </p>
-        <p>
-          {refund_days > 0 &&
-            `${refund_days}-day money-back guarantee: cancel within ${refund_days} days of a new subscription's first payment for a full refund, once per account. `}
-          After that, cancelling stops renewals and you keep your plan until the end of the period you paid for; that
-          period isn&apos;t refunded.
-        </p>
-      </div>
+      <PlanNotes tiers={tiers} refundDays={refund_days} />
 
       {changeTo && (
         <Modal title="Change plan" onClose={() => !changing && closeChange()}>

@@ -3,6 +3,8 @@ import json
 import logging
 
 from django.conf import settings
+from django.core.cache import cache
+from redis.exceptions import RedisError
 from rest_framework import serializers, status
 from rest_framework.exceptions import APIException
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -27,6 +29,9 @@ from .serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+PLANS_CACHE_KEY = "billing:plans"
+PLANS_CACHE_SECONDS = 60
 
 
 def billing_error(exc):
@@ -92,16 +97,25 @@ class BillingActionView(APIView):
 
 
 class PlansView(APIView):
-    """GET: every plan, what it includes and its prices. Public, for the pricing page."""
+    """GET: every plan, what it includes and its prices. Public, for the pricing page, so it's cached briefly."""
     permission_classes = [AllowAny]
 
     def get(self, request):
-        return Response({
+        try:
+            return Response(cache.get_or_set(PLANS_CACHE_KEY, self.plans, PLANS_CACHE_SECONDS))
+        except RedisError:
+            # The cache only saves work: the pricing page shouldn't go down with it
+            logger.warning("Plans cache unavailable", exc_info=True)
+            return Response(self.plans())
+
+    @staticmethod
+    def plans():
+        return {
             "tiers": plans_data(),
             "billing_enabled": razorpay.enabled(),
             "grace_days": settings.BILLING_GRACE_DAYS,
             "refund_days": settings.BILLING_REFUND_DAYS,
-        })
+        }
 
 
 class CurrentSubscriptionView(APIView):

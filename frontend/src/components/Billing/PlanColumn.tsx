@@ -77,7 +77,7 @@ const PlanColumn: React.FC<PlanColumnProps> = ({ tier, price, interval, highligh
 
       {action &&
         (action.href ? (
-          <Button variant="secondary" href={action.href}>
+          <Button variant={highlighted ? 'primary' : 'secondary'} href={action.href}>
             {action.label}
           </Button>
         ) : (
