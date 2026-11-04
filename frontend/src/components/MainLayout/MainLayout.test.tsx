@@ -46,9 +46,17 @@ describe("MainLayout", () => {
     expect(screen.getByText("Page")).toBeTruthy();
   });
 
-  it("waits on pricing while the session is checked, so the wrong version doesn't load", () => {
+  it("renders pricing while the session is checked, so it's in the prerendered page", () => {
     auth.ready = false;
     show("/pricing");
+    expect(screen.getByText("Page")).toBeTruthy();
+    expect(screen.queryByText("App navbar")).toBeNull();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("waits on private pages while the session is checked", () => {
+    auth.ready = false;
+    show("/applications");
     expect(screen.queryByText("Page")).toBeNull();
     expect(replace).not.toHaveBeenCalled();
   });

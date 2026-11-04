@@ -20,6 +20,7 @@ interface RequestOptions {
   auth?: boolean;
   /** Send the user to /login when the session has expired. Off when the caller handles that itself. */
   redirectOnExpiry?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -76,7 +77,7 @@ export default class ApiClient {
     return this.refreshing;
   }
 
-  private send(path: string, { method = "GET", body, auth = true }: RequestOptions) {
+  private send(path: string, { method = "GET", body, auth = true, signal }: RequestOptions) {
     // The browser's time zone, so the server's "today" (e.g. applying to a saved job) is the user's day.
     const headers: Record<string, string> = { "X-Timezone": Intl.DateTimeFormat().resolvedOptions().timeZone };
     if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -86,6 +87,7 @@ export default class ApiClient {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   }
 

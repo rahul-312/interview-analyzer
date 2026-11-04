@@ -8,6 +8,7 @@ from unittest import mock
 
 import pytest
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from rest_framework.test import APIClient
 from rest_framework.throttling import SimpleRateThrottle
 
@@ -22,6 +23,7 @@ DAY = 86_400
 @pytest.fixture(autouse=True)
 def billing_settings(settings, monkeypatch):
     """Razorpay test keys, a paid-tier Gemini key (no real AI calls: tests that run jobs mock them) and no broker."""
+    cache.clear()  # the plans API is cached, and tests change what it returns
     settings.RAZORPAY_KEY_ID = "rzp_test_key"
     settings.RAZORPAY_KEY_SECRET = KEY_SECRET
     settings.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET

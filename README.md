@@ -35,6 +35,8 @@ Open http://localhost:3000 and create an account.
 
 ## Browser extension
 
+Once it's published, set `NEXT_PUBLIC_EXTENSION_URL` in the frontend's environment and the home page shows an install button.
+
 `extension/` is a Chrome extension (it also works in Edge and Brave) for saving jobs without leaving the job site. On any job site or company careers page it adds a **+ Track** button to every job card in a list and a **+ Save to Interview Analyzer** button to each job's page. If a page isn't recognised as a job, click the extension's toolbar icon and choose **Save the job on this page**. Either way, the same "Add application" pop-up opens on the page, already filled in.
 
 To install it, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the `extension/src` folder. The first time you save a job, the pop-up sends you to the extension's own sign-in page. After changing the extension's code, click its reload button on that page and reload the job site.

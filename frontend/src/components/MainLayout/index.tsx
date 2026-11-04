@@ -53,7 +53,7 @@ const MainLayout = ({ children }: LayoutProps) => {
   }, [ready, user, isPublic, isOpen, router]);
 
   // Public pages render without the navbar, and have their own <main>
-  if (isPublic || (isOpen && ready && !user)) return <>{children}</>;
+  if (isPublic || (isOpen && !user)) return <>{children}</>;
 
   if (!ready || !user) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-medium-gray">Loading…</div>;

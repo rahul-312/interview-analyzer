@@ -11,6 +11,7 @@ vi.mock("@/components/Billing/Pricing", () => ({
   default: ({ chosenPlan }: { chosenPlan?: string }) => <p>In-app pricing: {chosenPlan ?? "none"}</p>,
 }));
 vi.mock("@/components/Billing/PublicPricing", () => ({ default: () => <p>Public pricing</p> }));
+vi.mock("next/head", () => ({ default: () => null }));
 
 afterEach(cleanup);
 
@@ -18,21 +19,21 @@ describe("the pricing page", () => {
   it("shows the public version when logged out", () => {
     auth.user = null;
     router.query = { plan: "pro_yearly" };
-    render(<PricingPage />);
+    render(<PricingPage plans={null} />);
     expect(screen.getByText("Public pricing")).toBeTruthy();
   });
 
   it("passes ?plan= to the in-app version", () => {
     auth.user = { id: 1 };
     router.query = { plan: "pro_yearly" };
-    render(<PricingPage />);
+    render(<PricingPage plans={null} />);
     expect(screen.getByText("In-app pricing: pro_yearly")).toBeTruthy();
   });
 
   it("ignores a repeated plan", () => {
     auth.user = { id: 1 };
     router.query = { plan: ["pro_yearly", "pro_monthly"] };
-    render(<PricingPage />);
+    render(<PricingPage plans={null} />);
     expect(screen.getByText("In-app pricing: none")).toBeTruthy();
   });
 });

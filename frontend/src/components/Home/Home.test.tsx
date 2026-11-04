@@ -28,6 +28,17 @@ describe("Home", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it("offers the extension only once there's somewhere to install it", () => {
+    render(<Home />);
+    expect(screen.queryByRole("link", { name: "Install the extension" })).toBeNull();
+    cleanup();
+
+    vi.stubEnv("NEXT_PUBLIC_EXTENSION_URL", "https://example.test/extension");
+    render(<Home />);
+    expect(screen.getByRole("link", { name: "Install the extension" }).getAttribute("href")).toBe("https://example.test/extension");
+    vi.unstubAllEnvs();
+  });
+
   it("sends a confirmed user to the app", () => {
     auth.user = { id: 1 } as User;
     render(<Home />);
@@ -44,7 +55,7 @@ describe("Home", () => {
 
   it("puts the whole page, top bar included, inside what gets hidden", () => {
     const { container } = render(<Home />);
-    const hidden = container.querySelector("[data-landing]")!;
+    const hidden = container.querySelector("[data-public-page]")!;
     expect(hidden.contains(screen.getByRole("link", { name: "Log in" }))).toBe(true);
     expect(hidden.contains(screen.getByRole("contentinfo"))).toBe(true);
     expect(hidden.contains(container.querySelector("[data-session-loading]"))).toBe(false);

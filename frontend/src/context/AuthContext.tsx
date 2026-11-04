@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { RegisterInput, User } from '@/models/Auth';
-import { authService } from '@/services/AuthService';
+import { authService, SessionCheckTimeout } from '@/services/AuthService';
 
 interface AuthState {
   user: User | null;
@@ -35,7 +35,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     authService
       .restore()
       .then(setUser)
-      .catch(() => authService.logout())
+      .catch((err) => {
+        // A slow server isn't a reason to lose the session: the next visit can still use it
+        if (!(err instanceof SessionCheckTimeout)) authService.logout();
+      })
       .finally(() => setReady(true));
   }, []);
 
@@ -72,8 +75,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const logout = useCallback(() => {
+    // The user stays set until the page goes, so nothing renders as logged out on the way
     authService.logout();
-    setUser(null);
     window.location.href = '/login';
   }, []);
 

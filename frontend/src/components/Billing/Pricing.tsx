@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import CheckoutStatus from './CheckoutStatus';
 import IntervalToggle from './IntervalToggle';
 import Notice from './Notice';
@@ -73,16 +73,13 @@ const UpgradeText = ({ price, quote }: { price: Price; quote: { data?: UpgradeQu
 /** The pricing page: every plan side by side, with subscribe, upgrade and switch buttons. `chosenPlan` is a price code picked before signing up. */
 const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
   const { refreshUser } = useAuth();
-  const [interval, setBillingInterval] = useState<Interval>('month');
+  const [toggledInterval, setBillingInterval] = useState<Interval | null>(null);
   const plans = useApi('billing-plans', () => billingService.plans());
   const current = useApi('billing-current', () => billingService.current());
   const setCurrent = current.setData;
 
   const chosen = plans.data?.tiers.flatMap((t) => t.prices).find((p) => p.code === chosenPlan);
-  const chosenInterval = chosen?.interval;
-  useEffect(() => {
-    if (chosenInterval) setBillingInterval(chosenInterval);
-  }, [chosenInterval]);
+  const interval = toggledInterval ?? chosen?.interval ?? 'month';
 
   const onCheckoutChange = useCallback((next: CurrentSubscription) => setCurrent(next), [setCurrent]);
   const checkout = useCheckout(onCheckoutChange);

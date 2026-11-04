@@ -302,7 +302,7 @@ describe("pricing page", () => {
     render(<Pricing chosenPlan="pro_plus_yearly" />);
     const notice = await screen.findByText(/You picked Pro Plus/);
     expect(notice.textContent).toContain("/year");
-    expect(await within(card("Pro Plus")).findByText("₹3,999")).toBeTruthy();
+    expect(within(card("Pro Plus")).getByText("₹3,999")).toBeTruthy();
     expect(api.checkout).not.toHaveBeenCalled();
   });
 

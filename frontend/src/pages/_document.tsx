@@ -1,7 +1,7 @@
 import { Html, Head, Main, NextScript } from "next/document";
 import { ACCESS_KEY } from "@/services/ApiClient";
 
-// Runs before the first paint, so logged-in users don't see the home page on their way to the app
+// Runs before the first paint, so logged-in users don't see the public pages
 const markSession = `try{if(localStorage.getItem(${JSON.stringify(ACCESS_KEY)}))document.documentElement.dataset.session="1"}catch(e){}`;
 
 export default function Document() {

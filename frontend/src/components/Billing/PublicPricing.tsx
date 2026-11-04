@@ -9,17 +9,21 @@ import PublicPage from '../Home/PublicPage';
 import { ErrorMessage, Loading } from '../ui/Feedback';
 import PageHeader from '../ui/PageHeader';
 import { useApi } from '@/hooks/useApi';
-import type { Interval, Price, TierWithPrices } from '@/models/Billing';
+import type { Interval, PlansResponse, Price, TierWithPrices } from '@/models/Billing';
 import { billingService } from '@/services/BillingService';
 
-/** The pricing page for logged-out visitors. Paid plans sign up first, then come back here to buy. */
-const PublicPricing = () => {
+/**
+ * The pricing page for logged-out visitors. Paid plans sign up first, then come back here to buy.
+ * `initialPlans` come from the prerender; without them, the page loads the plans itself.
+ */
+const PublicPricing: React.FC<{ initialPlans?: PlansResponse | null }> = ({ initialPlans }) => {
   const [interval, setBillingInterval] = useState<Interval>('month');
-  const plans = useApi('billing-plans', () => billingService.plans());
+  const fetched = useApi(initialPlans ? null : 'billing-plans', () => billingService.publicPlans());
+  const plans = initialPlans ?? fetched.data;
 
   const actionFor = (tier: TierWithPrices, price: Price | undefined): PlanAction => {
     if (tier.code === 'free') return { label: 'Get started', href: '/register' };
-    if (!plans.data?.billing_enabled) return { label: 'Payments unavailable', disabled: true };
+    if (!plans?.billing_enabled) return { label: 'Payments unavailable', disabled: true };
     if (!price?.available) return { label: 'Not available yet', disabled: true };
     return { label: `Get ${tier.name}`, href: `/register?next=/pricing&plan=${price.code}` };
   };
@@ -33,17 +37,17 @@ const PublicPricing = () => {
           actions={<IntervalToggle value={interval} onChange={setBillingInterval} />}
         />
 
-        {plans.loading && !plans.data && <Loading />}
-        {!plans.loading && !plans.data && <ErrorMessage message={plans.error || 'Plans could not be loaded.'} />}
+        {fetched.loading && !plans && <Loading />}
+        {!fetched.loading && !plans && <ErrorMessage message={fetched.error || 'Plans could not be loaded.'} />}
 
-        {plans.data && (
+        {plans && (
           <>
-            {!plans.data.billing_enabled && (
+            {!plans.billing_enabled && (
               <Notice tone="warn">Payments aren&apos;t set up on this server yet, so plans can&apos;t be bought.</Notice>
             )}
 
             <div className="grid grid-cols-1 gap-6xl pt-2xl lg:grid-cols-3">
-              {plans.data.tiers.map((tier) => {
+              {plans.tiers.map((tier) => {
                 const price = tier.prices.find((p) => p.interval === interval);
                 return (
                   <PlanColumn
@@ -58,7 +62,7 @@ const PublicPricing = () => {
               })}
             </div>
 
-            <PlanNotes tiers={plans.data.tiers} refundDays={plans.data.refund_days} />
+            <PlanNotes tiers={plans.tiers} refundDays={plans.refund_days} />
           </>
         )}
       </div>

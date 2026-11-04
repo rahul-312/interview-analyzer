@@ -94,9 +94,9 @@ body {
   font-variant-numeric: lining-nums;
 }
 
-/* While a saved session is being checked (see _document), the home page shows Loading… instead */
+/* While a saved session is being checked (see _document), public pages show Loading… instead */
 [data-session-loading],
-html[data-session] [data-landing] {
+html[data-session] [data-public-page] {
   display: none;
 }
 

@@ -20,6 +20,7 @@ Where these are defined:
 - `backend/billing/tiers.py` lists what each plan includes. The usage limits, the plans API and the pricing page all read from it.
 - The limits can be changed per deployment with `FREE_/PRO_/PRO_PLUS_ANALYSES_PER_24H` and `..._PREP_PLANS_PER_24H`.
 - Prices and Razorpay plan IDs are rows in the `SubscriptionPlan` table. A data migration adds the four paid plans.
+- The plans API is public, so it's cached for 60 seconds, and `/pricing` is prerendered from it and refreshed as often. A price change can take up to two minutes to show there. Checkout always uses the current price.
 
 **Fair use on Pro Plus.** The pricing page says "Unlimited, fair use" and spells out the real limit underneath: 50 AI round analyses in any rolling 24 hours. The server enforces that limit like any other.
 

@@ -47,6 +47,12 @@ def test_new_users_are_on_free(api, user):
     assert Profile.objects.get(user=user).plan == "free"
 
 
+def test_plans_are_cached_so_the_public_page_costs_no_queries(anon, plans, django_assert_num_queries):
+    first = anon.get("/api/subscriptions/plans/").data
+    with django_assert_num_queries(0):
+        assert anon.get("/api/subscriptions/plans/").data == first
+
+
 def test_plans_are_public_and_list_every_tier(anon, plans):
     data = anon.get("/api/subscriptions/plans/").data
     by_code = {t["code"]: t for t in data["tiers"]}

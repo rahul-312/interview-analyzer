@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ApiClient, { ACCESS_KEY } from "./ApiClient";
-import AuthService from "./AuthService";
+import AuthService, { SessionCheckTimeout } from "./AuthService";
 
 const service = new AuthService(new ApiClient("http://api.test"));
 const fakeLocation = { pathname: "/pricing", href: "http://app.test/pricing" };
@@ -23,6 +23,16 @@ describe("an expired session", () => {
     await expect(service.restore()).rejects.toThrow();
     expect(service.hasToken()).toBe(false);
     expect(fakeLocation.href).toBe("http://app.test/pricing");
+  });
+
+  it("gives up on a server that doesn't answer, and keeps the tokens", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    const check = expect(service.restore()).rejects.toBeInstanceOf(SessionCheckTimeout);
+    await vi.advanceTimersByTimeAsync(15000);
+    await check;
+    vi.useRealTimers();
+    expect(service.hasToken()).toBe(true);
   });
 
   it("any other request still goes to login", async () => {
