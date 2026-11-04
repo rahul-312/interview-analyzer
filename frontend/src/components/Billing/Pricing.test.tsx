@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Pricing from "./Pricing";
 import type { UpgradeQuote } from "@/models/Billing";
 import { ApiError } from "@/services/ApiClient";
-import { current, plansResponse } from "@/test/fixtures";
+import { current, plansResponse, price, subscription } from "@/test/fixtures";
 
 const refreshUser = vi.fn(async () => {});
 vi.mock("@/context/AuthContext", () => ({ useAuth: () => ({ refreshUser }) }));
@@ -302,8 +302,16 @@ describe("pricing page", () => {
     render(<Pricing chosenPlan="pro_plus_yearly" />);
     const notice = await screen.findByText(/You picked Pro Plus/);
     expect(notice.textContent).toContain("/year");
-    expect(within(card("Pro Plus")).getByText("₹3,999")).toBeTruthy();
+    expect(await within(card("Pro Plus")).findByText("₹3,999")).toBeTruthy();
     expect(api.checkout).not.toHaveBeenCalled();
+  });
+
+  it("doesn't offer a picked plan that's already scheduled", async () => {
+    const scheduled = subscription("pro_monthly", { scheduled_plan: price("pro_yearly") });
+    api.current.mockResolvedValue(current("pro_monthly", { subscription: scheduled }));
+    render(<Pricing chosenPlan="pro_yearly" />);
+    await screen.findByRole("button", { name: /Switch to ₹1,699/ });
+    expect(screen.queryByText(/You picked/)).toBeNull();
   });
 
   it("ignores a picked plan it doesn't know, or one the user already has", async () => {

@@ -22,23 +22,29 @@ const Home: React.FC = () => {
   }, [ready, user, router]);
 
   return (
-    <PublicPage>
-      <div data-landing>
-        <Hero />
-        <HowItWorks />
-        <Extension />
-
-        {/* Closing call to action */}
-        <section className="flex flex-col items-center gap-6xl border-t border-light-gray py-20xl text-center lg:py-section">
-          <h2 className="max-w-modal-wide font-serif text-heading font-medium tracking-tight md:text-title">
-            Make your next interview better than your last.
-          </h2>
-          <Button href="/register" variant="primary">
-            Create a free account
-          </Button>
-        </section>
+    <>
+      <div data-session-loading className="min-h-screen items-center justify-center text-sm text-medium-gray">
+        Loading…
       </div>
-    </PublicPage>
+
+      <div data-landing>
+        <PublicPage>
+          <Hero />
+          <HowItWorks />
+          <Extension />
+
+          {/* Closing call to action */}
+          <section className="flex flex-col items-center gap-6xl border-t border-light-gray py-20xl text-center lg:py-section">
+            <h2 className="max-w-modal-wide font-serif text-heading font-medium tracking-tight md:text-title">
+              Make your next interview better than your last.
+            </h2>
+            <Button href="/register" variant="primary">
+              Create a free account
+            </Button>
+          </section>
+        </PublicPage>
+      </div>
+    </>
   );
 };
 

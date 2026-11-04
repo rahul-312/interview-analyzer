@@ -42,6 +42,14 @@ describe("Home", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it("puts the whole page, top bar included, inside what gets hidden", () => {
+    const { container } = render(<Home />);
+    const hidden = container.querySelector("[data-landing]")!;
+    expect(hidden.contains(screen.getByRole("link", { name: "Log in" }))).toBe(true);
+    expect(hidden.contains(screen.getByRole("contentinfo"))).toBe(true);
+    expect(hidden.contains(container.querySelector("[data-session-loading]"))).toBe(false);
+  });
+
   it("shows the page when a saved session turns out to be over", () => {
     document.documentElement.dataset.session = "1";
     render(<Home />);

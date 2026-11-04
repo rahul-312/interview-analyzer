@@ -209,7 +209,7 @@ const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
       />
 
       <CheckoutStatus state={checkout.state} />
-      {chosen && chosenAction?.onClick && checkout.state.phase === 'idle' && (
+      {chosen && chosenAction?.onClick && !chosenAction.disabled && checkout.state.phase === 'idle' && (
         <Notice tone="info" action={<Button variant="link" onClick={chosenAction.onClick}>{chosenAction.label}</Button>}>
           You picked {chosenTier?.name} at {priceLabel(chosen)}.
         </Notice>

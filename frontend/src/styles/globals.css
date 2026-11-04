@@ -94,9 +94,14 @@ body {
   font-variant-numeric: lining-nums;
 }
 
-/* The home page, while a saved session is being checked (see _document) */
+/* While a saved session is being checked (see _document), the home page shows Loading… instead */
+[data-session-loading],
 html[data-session] [data-landing] {
-  visibility: hidden;
+  display: none;
+}
+
+html[data-session] [data-session-loading] {
+  display: flex;
 }
 
 /* Frosted glass panel */
