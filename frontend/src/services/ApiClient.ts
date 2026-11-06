@@ -30,6 +30,8 @@ interface RequestOptions {
 export default class ApiClient {
   private baseUrl: string;
   private refreshing: Promise<boolean> | null = null;
+  /** Runs when an expired session is about to be sent to /login. */
+  onSessionExpired?: () => void;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -101,6 +103,7 @@ export default class ApiClient {
       } else {
         this.clearTokens();
         if (options.redirectOnExpiry !== false && typeof window !== "undefined" && window.location.pathname !== "/login") {
+          this.onSessionExpired?.();
           window.location.href = "/login";
         }
       }

@@ -47,6 +47,10 @@ export default class AuthService {
     }
   }
 
+  onSessionExpired(callback: () => void) {
+    this.client.onSessionExpired = callback;
+  }
+
   logout() {
     this.client.clearTokens();
   }

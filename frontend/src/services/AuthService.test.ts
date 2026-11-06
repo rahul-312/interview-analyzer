@@ -35,8 +35,11 @@ describe("an expired session", () => {
     expect(service.hasToken()).toBe(true);
   });
 
-  it("any other request still goes to login", async () => {
+  it("any other request still goes to login, saying so first", async () => {
+    const hrefWhenTold: string[] = [];
+    service.onSessionExpired(() => hrefWhenTold.push(fakeLocation.href));
     await expect(service.me()).rejects.toThrow();
     expect(fakeLocation.href).toBe("/login");
+    expect(hrefWhenTold).toEqual(["http://app.test/pricing"]);
   });
 });

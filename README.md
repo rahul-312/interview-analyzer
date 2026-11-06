@@ -79,6 +79,8 @@ Spacing uses the named scale from `globals.css` (`gap-4xl`, `px-6xl` and so on) 
 
 ## Tests and checks
 
+GitHub Actions runs all of these on pull requests and on pushes to `main` and `dev` (`.github/workflows/ci.yml`).
+
 ```powershell
 cd backend;   .venv\Scripts\python -m pytest -q
 cd frontend;  npm run lint; npm test; npm run build

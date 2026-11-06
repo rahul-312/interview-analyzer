@@ -42,15 +42,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .finally(() => setReady(true));
   }, []);
 
-  // A session that expires leaves for /login with the user still set, and Back can restore that page,
-  // private data included, from the browser's cache. Logged-out visitors can go back to public pages as usual.
+  // Clear the user before leaving for /login: Back can restore this page from the browser's cache, even for
+  // whoever logs in next. The mark keeps public pages from showing on the way out.
+  const clearUserToLeave = useCallback(() => {
+    document.documentElement.dataset.leaving = '1';
+    setUser(null);
+  }, []);
+
+  useEffect(() => authService.onSessionExpired(clearUserToLeave), [clearUserToLeave]);
+
+  // A page Back restored may be out of date: the session can have changed in this tab or another one
   useEffect(() => {
-    if (!user) return;
-    const leaveIfLoggedOut = (e: PageTransitionEvent) => {
-      if (e.persisted && !authService.hasToken()) window.location.replace('/login');
+    const onRestored = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      delete document.documentElement.dataset.leaving;
+      const hasToken = authService.hasToken();
+      if (user && !hasToken) window.location.replace('/login');
+      if (!user && hasToken) window.location.reload();
     };
-    window.addEventListener('pageshow', leaveIfLoggedOut);
-    return () => window.removeEventListener('pageshow', leaveIfLoggedOut);
+    window.addEventListener('pageshow', onRestored);
+    return () => window.removeEventListener('pageshow', onRestored);
   }, [user]);
 
   const refreshUser = useCallback(async () => {
@@ -86,11 +97,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const logout = useCallback(() => {
-    // Clear the user before leaving: Back can restore this page from the browser's cache, even for whoever logs in next
     authService.logout();
-    setUser(null);
+    clearUserToLeave();
     window.location.href = '/login';
-  }, []);
+  }, [clearUserToLeave]);
 
   // Stable value: consumers only re-render when the user or ready state actually changes
   const value = useMemo(
