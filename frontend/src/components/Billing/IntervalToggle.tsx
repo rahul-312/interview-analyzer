@@ -17,7 +17,7 @@ const IntervalToggle: React.FC<{ value: Interval; onChange: (value: Interval) =>
         aria-checked={value === option.value}
         onClick={() => onChange(option.value)}
         className={`cursor-pointer rounded-full px-4xl py-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-border ${
-          value === option.value ? 'bg-primary text-white shadow-sm' : 'text-dark-gray hover:text-ink'
+          value === option.value ? 'bg-brand text-white shadow-sm' : 'text-dark-gray hover:text-ink'
         }`}
       >
         {option.label}

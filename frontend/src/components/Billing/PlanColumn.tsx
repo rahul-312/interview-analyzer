@@ -47,7 +47,7 @@ const PlanColumn: React.FC<PlanColumnProps> = ({ tier, price, interval, highligh
       }`}
     >
       {highlighted && (
-        <span className="absolute -top-2xl left-8xl inline-flex items-center gap-sm rounded-full bg-primary px-xl py-sm text-xs font-medium text-white">
+        <span className="absolute -top-2xl left-8xl inline-flex items-center gap-sm rounded-full bg-brand px-xl py-sm text-xs font-medium text-white">
           <Sparkles size={12} /> Most capable
         </span>
       )}

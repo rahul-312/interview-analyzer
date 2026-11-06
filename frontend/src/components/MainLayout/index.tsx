@@ -23,7 +23,7 @@ const AddApplicationFab = () => {
     <Button
       onClick={addApplication}
       aria-label="Add application"
-      className="fixed right-6xl bottom-6xl z-40 flex h-fab w-fab items-center justify-center rounded-2xl bg-primary text-white shadow-lg hover:bg-primary-dark md:hidden"
+      className="fixed right-6xl bottom-6xl z-40 flex h-fab w-fab items-center justify-center rounded-2xl bg-brand text-white shadow-lg hover:bg-brand-dark md:hidden"
     >
       <Plus size={28} />
     </Button>
