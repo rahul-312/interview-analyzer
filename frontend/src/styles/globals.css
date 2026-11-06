@@ -94,13 +94,15 @@ body {
   font-variant-numeric: lining-nums;
 }
 
-/* While a saved session is being checked (see _document), public pages show Loading… instead */
+/* While a saved session is being checked (see _document) or the user is leaving for /login, public pages show Loading… instead */
 [data-session-loading],
-html[data-session] [data-public-page] {
+html[data-session] [data-public-page],
+html[data-leaving] [data-public-page] {
   display: none;
 }
 
-html[data-session] [data-session-loading] {
+html[data-session] [data-session-loading],
+html[data-leaving] [data-session-loading] {
   display: flex;
 }
 

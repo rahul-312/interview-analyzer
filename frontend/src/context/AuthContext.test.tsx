@@ -2,9 +2,10 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider, useAuth } from "./AuthContext";
 import type { User } from "@/models/Auth";
+import { apiClient } from "@/services/ApiClient";
 import { authService, SessionCheckTimeout } from "@/services/AuthService";
 
-const fakeLocation = { href: "/pricing", replace: vi.fn() };
+const fakeLocation = { href: "/pricing", replace: vi.fn(), reload: vi.fn() };
 const restoredFromCache = () => {
   const event = new Event("pageshow") as PageTransitionEvent;
   Object.defineProperty(event, "persisted", { value: true });
@@ -29,6 +30,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  delete document.documentElement.dataset.leaving;
 });
 
 describe("restoring a session", () => {
@@ -54,7 +56,7 @@ describe("a page restored by the Back button", () => {
     await screen.findByText("Logged in");
   };
 
-  it("leaves if it held a user whose session has since ended", async () => {
+  it("leaves if it held a user whose session ended in another tab", async () => {
     await showLoggedIn();
     vi.mocked(authService.hasToken).mockReturnValue(false);
     restoredFromCache();
@@ -65,6 +67,25 @@ describe("a page restored by the Back button", () => {
     await showLoggedIn();
     restoredFromCache();
     expect(fakeLocation.replace).not.toHaveBeenCalled();
+    expect(fakeLocation.reload).not.toHaveBeenCalled();
+  });
+
+  it("reloads if it held no user but someone has logged in since", async () => {
+    vi.mocked(authService.hasToken).mockReturnValue(false);
+    show();
+    await screen.findByText("Logged out");
+    vi.mocked(authService.hasToken).mockReturnValue(true);
+    restoredFromCache();
+    expect(fakeLocation.reload).toHaveBeenCalledOnce();
+  });
+
+  it("shows public pages again after they were left by logging out", async () => {
+    vi.mocked(authService.hasToken).mockReturnValue(false);
+    show();
+    await screen.findByText("Logged out");
+    document.documentElement.dataset.leaving = "1";
+    restoredFromCache();
+    expect(document.documentElement.dataset.leaving).toBeUndefined();
   });
 
   it("stays if it's a public page that never held a user", async () => {
@@ -73,10 +94,11 @@ describe("a page restored by the Back button", () => {
     await screen.findByText("Logged out");
     restoredFromCache();
     expect(fakeLocation.replace).not.toHaveBeenCalled();
+    expect(fakeLocation.reload).not.toHaveBeenCalled();
   });
 });
 
-describe("logging out", () => {
+describe("leaving for the login page", () => {
   it("clears the user before leaving, so the page Back restores holds no data", async () => {
     vi.spyOn(authService, "restore").mockResolvedValue({ id: 1, usage: {} } as User);
     show();
@@ -85,5 +107,15 @@ describe("logging out", () => {
     await waitFor(() => expect(fakeLocation.href).toBe("/login"));
     expect(authService.logout).toHaveBeenCalledOnce();
     expect(screen.getByText("Logged out")).toBeTruthy();
+    expect(document.documentElement.dataset.leaving).toBe("1");
+  });
+
+  it("clears the user when the session expires, too", async () => {
+    vi.spyOn(authService, "restore").mockResolvedValue({ id: 1, usage: {} } as User);
+    show();
+    await screen.findByText("Logged in");
+    act(() => apiClient.onSessionExpired?.());
+    expect(screen.getByText("Logged out")).toBeTruthy();
+    expect(document.documentElement.dataset.leaving).toBe("1");
   });
 });
