@@ -56,7 +56,7 @@ export async function openCheckout(config: CheckoutConfig): Promise<CheckoutOutc
       name: config.name,
       description: config.description,
       prefill: config.prefill,
-      theme: { color: '#24412F' },
+      theme: { color: '#6830F8' },
       handler: (response: CheckoutResponse) => resolve({ kind: 'paid', response }),
       modal: { ondismiss: () => resolve({ kind: 'dismissed', error: lastError }) },
     });

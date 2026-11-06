@@ -22,7 +22,7 @@ function QuotaMeter({ label, quota }: { label: string; quota: Quota }) {
           className="h-sm overflow-hidden rounded-full bg-smoke-white"
         >
           <div
-            className={`h-full rounded-full ${remaining ? 'bg-primary' : 'bg-amber'}`}
+            className={`h-full rounded-full ${remaining ? 'bg-brand' : 'bg-amber'}`}
             style={{ width: `${quota.limit ? Math.min(100, (quota.used / quota.limit) * 100) : 0}%` }}
           />
         </div>

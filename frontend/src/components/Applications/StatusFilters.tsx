@@ -28,7 +28,7 @@ const StatusFilters: React.FC<StatusFiltersProps> = ({ value, counts, total, onC
             aria-pressed={active}
             className={`flex items-center gap-lg rounded-full px-3xl py-md text-sm font-medium transition-colors ${
               active
-                ? 'border border-primary bg-primary text-white shadow-card'
+                ? 'border border-transparent bg-brand text-white shadow-card'
                 : 'glass text-charcoal-gray hover:bg-white/80'
             }`}
           >

@@ -8,7 +8,7 @@ const base = 'inline-flex items-center whitespace-nowrap rounded-full px-lg py-x
 export const statusStyles: Record<AppStatus, string> = {
   saved: 'bg-white text-medium-gray ring-1 ring-inset ring-light-gray',
   applied: 'bg-primary-light text-primary-dark',
-  screening: 'bg-violet-light text-violet-dark',
+  screening: 'bg-teal-light text-teal-dark',
   interview: 'bg-amber-light text-amber-dark',
   offer: 'bg-sky-light text-sky-dark',
   rejected: 'bg-rose-light text-rose-dark',
