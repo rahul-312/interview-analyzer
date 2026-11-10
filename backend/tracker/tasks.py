@@ -173,7 +173,8 @@ def generate_plan_task(plan_id, run_id=None):
                 PrepTask.objects.filter(plan_id=plan_id).delete()
                 PrepTask.objects.bulk_create(new_tasks)
                 PrepPlan.objects.filter(id=plan_id).update(
-                    summary=result["summary"], source=source, status=JobStatus.DONE
+                    summary=result["summary"], resources=result.get("resources", []), source=source,
+                    status=JobStatus.DONE,
                 )
     except Exception as exc:  # store any failure so the UI can show it
         refund = _refund_kind(exc, billing)

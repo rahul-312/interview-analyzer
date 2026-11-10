@@ -10,6 +10,14 @@ export interface PrepTask {
   done: boolean;
 }
 
+export interface PrepResource {
+  title: string;
+  url: string;
+  kind: string;
+  /** Why it's worth the time for this plan. */
+  why: string;
+}
+
 export interface PrepPlan {
   id: number;
   application: number;
@@ -21,6 +29,8 @@ export interface PrepPlan {
   status: JobStatus;
   source: GeneratedBy;
   summary: string;
+  /** Top resources to prepare from, best first (empty on plans made before this existed). */
+  resources: PrepResource[];
   error: string;
   /** Failed for a reason that wasn't the user's, so it was given back. */
   refunded: boolean;

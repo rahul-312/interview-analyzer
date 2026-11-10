@@ -47,6 +47,120 @@ ROUND_BASICS = {
 }
 
 
+MAX_RESOURCES = 5
+
+# Hand-picked, long-lived resources, matched to a plan's topics by keyword. The rule-based planner
+# uses these, and they fill in when the AI gives fewer than MAX_RESOURCES usable links.
+RESOURCE_LIBRARY = [
+    (("system design", "scaling", "architecture"), [
+        {"title": "The System Design Primer", "url": "https://github.com/donnemartin/system-design-primer",
+         "kind": "guide", "why": "Free, thorough walk-through of the building blocks and worked design questions."},
+        {"title": "ByteByteGo blog", "url": "https://blog.bytebytego.com",
+         "kind": "article", "why": "Short, visual explanations of how real systems scale."},
+        {"title": "Designing Data-Intensive Applications", "url": "https://dataintensive.net",
+         "kind": "book", "why": "The standard book on storage, replication and consistency trade-offs."},
+    ]),
+    (("behavioral", "behavioural", "star", "leadership", "hiring manager", "why this"), [
+        {"title": "Tech Interview Handbook: behavioral interviews",
+         "url": "https://www.techinterviewhandbook.org/behavioral-interview/",
+         "kind": "guide", "why": "Common behavioral prompts and how to structure STAR answers."},
+        {"title": "Amazon Leadership Principles", "url": "https://www.amazon.jobs/content/en/our-workplace/leadership-principles",
+         "kind": "article", "why": "A good checklist of themes (ownership, conflict, bias for action) to map stories to."},
+    ]),
+    (("coding", "algorithm", "data structure", "dynamic programming", "graph", "array", "tree"), [
+        {"title": "NeetCode roadmap", "url": "https://neetcode.io/roadmap",
+         "kind": "practice", "why": "Problems grouped by pattern, each with a video solution."},
+        {"title": "LeetCode problem set", "url": "https://leetcode.com/problemset/",
+         "kind": "practice", "why": "Timed practice; filter by topic and by the company you're interviewing with."},
+        {"title": "Tech Interview Handbook: coding interview prep",
+         "url": "https://www.techinterviewhandbook.org/coding-interview-prep/",
+         "kind": "guide", "why": "A study plan and cheat sheets for each data structure."},
+    ]),
+    (("sql", "query", "window function", "join"), [
+        {"title": "SQLBolt", "url": "https://sqlbolt.com",
+         "kind": "practice", "why": "Interactive lessons from basic SELECTs up to joins and aggregates."},
+        {"title": "PostgreSQL tutorial: window functions", "url": "https://www.postgresql.org/docs/current/tutorial-window.html",
+         "kind": "docs", "why": "The clearest official explanation of window functions."},
+        {"title": "Mode SQL tutorial", "url": "https://mode.com/sql-tutorial/",
+         "kind": "guide", "why": "Analytics-style SQL practice with a real dataset."},
+    ]),
+    (("database", "index", "transaction", "nosql"), [
+        {"title": "Use The Index, Luke", "url": "https://use-the-index-luke.com",
+         "kind": "guide", "why": "How indexes really work and why queries are slow."},
+        {"title": "Designing Data-Intensive Applications", "url": "https://dataintensive.net",
+         "kind": "book", "why": "Transactions, isolation levels and SQL vs NoSQL in depth."},
+    ]),
+    (("python",), [
+        {"title": "The Python Tutorial", "url": "https://docs.python.org/3/tutorial/",
+         "kind": "docs", "why": "The official tour of the language; good for filling gaps fast."},
+        {"title": "Real Python", "url": "https://realpython.com",
+         "kind": "article", "why": "In-depth articles on generators, the data model, typing and more."},
+    ]),
+]
+GENERAL_RESOURCES = [
+    {"title": "Tech Interview Handbook", "url": "https://www.techinterviewhandbook.org",
+     "kind": "guide", "why": "A free, end-to-end guide to every stage of tech interviews."},
+    {"title": "Glassdoor interview reviews", "url": "https://www.glassdoor.com/Interview/index.htm",
+     "kind": "article", "why": "Read what candidates were actually asked at this company."},
+    {"title": "LeetCode problem set", "url": "https://leetcode.com/problemset/",
+     "kind": "practice", "why": "Timed practice; filter by topic and by the company you're interviewing with."},
+    {"title": "Cracking the Coding Interview", "url": "https://www.crackingthecodinginterview.com",
+     "kind": "book", "why": "The classic all-round prep book: problems, behavioral advice and how interviews are run."},
+    {"title": "Exponent", "url": "https://www.tryexponent.com",
+     "kind": "course", "why": "Mock interviews and question banks for coding, system design and behavioral rounds."},
+]
+RESOURCE_KINDS = ["guide", "practice", "video", "book", "docs", "article", "course"]
+
+
+def curated_resources(topics, limit=MAX_RESOURCES):
+    """Up to `limit` resources for these topics, taking one per topic in turn so the first topics come first."""
+    matched = []
+    for topic in topics:
+        t = normalize_topic(topic)
+        for keywords, items in RESOURCE_LIBRARY:
+            if any(k in t for k in keywords):
+                matched.append(items)
+                break
+    picked, seen = [], set()
+    for rank in range(max((len(m) for m in matched), default=0)):
+        for items in matched:
+            if rank < len(items) and items[rank]["url"] not in seen:
+                picked.append(dict(items[rank]))
+                seen.add(items[rank]["url"])
+    for item in GENERAL_RESOURCES:
+        if item["url"] not in seen:
+            picked.append(dict(item))
+            seen.add(item["url"])
+    return picked[:limit]
+
+
+def clean_resources(resources, topics):
+    """
+    Keeps the AI's resources that have a plain http(s) link (no duplicates), then tops up from the
+    curated list, so a plan always has MAX_RESOURCES.
+    """
+    from urllib.parse import urlparse
+
+    cleaned, seen = [], set()
+    for r in resources or []:
+        url = str(r.get("url") or "").strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc or url in seen or not r.get("title"):
+            continue
+        kind = r.get("kind") if r.get("kind") in RESOURCE_KINDS else "article"
+        cleaned.append({"title": str(r["title"])[:200], "url": url[:500], "kind": kind, "why": str(r.get("why") or "")[:300]})
+        seen.add(url)
+        if len(cleaned) == MAX_RESOURCES:
+            return cleaned
+    for r in curated_resources(topics, limit=MAX_RESOURCES * 3):
+        if r["url"] not in seen:
+            cleaned.append(r)
+            seen.add(r["url"])
+        if len(cleaned) == MAX_RESOURCES:
+            break
+    return cleaned
+
+
 def normalize_topic(topic):
     return " ".join((topic or "").lower().split()) or "general"
 
@@ -183,7 +297,7 @@ def rule_based_plan(context):
     summary = f"{days}-day plan for {context['role']} at {context['company']}."
     if weak:
         summary += f" Focuses first on your weak spots: {weak}."
-    return {"summary": summary, "tasks": tasks}
+    return {"summary": summary, "tasks": tasks, "resources": curated_resources(topics)}
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +352,10 @@ ANALYSIS_SCHEMA = {
 PLAN_SYSTEM = """You are an interview coach building a day-by-day prep plan.
 Prioritise the candidate's recurring weak spots first, then the fundamentals for the round type and the job description.
 Put one main topic on each day, with a concrete task the candidate can finish in the given minutes.
-Day numbers start at 1 and must not exceed the number of days available. The final day is always light review and a mock run-through."""
+Day numbers start at 1 and must not exceed the number of days available. The final day is always light review and a mock run-through.
+Also recommend the top 5 resources to prepare from, ordered by how much they help with this plan's main topics.
+Only recommend well-known, long-lived resources (official docs, established books, courses, practice sites and guides)
+and give each one's canonical URL. Never guess or make up a URL: if you're not sure of a page's exact address, link the site's home page."""
 
 PLAN_SCHEMA = {
     "type": "object",
@@ -259,8 +376,23 @@ PLAN_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "resources": {
+            "type": "array",
+            "maxItems": MAX_RESOURCES,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "url": {"type": "string"},
+                    "kind": {"type": "string", "enum": RESOURCE_KINDS},
+                    "why": {"type": "string"},
+                },
+                "required": ["title", "url", "kind", "why"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["summary", "tasks"],
+    "required": ["summary", "tasks", "resources"],
     "additionalProperties": False,
 }
 
@@ -468,4 +600,6 @@ def generate_plan(context, billing=None, route=DEFAULT_ROUTE):
     for task in result["tasks"]:
         task["day"] = max(1, min(days, int(task["day"])))
         task["minutes"] = max(5, min(480, int(task["minutes"])))
+    topics = [t["topic"] for t in result["tasks"]] + [w["topic"] for w in context.get("weak_spots", [])]
+    result["resources"] = clean_resources(result.get("resources"), topics)
     return result, "ai"
