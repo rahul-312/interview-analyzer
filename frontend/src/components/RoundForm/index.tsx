@@ -10,6 +10,7 @@ import { useApi } from '@/hooks/useApi';
 import type { Debrief, InterviewRound, Outcome, RoundInput, RoundSaveResult, RoundType } from '@/models/Interview';
 import { applicationService } from '@/services/ApplicationService';
 import { roundService } from '@/services/RoundService';
+import { mergeDraft } from '@/utils/debrief';
 import { errorText } from '@/utils/errorText';
 import { toLocalInput } from '@/utils/format';
 
@@ -154,7 +155,14 @@ const RoundForm: React.FC<RoundFormProps> = ({ applicationId, round, withDebrief
         This round is done: write a debrief
       </label>
 
-      {done && <DebriefSection debrief={debrief} onChange={setDebrief} />}
+      {done && (
+        <DebriefSection
+          debrief={debrief}
+          onChange={setDebrief}
+          // Functional update: the draft arrives after the request, so merge into the latest form state.
+          onVoiceDraft={(draft) => setDebrief((current) => mergeDraft(current, draft))}
+        />
+      )}
 
       <ErrorMessage message={error} />
 

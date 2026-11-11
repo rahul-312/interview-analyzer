@@ -1,14 +1,16 @@
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from billing import entitlements
 
-from . import insights
+from . import ai, insights
 from .models import Application, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
 from .serializers import (
     ApplicationSerializer,
@@ -201,6 +203,55 @@ class RoundAnalyzeView(APIView):
         if result == LIMITED:
             return Response(limit_details(request.user), status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
+
+
+class DebriefFromVoiceView(APIView):
+    """
+    Turns a spoken recap (multipart field `audio`) into a draft debrief for the form. Nothing is
+    saved; the user checks the draft and saves the round as usual. Needs AI on the user's plan, and
+    is rate-limited (scope "voice_debrief") since every call reaches the paid API.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "voice_debrief"
+
+    def post(self, request):
+        route = entitlements.ai_route(entitlements.for_user(request.user))
+        if route is None:
+            return Response(
+                {"detail": "Filling a debrief by voice needs AI, which isn't on for your plan."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        audio = request.FILES.get("audio")
+        if audio is None or audio.size == 0:
+            return Response({"detail": "Send a recording as `audio`."}, status=status.HTTP_400_BAD_REQUEST)
+        if audio.size > settings.VOICE_DEBRIEF_MAX_BYTES:
+            return Response(
+                {"detail": "That recording is too long. Keep it under about 10 minutes."},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        mime_type = (audio.content_type or "").split(";")[0].strip().lower()
+        if mime_type not in ai.VOICE_MIME_TYPES:
+            return Response(
+                {"detail": "That audio format isn't supported. Try recording again."},
+                status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            )
+        try:
+            draft = ai.debrief_from_audio(audio.read(), mime_type, route)
+        except ai.UserCaused as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        except ai.NotCharged as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        if not draft["questions"] and not any(
+            draft[k] for k in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")
+        ):
+            return Response(
+                {"detail": "Couldn't make out a debrief in that recording. Try again, a little closer to the mic."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        return Response(draft)
 
 
 # ---------------------------------------------------------------------------

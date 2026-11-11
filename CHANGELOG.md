@@ -37,6 +37,17 @@ extension share one version number.
   first. Run `migrate`; with a Celery broker, a worker finishes upgrades, and
   `reconcile_subscriptions` retries any left unfinished.
 
+### Voice debriefs
+- "Fill in by voice" on the debrief form: record a spoken recap of the round
+  (up to 10 minutes) and Gemini writes it up into questions, answers, topics,
+  confidence and notes. The draft is merged into the form, keeping anything
+  already typed, for the user to check before saving. Shown only when AI is on
+  for the user's plan.
+- New endpoint `POST /api/rounds/debrief-from-voice/` (multipart `audio`).
+  It saves nothing and doesn't count against the analysis limit, but is
+  rate-limited per user (`VOICE_DEBRIEF_THROTTLE_RATE`, default `30/day`).
+  Recordings over `VOICE_DEBRIEF_MAX_BYTES` (default 15 MB) are refused.
+
 ### Changed
 - `/` is now a public home page. Logged-in users still go straight to their
   applications, and the logo on the login and register pages links to it.

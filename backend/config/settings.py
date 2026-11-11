@@ -94,10 +94,12 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    # Only views that set throttles are: billing calls that reach Razorpay, and sign-ups (per IP, see
-    # accounts/throttles.py), since every new account gets free AI runs.
+    # Only views that set throttles are: billing calls that reach Razorpay, sign-ups (per IP, see
+    # accounts/throttles.py), since every new account gets free AI runs, and voice debriefs (per user),
+    # since each one is a paid AI call.
     "DEFAULT_THROTTLE_RATES": {
         "billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min"),
+        "voice_debrief": os.environ.get("VOICE_DEBRIEF_THROTTLE_RATE", "30/day"),
         "signup": os.environ.get("SIGNUP_THROTTLE_RATE", "10/hour"),
         "signup_attempt": os.environ.get("SIGNUP_ATTEMPT_THROTTLE_RATE", "60/min"),
     },
@@ -151,6 +153,10 @@ PLAN_PREP_PLANS_PER_24H = {
 BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
 
 # AI: without a key, the rule-based analyzer is used.
+# Largest voice-debrief recording accepted. Gemini takes up to 20 MB of inline audio per request;
+# the app's recorder (Opus, ~32 kbit/s) makes about 2.5 MB in 10 minutes.
+VOICE_DEBRIEF_MAX_BYTES = int(os.environ.get("VOICE_DEBRIEF_MAX_BYTES") or 15 * 1024 * 1024)
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 # The better model Pro Plus jobs use. Blank: Pro Plus uses GEMINI_MODEL too.
