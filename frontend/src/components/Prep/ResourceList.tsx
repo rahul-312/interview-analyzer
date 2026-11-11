@@ -8,12 +8,23 @@ interface ResourceListProps {
   resources: PrepResource[];
 }
 
-// Only plain web links (the server checks too), so a bad value can't become a javascript: link
-const isWebLink = (url: string) => /^https?:\/\//i.test(url);
+/** The link's site ("sqlbolt.com"), or null if it isn't a plain web link (the server checks too). */
+const siteOf = (url: string): string | null => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    return parsed.hostname.replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+};
 
-/** The plan's top resources to prepare from, best first. */
+/** The plan's top resources to prepare from, best first, each showing which site it opens. */
 const ResourceList: React.FC<ResourceListProps> = ({ resources }) => {
-  const links = resources.filter((r) => isWebLink(r.url));
+  const links = resources.flatMap((r) => {
+    const site = siteOf(r.url);
+    return site ? [{ ...r, site }] : [];
+  });
   if (!links.length) return null;
 
   return (
@@ -32,7 +43,11 @@ const ResourceList: React.FC<ResourceListProps> = ({ resources }) => {
               >
                 {r.title} <ExternalLink size={14} className="shrink-0" />
               </a>
-              <span className="ml-md rounded-full bg-smoke-white px-md py-xs text-xs text-medium-gray capitalize">{r.kind}</span>
+              <span className="mt-xs flex flex-wrap items-center gap-md text-xs text-medium-gray">
+                <span className="break-all">{r.site}</span>
+                <span className="rounded-full bg-smoke-white px-md py-xs capitalize">{r.kind}</span>
+                {r.source === 'ai' && <span className="rounded-full bg-primary-light px-md py-xs text-primary-dark">AI-suggested</span>}
+              </span>
               {r.why && <span className="mt-xs block text-sm text-medium-gray">{r.why}</span>}
             </span>
           </li>

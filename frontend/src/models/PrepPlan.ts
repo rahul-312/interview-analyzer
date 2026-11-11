@@ -16,6 +16,8 @@ export interface PrepResource {
   kind: string;
   /** Why it's worth the time for this plan. */
   why: string;
+  /** Suggested by the AI (its links are limited to trusted sites) or from the hand-picked list. */
+  source?: "ai" | "curated";
 }
 
 export interface PrepPlan {

@@ -102,14 +102,19 @@ describe("plan card", () => {
 describe("plan resources", () => {
   it("lists the plan's resources as outside links, skipping anything that isn't a web link", () => {
     render(<PlanCard plan={plan({ resources: [
-      { title: "SQLBolt", url: "https://sqlbolt.com", kind: "practice", why: "Interactive lessons." },
+      { title: "SQLBolt", url: "https://www.sqlbolt.com/", kind: "practice", why: "Interactive lessons.", source: "ai" },
+      { title: "Use The Index, Luke", url: "https://use-the-index-luke.com", kind: "guide", why: "", source: "curated" },
       { title: "Sneaky", url: "javascript:alert(1)", kind: "guide", why: "" },
     ] })} onChange={() => {}} />);
     const link = screen.getByRole("link", { name: /SQLBolt/ });
-    expect(link.getAttribute("href")).toBe("https://sqlbolt.com");
+    expect(link.getAttribute("href")).toBe("https://www.sqlbolt.com/");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(screen.getByText("Interactive lessons.")).toBeTruthy();
     expect(screen.queryByText("Sneaky")).toBeNull();
+    // Each link shows the site it opens, and only the AI pick is labelled as one
+    expect(screen.getByText("sqlbolt.com")).toBeTruthy();
+    expect(screen.getByText("use-the-index-luke.com")).toBeTruthy();
+    expect(screen.getAllByText("AI-suggested")).toHaveLength(1);
   });
 
   it("shows no resources section on an older plan without any", () => {
