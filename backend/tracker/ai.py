@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -130,9 +131,9 @@ TRUSTED_RESOURCE_HOSTS = {
     "blog.bytebytego.com", "geeksforgeeks.org", "sqlbolt.com", "mode.com", "use-the-index-luke.com",
     "dataintensive.net",
     # Official docs
-    "docs.python.org", "postgresql.org", "dev.mysql.com", "developer.mozilla.org", "learn.microsoft.com",
+    "python.org", "docs.python.org", "postgresql.org", "dev.mysql.com", "developer.mozilla.org", "learn.microsoft.com",
     "docs.oracle.com", "docs.djangoproject.com", "react.dev", "nextjs.org", "nodejs.org",
-    "typescriptlang.org", "go.dev", "doc.rust-lang.org", "kotlinlang.org", "docs.docker.com",
+    "typescriptlang.org", "go.dev", "rust-lang.org", "doc.rust-lang.org", "kotlinlang.org", "docs.docker.com",
     "kubernetes.io", "docs.aws.amazon.com", "cloud.google.com", "redis.io",
     # Courses, books and long-form learning
     "realpython.com", "freecodecamp.org", "coursera.org", "edx.org", "khanacademy.org",
@@ -200,7 +201,8 @@ def clean_resources(resources, topics):
         if len(url) > MAX_URL_LENGTH:
             continue  # cutting it short would store a broken link
         # Backslashes, whitespace and control characters are read differently (or stripped) by browsers
-        if any(c == "\\" or c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+        # (and invisible characters like a zero-width space, which make a link that looks fine fail)
+        if any(c == "\\" or c.isspace() or unicodedata.category(c) in ("Cc", "Cf", "Zs", "Zl", "Zp") for c in url):
             continue
         try:
             parsed = urlparse(url)

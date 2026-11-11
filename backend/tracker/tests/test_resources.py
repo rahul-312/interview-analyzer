@@ -47,6 +47,8 @@ def test_ai_resources_on_trusted_sites_come_first_and_are_marked_as_ai():
     "https://evil.example\t.leetcode.com/login",  # browsers strip tabs and newlines
     "https://evil.example\n.leetcode.com/login",
     "https://leetcode.com/two sum",              # whitespace anywhere
+    "https://leetcode.com/two​sum",         # an invisible zero-width space
+    "https://leetcode.com/two sum",         # a non-breaking space
     "https://leetcode.com:8443/login",           # a port
     "https://leetcode%2Ecom/login",              # percent-encoded host
     "https://wiki.python.org/moin/FrontPage",    # user-written subdomain of a trusted site
@@ -61,6 +63,11 @@ def test_untrusted_or_unusable_ai_links_are_dropped(url):
     out = ai.clean_resources([resource(url)], ["sql"])
     assert url not in [r["url"] for r in out]
     assert all(r["source"] == "curated" for r in out) and len(out) == 5
+
+
+@pytest.mark.parametrize("url", ["https://www.python.org", "https://www.rust-lang.org/learn"])
+def test_home_pages_the_prompt_falls_back_to_are_trusted(url):
+    assert ai.clean_resources([resource(url)], [])[0]["url"] == url
 
 
 def test_an_exact_curated_url_on_an_open_hosting_site_is_kept():
