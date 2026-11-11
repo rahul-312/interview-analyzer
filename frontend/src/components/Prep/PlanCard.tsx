@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import ResourceList from './ResourceList';
 import TaskList from './TaskList';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
@@ -159,6 +160,8 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, onChange }) => {
               <div className="h-full rounded-full bg-emerald-green transition-all" style={{ width: `${progress}%` }} />
             </div>
           </div>
+
+          <ResourceList resources={plan.resources ?? []} />
 
           <TaskList tasks={tasks} onToggle={handleToggle} />
         </>

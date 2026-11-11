@@ -15,7 +15,7 @@ const api = vi.mocked(prepPlanService);
 
 const plan = (overrides: Partial<PrepPlan> = {}): PrepPlan => ({
   id: 1, application: 1, company: "Tracxn", role: "Backend Developer", target_round: null, target_round_label: null,
-  interview_date: "2099-01-01", status: "done", source: "ai", summary: "A plan.", error: "", refunded: false,
+  interview_date: "2099-01-01", status: "done", source: "ai", summary: "A plan.", resources: [], error: "", refunded: false,
   tasks: [{ id: 3, date: "2099-01-01", topic: "sql", title: "Review joins", detail: "", minutes: 30, done: false }],
   created_at: "2026-10-31T00:00:00Z",
   ...overrides,
@@ -96,5 +96,29 @@ describe("plan card", () => {
     await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     expect(screen.getByText("No prep plans left.")).toBeTruthy();
     expect(screen.getByText("Review joins")).toBeTruthy();
+  });
+});
+
+describe("plan resources", () => {
+  it("lists the plan's resources as outside links, skipping anything that isn't a web link", () => {
+    render(<PlanCard plan={plan({ resources: [
+      { title: "SQLBolt", url: "https://www.sqlbolt.com/", kind: "practice", why: "Interactive lessons.", source: "ai" },
+      { title: "Use The Index, Luke", url: "https://use-the-index-luke.com", kind: "guide", why: "", source: "curated" },
+      { title: "Sneaky", url: "javascript:alert(1)", kind: "guide", why: "" },
+    ] })} onChange={() => {}} />);
+    const link = screen.getByRole("link", { name: /SQLBolt/ });
+    expect(link.getAttribute("href")).toBe("https://www.sqlbolt.com/");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(screen.getByText("Interactive lessons.")).toBeTruthy();
+    expect(screen.queryByText("Sneaky")).toBeNull();
+    // Each link shows the site it opens, and only the AI pick is labelled as one
+    expect(screen.getByText("sqlbolt.com")).toBeTruthy();
+    expect(screen.getByText("use-the-index-luke.com")).toBeTruthy();
+    expect(screen.getAllByText("AI-suggested")).toHaveLength(1);
+  });
+
+  it("shows no resources section on an older plan without any", () => {
+    render(<PlanCard plan={plan()} onChange={() => {}} />);
+    expect(screen.queryByText("Top resources to prepare from")).toBeNull();
   });
 });

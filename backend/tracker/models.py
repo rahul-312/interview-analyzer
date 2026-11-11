@@ -278,6 +278,8 @@ class PrepPlan(models.Model):
     status = models.CharField(max_length=10, choices=JobStatus.choices, default=JobStatus.PENDING)
     source = models.CharField(max_length=10, blank=True)
     summary = models.TextField(blank=True)
+    # Top resources to prepare from: [{"title", "url", "kind", "why"}], best first.
+    resources = models.JSONField(default=list, blank=True)
     error = models.TextField(blank=True)
     # The run this generation counts against. A job only writes here while this is still its run.
     run = models.ForeignKey(AnalysisRun, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
