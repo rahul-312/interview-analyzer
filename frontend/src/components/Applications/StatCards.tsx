@@ -21,7 +21,7 @@ interface Share {
 }
 
 const shares: Share[] = [
-  { label: 'Applied', status: 'applied', icon: CircleCheck, tint: 'from-primary-light/70', tile: 'bg-primary-light text-primary', bar: 'bg-primary', text: 'text-primary' },
+  { label: 'Applied', status: 'applied', icon: CircleCheck, tint: 'from-primary-light/70', tile: 'bg-primary-light text-primary', bar: 'bg-brand', text: 'text-primary' },
   { label: 'Interviewing', status: 'interview', icon: UsersRound, tint: 'from-amber-light/80', tile: 'bg-amber-light text-amber', bar: 'bg-amber', text: 'text-amber' },
   { label: 'Offers', status: 'offer', icon: FileCheck2, tint: 'from-sky-light/80', tile: 'bg-sky-light text-sky', bar: 'bg-sky', text: 'text-sky' },
   { label: 'Rejected', status: 'rejected', icon: CircleX, tint: 'from-rose-light/80', tile: 'bg-rose-light text-crimson-red', bar: 'bg-crimson-red', text: 'text-crimson-red' },

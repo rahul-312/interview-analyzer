@@ -28,7 +28,7 @@ export default function NavLinks({ compact = false }: { compact?: boolean }) {
               active ? "glass text-ink" : "border border-transparent text-dark-gray hover:bg-white/50 hover:text-ink"
             }`}
           >
-            {active && <span className="absolute -left-4xl inset-y-lg w-sm rounded-r-full bg-primary" />}
+            {active && <span className="absolute -left-4xl inset-y-lg w-sm rounded-r-full bg-brand" />}
             <Icon size={20} strokeWidth={1.75} className="shrink-0" />
             <span
               className={`transition-[opacity,visibility] duration-300 ease-in-out motion-reduce:transition-none ${

@@ -20,7 +20,7 @@ const base =
   'inline-flex items-center justify-center gap-md rounded-xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-border disabled:cursor-not-allowed disabled:opacity-50';
 
 const variants: Record<ButtonVariant, string> = {
-  primary: `${base} px-4xl py-xl bg-primary text-white shadow-sm hover:bg-primary-dark`,
+  primary: `${base} px-4xl py-xl bg-brand text-white shadow-sm hover:bg-brand-dark`,
   secondary: `${base} px-4xl py-xl border border-input-border bg-white text-charcoal-gray hover:bg-page-bg`,
   danger: `${base} px-4xl py-xl border border-rose-light bg-white text-crimson-red hover:bg-rose-pale`,
   link: 'text-sm font-medium text-primary hover:underline',

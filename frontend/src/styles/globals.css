@@ -2,19 +2,23 @@
 
 @theme {
   /* Colour */
-  --color-primary: #24412F;
-  --color-primary-dark: #18301F;
-  --color-primary-light: #E5EDE6;
-  --color-primary-border: #BFD2C3;
-  --color-ink: #1C201D;
-  --color-charcoal-gray: #363C37;
-  --color-dark-gray: #4B524C;
-  --color-medium-gray: #6B716B;
-  --color-light-silver: #A2A69E;
-  --color-light-gray: #E8E3D9;
-  --color-input-border: #D8D2C5;
-  --color-smoke-white: #F1EDE5;
-  --color-page-bg: #F6F3ED;
+  --color-primary: #6830F8;
+  --color-primary-dark: #4C1FC4;
+  --color-primary-light: #EEE9FE;
+  --color-primary-border: #D3C6FC;
+  --color-brand-from: #8B4DFF;
+  --color-brand-to: #5A18F0;
+  --color-brand-dark-from: #7635F0;
+  --color-brand-dark-to: #4A10C8;
+  --color-ink: #1B1D30;
+  --color-charcoal-gray: #34364D;
+  --color-dark-gray: #494B63;
+  --color-medium-gray: #696B82;
+  --color-light-silver: #A3A4B8;
+  --color-light-gray: #E6E3F0;
+  --color-input-border: #D5D1E5;
+  --color-smoke-white: #F0EDF9;
+  --color-page-bg: #F7F5FD;
   --color-emerald-green: #059669;
   --color-mint-cream: #D1FAE5;
   --color-pale-mint: #ECFDF5;
@@ -31,11 +35,11 @@
   --color-sky: #2563EB;
   --color-sky-light: #E3ECFD;
   --color-sky-dark: #1E40AF;
-  --color-violet-light: #EDE9FE;
-  --color-violet-dark: #5B21B6;
-  --color-overlay: rgba(28, 32, 29, 0.4);
+  --color-teal-light: #CCFBF1;
+  --color-teal-dark: #115E59;
+  --color-overlay: rgba(27, 29, 48, 0.4);
 
-  --shadow-card: 0 1px 2px rgb(40 34 20 / 0.04), 0 6px 20px rgb(40 34 20 / 0.05);
+  --shadow-card: 0 1px 2px rgb(38 28 90 / 0.04), 0 6px 20px rgb(38 28 90 / 0.05);
 
   --font-sans: 'Inter', sans-serif;
   --font-serif: 'Fraunces', Georgia, serif;
@@ -83,9 +87,9 @@ body {
   @apply bg-page-bg text-ink antialiased;
   /* Soft colour behind the frosted panels */
   background-image:
-    radial-gradient(55rem 38rem at 92% -8%, rgb(196 214 200 / 0.75), transparent 62%),
-    radial-gradient(45rem 40rem at -8% 105%, rgb(205 220 203 / 0.8), transparent 60%),
-    radial-gradient(40rem 30rem at 55% 55%, rgb(242 228 206 / 0.55), transparent 65%);
+    radial-gradient(55rem 38rem at 92% -8%, rgb(205 188 254 / 0.6), transparent 62%),
+    radial-gradient(45rem 40rem at -8% 105%, rgb(216 203 254 / 0.65), transparent 60%),
+    radial-gradient(40rem 30rem at 55% 55%, rgb(238 226 253 / 0.5), transparent 65%);
   background-attachment: fixed;
 }
 
@@ -106,11 +110,22 @@ html[data-leaving] [data-session-loading] {
   display: flex;
 }
 
+/* The logo's gradient. The stops stay dark enough for white text. */
+@utility bg-brand {
+  background-image: linear-gradient(135deg, var(--color-brand-from), var(--color-brand-to));
+  background-origin: border-box;
+}
+
+@utility bg-brand-dark {
+  background-image: linear-gradient(135deg, var(--color-brand-dark-from), var(--color-brand-dark-to));
+  background-origin: border-box;
+}
+
 /* Frosted glass panel */
 @utility glass {
   background-color: rgb(255 255 255 / 0.55);
   border: 1px solid rgb(255 255 255 / 0.8);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 8px 30px rgb(40 34 20 / 0.06);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 8px 30px rgb(38 28 90 / 0.06);
   -webkit-backdrop-filter: blur(18px) saturate(160%);
   backdrop-filter: blur(18px) saturate(160%);
 }

@@ -29,7 +29,7 @@ const Extension: React.FC = () => {
           <p className="font-medium">Backend Engineer</p>
           <p className="mt-xs text-sm text-medium-gray">Remote · Full-time</p>
         </div>
-        <span className="inline-flex shrink-0 items-center gap-sm rounded-xl bg-primary px-2xl py-lg text-sm font-medium text-white">
+        <span className="inline-flex shrink-0 items-center gap-sm rounded-xl bg-brand px-2xl py-lg text-sm font-medium text-white">
           <Plus size={16} />
           Track
         </span>
