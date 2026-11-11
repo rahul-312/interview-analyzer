@@ -47,8 +47,8 @@ def test_ai_resources_on_trusted_sites_come_first_and_are_marked_as_ai():
     "https://evil.example\t.leetcode.com/login",  # browsers strip tabs and newlines
     "https://evil.example\n.leetcode.com/login",
     "https://leetcode.com/two sum",              # whitespace anywhere
-    "https://leetcode.com/two​sum",         # an invisible zero-width space
-    "https://leetcode.com/two sum",         # a non-breaking space
+    "https://leetcode.com/two\u200bsum",         # an invisible zero-width space
+    "https://leetcode.com/two\u00a0sum",         # a non-breaking space
     "https://leetcode.com:8443/login",           # a port
     "https://leetcode%2Ecom/login",              # percent-encoded host
     "https://wiki.python.org/moin/FrontPage",    # user-written subdomain of a trusted site
