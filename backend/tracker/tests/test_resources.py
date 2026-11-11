@@ -43,6 +43,14 @@ def test_ai_resources_on_trusted_sites_come_first_and_are_marked_as_ai():
     "https://leetcode.com.evil.example/login",   # trusted name as a prefix of another host
     "https://leetcode.com@evil.example/login",   # trusted name as userinfo
     "https://evilleetcode.com",                  # trusted name as a suffix without a dot
+    "https://evil.example\\.leetcode.com/login",  # browsers read the host as evil.example
+    "https://evil.example\t.leetcode.com/login",  # browsers strip tabs and newlines
+    "https://evil.example\n.leetcode.com/login",
+    "https://leetcode.com/two sum",              # whitespace anywhere
+    "https://leetcode.com:8443/login",           # a port
+    "https://leetcode%2Ecom/login",              # percent-encoded host
+    "https://wiki.python.org/moin/FrontPage",    # user-written subdomain of a trusted site
+    "https://forum.freecodecamp.org/t/anything",
     "https://github.com/someone/phishing",       # open hosting site, not an exact curated URL
     "javascript:alert(1)",
     "https:///no-host",
