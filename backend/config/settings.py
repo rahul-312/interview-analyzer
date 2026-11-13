@@ -14,7 +14,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # - A variable still exported in your terminal (say DEBUG or DB_NAME from another project) beats
 #   .env. Check `env` if a setting isn't what .env says.
 # - Setting a variable to empty can't switch a .env value off for one run (GEMINI_API_KEY= ... still
-#   uses the key from .env). Comment the line out in .env, or set a non-empty value instead.
+#   uses the key from .env). Comment the line out in .env. For flags, set an explicit value such as
+#   DEBUG=0.
 for _key, _value in dotenv_values(BASE_DIR / ".env").items():
     if _value is not None and not os.environ.get(_key):
         os.environ[_key] = _value
