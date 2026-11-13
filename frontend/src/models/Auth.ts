@@ -25,6 +25,8 @@ export interface Usage {
   priority: boolean;
   analyses: Quota;
   prep_plans: Quota;
+  /** Debriefs filled in by voice. Not on the pricing page yet. */
+  voice_debriefs: Quota;
 }
 
 export interface User {

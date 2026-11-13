@@ -5,7 +5,6 @@ from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from billing import entitlements
@@ -24,11 +23,14 @@ from .usage import (
     LIMITED,
     PREP_PLAN,
     QUEUED,
+    VOICE,
     limit_details,
     limit_message,
     mark_stale,
+    refund_run,
     reserve_analysis,
     reserve_prep_plan,
+    reserve_voice,
 )
 
 
@@ -205,17 +207,32 @@ class RoundAnalyzeView(APIView):
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
 
 
+# Room for the multipart boundaries and headers around the recording itself.
+MULTIPART_OVERHEAD = 64 * 1024
+
+
 class DebriefFromVoiceView(APIView):
     """
     Turns a spoken recap (multipart field `audio`) into a draft debrief for the form. Nothing is
-    saved; the user checks the draft and saves the round as usual. Needs AI on the user's plan, and
-    is rate-limited (scope "voice_debrief") since every call reaches the paid API.
+    saved; the user checks the draft and saves the round as usual. Needs AI on the user's plan,
+    and counts against the plan's voice-debrief limit unless it fails for a reason that isn't
+    theirs. The AI call runs inside the request, with a short timeout and no retry waits.
     """
     permission_classes = [IsAuthenticated]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "voice_debrief"
 
     def post(self, request):
+        too_long = Response(
+            {"detail": "That recording is too large to send. Try a shorter one."},
+            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        )
+        # Before touching request.FILES, which would read (and write to disk) the whole body first.
+        try:
+            length = int(request.META.get("CONTENT_LENGTH") or 0)
+        except ValueError:
+            length = 0
+        if length > settings.VOICE_DEBRIEF_MAX_BYTES + MULTIPART_OVERHEAD:
+            return too_long
+
         route = entitlements.ai_route(entitlements.for_user(request.user))
         if route is None:
             return Response(
@@ -226,23 +243,33 @@ class DebriefFromVoiceView(APIView):
         if audio is None or audio.size == 0:
             return Response({"detail": "Send a recording as `audio`."}, status=status.HTTP_400_BAD_REQUEST)
         if audio.size > settings.VOICE_DEBRIEF_MAX_BYTES:
+            return too_long
+        data = audio.read()
+        mime_type = ai.sniff_audio(data[:16])
+        if mime_type is None:
             return Response(
-                {"detail": "That recording is too long. Keep it under about 10 minutes."},
-                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
-        mime_type = (audio.content_type or "").split(";")[0].strip().lower()
-        if mime_type not in ai.VOICE_MIME_TYPES:
-            return Response(
-                {"detail": "That audio format isn't supported. Try recording again."},
+                {"detail": "That doesn't look like an audio recording. Try recording again."},
                 status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             )
+
+        result, run = reserve_voice(request.user)
+        if result == LIMITED:
+            return Response(limit_details(request.user, VOICE), status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         try:
-            draft = ai.debrief_from_audio(audio.read(), mime_type, route)
+            draft = ai.debrief_from_audio(data, mime_type, route)
         except ai.UserCaused as exc:
+            # Refused or cut off because of what was said: counts, like an analysis would.
+            return Response({"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        except ai.UnreadableAudio as exc:
+            refund_run(run.id, billed=False)
             return Response({"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
         except ai.NotCharged as exc:
+            refund_run(run.id, billed=False)
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except RuntimeError as exc:
+            # Timed out or an unreadable reply: may have been billed, so given back within the cap.
+            refund_run(run.id, billed=True)
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         if not draft["questions"] and not any(
             draft[k] for k in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")

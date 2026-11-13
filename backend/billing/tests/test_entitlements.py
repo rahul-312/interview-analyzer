@@ -38,7 +38,7 @@ def calls(settings):
     """A fake Gemini client that records the key and model each job used."""
     seen = []
 
-    def get_client(api_key=None, vertex=False):
+    def get_client(api_key=None, vertex=False, timeout=None):
         def generate_content(**kwargs):
             seen.append({"api_key": api_key, "model": kwargs["model"], **({"vertex": True} if vertex else {})})
             schema = kwargs["config"].response_json_schema

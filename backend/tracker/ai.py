@@ -549,7 +549,7 @@ def _http_errors(name):
     )
 
 
-def get_client(api_key=None, vertex=False):
+def get_client(api_key=None, vertex=False, timeout=TIMEOUT_SECONDS):
     from google import genai
     from google.genai import types
 
@@ -558,22 +558,26 @@ def get_client(api_key=None, vertex=False):
         vertexai=vertex,
         api_key=api_key or settings.GEMINI_API_KEY,
         http_options=types.HttpOptions(
-            timeout=TIMEOUT_SECONDS * 1000,  # milliseconds
+            timeout=timeout * 1000,  # milliseconds
             retry_options=types.HttpRetryOptions(attempts=1),
         ),
     )
 
 
-def call_gemini(system, prompt, schema, billing=None, route=DEFAULT_ROUTE):
+def call_gemini(system, prompt, schema, billing=None, route=DEFAULT_ROUTE, timeout=TIMEOUT_SECONDS, retry=True):
+    """
+    `timeout` (seconds) and `retry=False` are for calls made inside a web request, which must
+    give up quickly rather than hold a server worker while sleeping between retries.
+    """
     from google.genai import errors, types
 
     billing = billing or Billing()
-    client = get_client(route.api_key, route.vertex)
+    client = get_client(route.api_key, route.vertex, timeout)
     timeouts = _http_errors("TimeoutException")
     # Network failures other than timeouts (connect, read, protocol errors).
     connection_errors = _http_errors("TransportError")
     # Unbilled failures are retried after these delays (none without a broker); never after a timeout.
-    delays = settings.AI_RETRY_DELAYS
+    delays = settings.AI_RETRY_DELAYS if retry else ()
     for attempt in range(len(delays) + 1):
         billing.api_called = True  # from here on, an unexpected failure may have been billed
         try:
@@ -688,11 +692,38 @@ VOICE_SCHEMA = {
     "additionalProperties": False,
 }
 
-# What a browser's MediaRecorder (or an uploaded clip) may send, by base type (without ";codecs=…").
-VOICE_MIME_TYPES = {
-    "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
-    "audio/aac", "audio/flac", "audio/x-m4a",
-}
+# A voice debrief is written up inside the web request, so it gives up well before a reverse proxy
+# would (nginx's default is 60 seconds) and never sleeps between retries.
+VOICE_TIMEOUT_SECONDS = 50
+
+
+class UnreadableAudio(NotCharged):
+    """Gemini couldn't take the recording (a format it doesn't read). Nothing was billed."""
+
+
+def sniff_audio(head):
+    """
+    The audio type of a recording from its first bytes, or None if it isn't a format we send to
+    Gemini. The type the client claims isn't trusted: anything else would reach Gemini as a 400.
+    """
+    if head.startswith(b"\x1a\x45\xdf\xa3"):
+        return "audio/webm"  # Matroska/WebM: Chrome, Edge
+    if head.startswith(b"OggS"):
+        return "audio/ogg"  # Firefox
+    if head[4:8] == b"ftyp":
+        return "audio/mp4"  # Safari, and .m4a files
+    if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
+        return "audio/wav"
+    if head.startswith(b"FORM") and head[8:12] in (b"AIFF", b"AIFC"):
+        return "audio/aiff"
+    if head.startswith(b"fLaC"):
+        return "audio/flac"
+    if head.startswith(b"ID3"):
+        return "audio/mpeg"
+    if len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0:
+        # A frame sync: layer bits 00 mean an ADTS (AAC) stream, anything else MPEG audio (MP3).
+        return "audio/aac" if head[1] & 0x06 == 0 else "audio/mpeg"
+    return None
 
 
 def _rating_or_none(value):
@@ -708,31 +739,47 @@ def debrief_from_audio(audio, mime_type, route, billing=None):
     """
     A draft debrief (same shape as DebriefSerializer's input) from a spoken recap. It isn't saved:
     the app fills the form with it for the user to check. Needs an AI route; raises the same
-    exceptions as call_gemini.
+    exceptions as call_gemini, plus UnreadableAudio.
     """
-    from google.genai import types
+    from google.genai import errors, types
 
     contents = [
         types.Part.from_bytes(data=audio, mime_type=mime_type),
         "Write the debrief for this recording of the candidate describing their interview round.",
     ]
     try:
-        result = call_gemini(VOICE_SYSTEM, contents, VOICE_SCHEMA, billing, route)
+        result = call_gemini(
+            VOICE_SYSTEM, contents, VOICE_SCHEMA, billing, route, timeout=VOICE_TIMEOUT_SECONDS, retry=False
+        )
     except CutOff as exc:
         raise CutOff("The recording was too long to write up. Try a shorter one.") from exc
+    except NotCharged as exc:
+        # A 400 that isn't about the key, region or model is about what we sent: the recording.
+        cause = exc.__cause__
+        detail = (getattr(cause, "message", "") or "").lower()
+        if (isinstance(cause, errors.APIError) and cause.code == 400
+                and not any(w in detail for w in ("api key", "location", "model"))):
+            raise UnreadableAudio(
+                "The AI couldn't read that recording. Try again, or try another browser."
+            ) from exc
+        raise
 
-    questions = []
-    for q in result.get("questions") or []:
-        question = str(q.get("question") or "").strip()
-        if question:
-            questions.append({
-                "question": question,
-                "answer": str(q.get("answer") or "").strip(),
-                "topic": " ".join(str(q.get("topic") or "").lower().split()),
-                "confidence": _rating_or_none(q.get("confidence")),
-            })
-    draft = {key: str(result.get(key) or "").strip()
-             for key in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")}
+    # The schema should guarantee this shape, but a reply that ignores it mustn't become a 500.
+    try:
+        questions = []
+        for q in result.get("questions") or []:
+            question = str(q.get("question") or "").strip()
+            if question:
+                questions.append({
+                    "question": question,
+                    "answer": str(q.get("answer") or "").strip(),
+                    "topic": " ".join(str(q.get("topic") or "").lower().split()),
+                    "confidence": _rating_or_none(q.get("confidence")),
+                })
+        draft = {key: str(result.get(key) or "").strip()
+                 for key in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")}
+    except (AttributeError, TypeError) as exc:
+        raise RuntimeError("The AI's reply couldn't be read. Try again.") from exc
     draft["questions"] = questions
     draft["overall_feeling"] = _rating_or_none(result.get("overall_feeling"))
     return draft

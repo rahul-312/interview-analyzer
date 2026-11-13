@@ -25,6 +25,7 @@ class Tier:
     # Jobs allowed per rolling 24 hours (None = unlimited).
     analyses_per_24h: int | None
     prep_plans_per_24h: int | None
+    voice_debriefs_per_24h: int | None
     # Shown as "Unlimited, fair use", while analyses_per_24h is still enforced.
     analyses_fair_use: bool
     ai_model: str
@@ -58,6 +59,7 @@ def get_tier(code):
         name=NAMES[code],
         analyses_per_24h=settings.PLAN_ANALYSES_PER_24H.get(code),
         prep_plans_per_24h=settings.PLAN_PREP_PLANS_PER_24H.get(code),
+        voice_debriefs_per_24h=settings.PLAN_VOICE_DEBRIEFS_PER_24H.get(code),
         analyses_fair_use=code == PRO_PLUS,
         ai_model=better_model if code == PRO_PLUS else settings.GEMINI_MODEL,
         ai_model_label="Better model (Pro-class)" if code == PRO_PLUS else "Flash",

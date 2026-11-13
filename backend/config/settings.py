@@ -94,12 +94,10 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    # Only views that set throttles are: billing calls that reach Razorpay, sign-ups (per IP, see
-    # accounts/throttles.py), since every new account gets free AI runs, and voice debriefs (per user),
-    # since each one is a paid AI call.
+    # Only views that set throttles are: billing calls that reach Razorpay, and sign-ups (per IP, see
+    # accounts/throttles.py), since every new account gets free AI runs.
     "DEFAULT_THROTTLE_RATES": {
         "billing": os.environ.get("BILLING_THROTTLE_RATE", "20/min"),
-        "voice_debrief": os.environ.get("VOICE_DEBRIEF_THROTTLE_RATE", "30/day"),
         "signup": os.environ.get("SIGNUP_THROTTLE_RATE", "10/hour"),
         "signup_attempt": os.environ.get("SIGNUP_ATTEMPT_THROTTLE_RATE", "60/min"),
     },
@@ -147,15 +145,26 @@ PLAN_PREP_PLANS_PER_24H = {
     "pro_plus": int(os.environ.get("PRO_PLUS_PREP_PLANS_PER_24H", "15")),
 }
 
+# Debriefs filled in by voice in any rolling 24 hours, by plan. Audio is the costliest input, and on a
+# free-tier key every user shares one daily quota with analyses, so Free gets only a few.
+PLAN_VOICE_DEBRIEFS_PER_24H = {
+    "free": int(os.environ.get("FREE_VOICE_DEBRIEFS_PER_24H", "3")),
+    "pro": int(os.environ.get("PRO_VOICE_DEBRIEFS_PER_24H", "15")),
+    "pro_plus": int(os.environ.get("PRO_PLUS_VOICE_DEBRIEFS_PER_24H", "40")),
+}
+
 # Failed analyses and prep plans that already cost an API call (timeouts, cut-off or unreadable replies, our
 # own errors) are given back, up to this many per user in 24 hours. Past it they count, so
 # nobody can retry an expensive failure for free. Failures that cost nothing are always refunded.
 BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
 
 # AI: without a key, the rule-based analyzer is used.
-# Largest voice-debrief recording accepted. Gemini takes up to 20 MB of inline audio per request;
-# the app's recorder (Opus, ~32 kbit/s) makes about 2.5 MB in 10 minutes.
-VOICE_DEBRIEF_MAX_BYTES = int(os.environ.get("VOICE_DEBRIEF_MAX_BYTES") or 15 * 1024 * 1024)
+# Largest voice-debrief upload accepted, checked against the request's Content-Length before any of it
+# is read. It's the size before encoding: Gemini's 20 MB request limit applies after base64, which
+# adds a third, so keep this under 15,000,000. The app's recorder (Opus, ~32 kbit/s) makes about
+# 2.5 MB in its 10 minutes; Safari may ignore the bitrate and make up to about 10 MB. Cap request
+# bodies at the proxy too (nginx: client_max_body_size 15m).
+VOICE_DEBRIEF_MAX_BYTES = int(os.environ.get("VOICE_DEBRIEF_MAX_BYTES") or 14_000_000)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")

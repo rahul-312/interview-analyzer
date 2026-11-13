@@ -3,21 +3,24 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
-from rest_framework.throttling import ScopedRateThrottle
+from google.genai import errors
 
 from tracker import ai
+from tracker.models import AnalysisRun
 
 pytestmark = pytest.mark.django_db
 
 URL = "/api/rounds/debrief-from-voice/"
+WEBM = b"\x1a\x45\xdf\xa3" + b"\x00" * 60  # a WebM (EBML) header, then anything
 
 
-def _client(body, finish_reason="STOP", calls=None):
+def _client(body=None, finish_reason="STOP", calls=None, raises=None):
     def generate_content(**kwargs):
         if calls is not None:
             calls.append(kwargs)
+        if raises:
+            raise raises
         return SimpleNamespace(
             prompt_feedback=None,
             candidates=[SimpleNamespace(finish_reason=finish_reason)],
@@ -27,8 +30,20 @@ def _client(body, finish_reason="STOP", calls=None):
     return SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
 
 
-def _audio(content=b"fake-opus-bytes", content_type="audio/webm;codecs=opus"):
+def _audio(content=WEBM, content_type="audio/webm;codecs=opus"):
     return SimpleUploadedFile("debrief.webm", content, content_type=content_type)
+
+
+def _post(api, **extra):
+    return api.post(URL, {"audio": extra.pop("audio", None) or _audio()}, format="multipart", **extra)
+
+
+def _client_error(code, message):
+    return errors.ClientError(code, {"error": {"code": code, "message": message, "status": "INVALID_ARGUMENT"}})
+
+
+def counted():
+    return AnalysisRun.objects.filter(kind=AnalysisRun.Kind.VOICE, refunded=False).count()
 
 
 REPLY = {
@@ -45,22 +60,30 @@ REPLY = {
 }
 
 
-@pytest.fixture(autouse=True)
-def fresh_throttle():
-    cache.clear()
-    yield
-    cache.clear()
-
-
 @pytest.fixture
 def with_ai(settings):
     settings.GEMINI_API_KEY = "test-key"
 
 
-def test_voice_fills_a_draft_debrief(api, with_ai):
+@pytest.fixture
+def gemini(with_ai):
+    """Patches the Gemini client; call it with _client's arguments."""
+    patches = []
+
+    def use(*args, **kwargs):
+        patcher = mock.patch.object(ai, "get_client", return_value=_client(*args, **kwargs))
+        patcher.start()
+        patches.append(patcher)
+
+    yield use
+    for p in patches:
+        p.stop()
+
+
+def test_voice_fills_a_draft_debrief(api, gemini):
     calls = []
-    with mock.patch.object(ai, "get_client", return_value=_client(REPLY, calls=calls)):
-        res = api.post(URL, {"audio": _audio()}, format="multipart")
+    gemini(REPLY, calls=calls)
+    res = _post(api, audio=_audio(content_type="application/octet-stream"))
     assert res.status_code == 200, res.data
     assert res.data["questions"] == [{
         "question": "Design a URL shortener", "answer": "Hash plus base62, Redis cache",
@@ -68,47 +91,131 @@ def test_voice_fills_a_draft_debrief(api, with_ai):
     }]
     assert res.data["went_well"] == "I explained the trade-offs clearly."
     assert res.data["overall_feeling"] is None  # out of range
-    # The audio went to Gemini as inline data, with the codecs parameter dropped.
+    # The audio went to Gemini inline, typed by its bytes rather than by what the client claimed.
     part = calls[0]["contents"][0]
     assert part.inline_data.mime_type == "audio/webm"
-    assert part.inline_data.data == b"fake-opus-bytes"
+    assert part.inline_data.data == WEBM
+    assert counted() == 1
+
+
+def test_voice_call_has_a_short_timeout_and_no_retries(api, with_ai, settings):
+    settings.AI_RETRY_DELAYS = (1, 3)
+    with mock.patch.object(ai, "get_client", return_value=_client(raises=errors.ServerError(
+        503, {"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}},
+    ))) as get_client, mock.patch.object(ai.time, "sleep") as sleep:
+        res = _post(api)
+    assert res.status_code == 503
+    assert get_client.call_args.args[2] == ai.VOICE_TIMEOUT_SECONDS
+    sleep.assert_not_called()
 
 
 def test_voice_needs_ai_on_the_plan(api):
-    res = api.post(URL, {"audio": _audio()}, format="multipart")
-    assert res.status_code == 403
+    assert _post(api).status_code == 403
 
 
-def test_voice_rejects_missing_or_wrong_audio(api, with_ai):
+def test_voice_rejects_missing_audio(api, with_ai):
     assert api.post(URL, {}, format="multipart").status_code == 400
-    res = api.post(URL, {"audio": _audio(content_type="text/plain")}, format="multipart")
+
+
+def test_voice_checks_the_bytes_not_the_claimed_type(api, with_ai):
+    res = _post(api, audio=_audio(b"not audio at all", content_type="audio/webm"))
     assert res.status_code == 415
+    assert counted() == 0
 
 
-def test_voice_rejects_long_recordings(api, with_ai, settings):
-    settings.VOICE_DEBRIEF_MAX_BYTES = 10
-    res = api.post(URL, {"audio": _audio(b"x" * 11)}, format="multipart")
+@pytest.mark.parametrize("head, mime", [
+    (b"\x1a\x45\xdf\xa3....", "audio/webm"),
+    (b"OggS\x00\x02", "audio/ogg"),
+    (b"\x00\x00\x00\x20ftypM4A ", "audio/mp4"),
+    (b"RIFF\x24\x00\x00\x00WAVEfmt ", "audio/wav"),
+    (b"FORM\x00\x00\x00\x00AIFF", "audio/aiff"),
+    (b"fLaC\x00\x00", "audio/flac"),
+    (b"ID3\x04\x00", "audio/mpeg"),
+    (b"\xff\xfb\x90\x00", "audio/mpeg"),
+    (b"\xff\xf1\x50\x80", "audio/aac"),
+    (b"<html>", None),
+    (b"", None),
+])
+def test_sniff_audio(head, mime):
+    assert ai.sniff_audio(head) == mime
+
+
+def test_voice_rejects_a_large_body_before_reading_it(api, with_ai, settings):
+    settings.VOICE_DEBRIEF_MAX_BYTES = 1000
+    with mock.patch("rest_framework.request.Request.FILES", new_callable=mock.PropertyMock) as files:
+        res = _post(api, CONTENT_LENGTH=str(10_000_000))
     assert res.status_code == 413
+    files.assert_not_called()
 
 
-def test_voice_with_nothing_usable_says_so(api, with_ai):
-    empty = {k: "" for k in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")}
-    empty.update(questions=[], overall_feeling=0)
-    with mock.patch.object(ai, "get_client", return_value=_client(empty)):
-        res = api.post(URL, {"audio": _audio()}, format="multipart")
+def test_voice_rejects_a_large_file(api, with_ai, settings):
+    settings.VOICE_DEBRIEF_MAX_BYTES = 10
+    assert _post(api, audio=_audio(WEBM)).status_code == 413
+    assert counted() == 0
+
+
+def test_voice_counts_against_the_plan_limit(api, gemini, settings):
+    settings.PLAN_VOICE_DEBRIEFS_PER_24H = {**settings.PLAN_VOICE_DEBRIEFS_PER_24H, "free": 2}
+    gemini(REPLY)
+    codes = [_post(api).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
+    res = _post(api)
+    assert res.data["code"] == "usage_limit" and res.data["feature"] == "ai_voice_debrief"
+    quota = api.get("/api/auth/me/").data["usage"]["voice_debriefs"]
+    assert quota["limit"] == 2 and quota["remaining"] == 0
+
+
+def test_voice_and_analysis_limits_are_separate(api, gemini, settings):
+    settings.PLAN_VOICE_DEBRIEFS_PER_24H = {**settings.PLAN_VOICE_DEBRIEFS_PER_24H, "free": 1}
+    gemini(REPLY)
+    assert _post(api).status_code == 200
+    usage = api.get("/api/auth/me/").data["usage"]
+    assert usage["voice_debriefs"]["used"] == 1
+    assert usage["analyses"]["used"] == 0
+
+
+def test_voice_failures_that_cost_nothing_are_given_back(api, gemini):
+    gemini(raises=errors.ServerError(503, {"error": {"code": 503, "message": "busy", "status": "UNAVAILABLE"}}))
+    assert _post(api).status_code == 503
+    assert counted() == 0
+
+
+def test_voice_format_gemini_cannot_read_is_reported_and_given_back(api, gemini):
+    gemini(raises=_client_error(400, "Unsupported MIME type: audio/webm"))
+    res = _post(api)
     assert res.status_code == 422
+    assert "couldn't read that recording" in res.data["detail"]
+    assert counted() == 0
 
 
-def test_voice_refusal_is_reported(api, with_ai):
-    with mock.patch.object(ai, "get_client", return_value=_client(REPLY, finish_reason="SAFETY")):
-        res = api.post(URL, {"audio": _audio()}, format="multipart")
+def test_voice_bad_key_is_still_a_setup_error(api, gemini):
+    gemini(raises=_client_error(400, "API key not valid. Please pass a valid API key."))
+    res = _post(api)
+    assert res.status_code == 503
+    assert "set up correctly" in res.data["detail"]
+
+
+def test_voice_refusal_counts(api, gemini):
+    gemini(REPLY, finish_reason="SAFETY")
+    res = _post(api)
     assert res.status_code == 422
     assert "declined" in res.data["detail"]
+    assert counted() == 1
 
 
-def test_voice_is_rate_limited(api, with_ai):
-    # THROTTLE_RATES is read from settings when DRF loads, so patch the class attribute.
-    with mock.patch.object(ScopedRateThrottle, "THROTTLE_RATES", {"voice_debrief": "2/day"}), \
-            mock.patch.object(ai, "get_client", return_value=_client(REPLY)):
-        codes = [api.post(URL, {"audio": _audio()}, format="multipart").status_code for _ in range(3)]
-    assert codes == [200, 200, 429]
+@pytest.mark.parametrize("reply", [
+    ["not", "an", "object"],
+    {**REPLY, "questions": ["just a string"]},
+], ids=["list", "question-not-an-object"])
+def test_voice_malformed_reply_is_a_502_not_a_500(api, gemini, reply):
+    gemini(reply)
+    res = _post(api)
+    assert res.status_code == 502
+    assert counted() == 0  # billed, but given back within the cap
+
+
+def test_voice_with_nothing_usable_says_so(api, gemini):
+    empty = {k: "" for k in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")}
+    empty.update(questions=[], overall_feeling=0)
+    gemini(empty)
+    assert _post(api).status_code == 422

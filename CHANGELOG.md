@@ -44,9 +44,15 @@ extension share one version number.
   already typed, for the user to check before saving. Shown only when AI is on
   for the user's plan.
 - New endpoint `POST /api/rounds/debrief-from-voice/` (multipart `audio`).
-  It saves nothing and doesn't count against the analysis limit, but is
-  rate-limited per user (`VOICE_DEBRIEF_THROTTLE_RATE`, default `30/day`).
-  Recordings over `VOICE_DEBRIEF_MAX_BYTES` (default 15 MB) are refused.
+  It saves nothing. The AI call runs in the request with a 50-second timeout
+  and no retry waits.
+- Voice debriefs have their own per-plan limit per rolling 24 hours (3, 15,
+  40; `FREE_/PRO_/PRO_PLUS_VOICE_DEBRIEFS_PER_24H`), counted like analyses and
+  shown in `usage.voice_debriefs`. Failures that cost nothing are given back.
+- Recordings are checked by their bytes, not the type the browser claims.
+  Uploads over `VOICE_DEBRIEF_MAX_BYTES` (default 14,000,000) are refused from
+  the request's Content-Length, before the body is read; also cap request
+  bodies at the proxy (nginx `client_max_body_size 15m`).
 
 ### Changed
 - `/` is now a public home page. Logged-in users still go straight to their
@@ -73,6 +79,8 @@ Users whose profile was set to Pro in the admin are affected on deploy:
   warns about this (`billing.W001`).
 - Free users get 1 prep plan per 24 hours instead of 2. Set
   `FREE_PREP_PLANS_PER_24H=2` to keep the old limit.
+
+For voice debriefs, run `migrate` (it adds the voice kind to usage runs).
 
 ## [1.0.0] - 2026-10-29
 

@@ -32,7 +32,9 @@ export default class RoundService {
   // A draft debrief from a spoken recap. Nothing is saved: the form is filled for the user to check.
   debriefFromVoice(audio: Blob) {
     const form = new FormData();
-    form.append("audio", audio, "debrief");
+    // A file name whose extension matches the type, for logs and proxies that look at it.
+    const ext = audio.type.includes("ogg") ? "ogg" : audio.type.includes("mp4") ? "m4a" : "webm";
+    form.append("audio", audio, `debrief.${ext}`);
     return this.client.post<DebriefDraft>("/rounds/debrief-from-voice/", form);
   }
 

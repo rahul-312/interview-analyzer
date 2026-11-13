@@ -13,10 +13,10 @@ import { errorText } from '@/utils/errorText';
 const MAX_SECONDS = 10 * 60;
 const MIN_SECONDS = 3;
 
-// Opus in Ogg or WebM where the browser can record it (Chrome, Edge, Firefox); MP4 for Safari.
+// Opus in Ogg or WebM where the browser can record it (Firefox; Chrome, Edge); MP4 for Safari.
 const MIME_TYPES = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
 
-type Phase = 'idle' | 'recording' | 'working';
+type Phase = 'idle' | 'starting' | 'recording' | 'working';
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
@@ -29,17 +29,20 @@ function micError(err: unknown) {
 }
 
 interface VoiceDebriefProps {
-  /** Gets the written-up draft; the caller merges it into the form. */
+  /**
+   * Gets the written-up draft; the caller merges it into the form. Called even if this component
+   * has gone (the debrief section was hidden while the draft was written up), so the draft isn't lost.
+   */
   onDraft: (draft: DebriefDraft) => void;
 }
 
 /**
  * "Talk it through instead of typing": records a spoken recap of the round, sends it to the server
  * (Gemini writes it up), and hands back a draft debrief. Hidden when the plan has no AI or the
- * browser can't record.
+ * browser can't record. Each recording counts against the plan's daily voice-debrief limit.
  */
 const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
-  const { usage } = useUsage();
+  const { usage, reloadUsage } = useUsage();
   const [supported, setSupported] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [seconds, setSeconds] = useState(0);
@@ -52,6 +55,8 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
   const discard = useRef(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const mounted = useRef(true);
+  // Set synchronously, so a double click can't open two microphone streams.
+  const starting = useRef(false);
 
   // Checked after mounting so the server render and the first client render match.
   useEffect(() => {
@@ -85,30 +90,49 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
     setPhase('working');
     try {
       const draft = await roundService.debriefFromVoice(audio);
-      if (!mounted.current) return;
       onDraft(draft);
-      setFilled(true);
+      if (mounted.current) setFilled(true);
     } catch (err) {
       if (mounted.current) setError(errorText(err));
     } finally {
       if (mounted.current) setPhase('idle');
+      reloadUsage(); // the call counted (or was given back): show what's left
     }
   };
 
   const start = async () => {
+    if (starting.current || phase !== 'idle') return;
+    starting.current = true;
     setError('');
     setFilled(false);
+    setPhase('starting');
+
+    let mic: MediaStream;
     try {
-      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mic = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-      setError(micError(err));
+      starting.current = false;
+      if (mounted.current) {
+        setPhase('idle');
+        setError(micError(err));
+      }
       return;
     }
+    starting.current = false;
+    // The form was closed while the permission prompt was open: turn the microphone straight off.
+    if (!mounted.current) {
+      mic.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    stream.current = mic;
+
     const mimeType = MIME_TYPES.find((t) => MediaRecorder.isTypeSupported(t));
-    const rec = new MediaRecorder(stream.current, { ...(mimeType && { mimeType }), audioBitsPerSecond: 32000 });
+    const rec = new MediaRecorder(mic, { ...(mimeType && { mimeType }), audioBitsPerSecond: 32000 });
     chunks.current = [];
     discard.current = false;
-    let elapsed = 0;
+    // Measured from the clock, not by counting ticks: background tabs slow timers down.
+    const startedAt = Date.now();
+    const elapsed = () => Math.floor((Date.now() - startedAt) / 1000);
 
     rec.ondataavailable = (e) => {
       if (e.data.size) chunks.current.push(e.data);
@@ -119,7 +143,7 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
         if (mounted.current) setPhase('idle');
         return;
       }
-      void send(new Blob(chunks.current, { type: rec.mimeType || mimeType || 'audio/webm' }), elapsed);
+      void send(new Blob(chunks.current, { type: rec.mimeType || mimeType || 'audio/webm' }), elapsed());
     };
 
     recorder.current = rec;
@@ -127,10 +151,10 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
     setSeconds(0);
     setPhase('recording');
     timer.current = setInterval(() => {
-      elapsed += 1;
-      setSeconds(elapsed);
-      if (elapsed >= MAX_SECONDS && rec.state === 'recording') rec.stop();
-    }, 1000);
+      const s = elapsed();
+      setSeconds(s);
+      if (s >= MAX_SECONDS && rec.state === 'recording') rec.stop();
+    }, 500);
   };
 
   const stop = (keep: boolean) => {
@@ -140,19 +164,25 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
 
   if (!supported || !usage?.ai_enabled) return null;
 
+  const quota = usage.voice_debriefs;
+  const usedUp = quota?.remaining === 0 && phase === 'idle';
+
   return (
     <div className="flex flex-col gap-lg rounded-lg border border-primary-light bg-page-bg p-2xl">
       <div className="flex flex-wrap items-center justify-between gap-lg">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-charcoal-gray">Rather talk it through?</p>
           <p className="text-xs text-medium-gray">
-            Describe the questions, how you answered, and how it went. We&apos;ll fill in the form for you to check.
+            {usedUp
+              ? "You've used all your voice debriefs for the last 24 hours. You can still type it in below."
+              : <>Describe the questions, how you answered, and how it went. We&apos;ll fill in the form for you to check.</>}
+            {!usedUp && quota?.remaining != null && ` ${quota.remaining} left today.`}
           </p>
         </div>
 
-        {phase === 'idle' && (
-          <Button variant="secondary" onClick={start}>
-            <Mic size={16} aria-hidden="true" />
+        {(phase === 'idle' || phase === 'starting') && !usedUp && (
+          <Button variant="secondary" onClick={start} loading={phase === 'starting'}>
+            {phase === 'idle' && <Mic size={16} aria-hidden="true" />}
             {filled ? 'Record more' : 'Fill in by voice'}
           </Button>
         )}
@@ -184,7 +214,7 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
 
       {filled && phase === 'idle' && (
         <p role="status" className="text-xs font-medium text-deep-green">
-          Filled in from your recording. Check it over before you save.
+          Filled in from your recording. Check it over before you save. Recording more adds to what&apos;s there.
         </p>
       )}
       <ErrorMessage message={error} />

@@ -1,5 +1,5 @@
 """
-Limits on paid AI jobs, per plan: round analyses and prep plans.
+Limits on paid AI jobs, per plan: round analyses, prep plans and voice debriefs.
 
 Usage is counted over a rolling 24-hour window: each job frees up again 24 hours
 after it started. Failures that weren't the user's fault are refunded (see refund_run
@@ -34,11 +34,13 @@ IN_PROGRESS = (JobStatus.PENDING, JobStatus.RUNNING)
 
 ANALYSIS = AnalysisRun.Kind.ANALYSIS
 PREP_PLAN = AnalysisRun.Kind.PREP_PLAN
+VOICE = AnalysisRun.Kind.VOICE
 
 # How each kind is named in messages, what "at the limit" means for the user, and its feature id in 429s.
 _WORDING = {
     ANALYSIS: ("analyses", "Your debrief is saved; you can analyse it once one frees up.", "ai_round_analysis"),
     PREP_PLAN: ("prep plans", "You can make or regenerate a plan once one frees up.", "ai_prep_plan"),
+    VOICE: ("voice debriefs", "You can still type your debrief, or record one once one frees up.", "ai_voice_debrief"),
 }
 
 
@@ -49,7 +51,11 @@ def plan_limit(tier, kind=ANALYSIS):
     """
     if entitlements.ai_route(tier) is None:
         return None
-    return tier.analyses_per_24h if kind == ANALYSIS else tier.prep_plans_per_24h
+    return {
+        ANALYSIS: tier.analyses_per_24h,
+        PREP_PLAN: tier.prep_plans_per_24h,
+        VOICE: tier.voice_debriefs_per_24h,
+    }[kind]
 
 
 def _window_stats(user, kind, now):
@@ -90,6 +96,7 @@ def usage(user):
         "priority": tier.priority,
         "analyses": _quota(user, tier, ANALYSIS, now),
         "prep_plans": _quota(user, tier, PREP_PLAN, now),
+        "voice_debriefs": _quota(user, tier, VOICE, now),
     }
 
 
@@ -220,6 +227,15 @@ def reserve_prep_plan(user, plan):
         start_job=start,
         run_fields={"prep_plan": plan},
     )
+
+
+def reserve_voice(user):
+    """
+    Counts a voice debrief before its (synchronous) AI call, if allowed. Returns (QUEUED, run) or
+    (LIMITED, None). There's no job row, so nothing can be BUSY; the caller refunds the run with
+    refund_run when the call fails for a reason that isn't the user's.
+    """
+    return _reserve(user, VOICE, lock_job=lambda: None, start_job=lambda run: None, run_fields={})
 
 
 def mark_stale(rnd):
