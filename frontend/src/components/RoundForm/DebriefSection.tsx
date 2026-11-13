@@ -6,13 +6,16 @@ import Button from '../ui/Button';
 import { Field, Label, TextArea } from '../ui/FormControls';
 import QuestionCard from './QuestionCard';
 import Rating from './Rating';
-import type { Debrief, DebriefQuestion } from '@/models/Interview';
+import VoiceDebrief from './VoiceDebrief';
+import type { Debrief, DebriefDraft, DebriefQuestion } from '@/models/Interview';
 
 export const emptyQuestion: DebriefQuestion = { question: '', answer: '', topic: '', confidence: null };
 
 interface DebriefSectionProps {
   debrief: Debrief;
   onChange: (debrief: Debrief) => void;
+  /** A debrief written up from a voice recording, to merge into the form. */
+  onVoiceDraft: (draft: DebriefDraft) => void;
 }
 
 type TextKey = 'went_well' | 'went_badly' | 'interviewer_cues' | 'recruiter_feedback';
@@ -25,7 +28,7 @@ const textFields: { key: TextKey; label: string; rows: number; placeholder?: str
 ];
 
 /** The debrief: a list of questions, then notes on how it went. */
-const DebriefSection: React.FC<DebriefSectionProps> = ({ debrief, onChange }) => {
+const DebriefSection: React.FC<DebriefSectionProps> = ({ debrief, onChange, onVoiceDraft }) => {
   const set = <K extends keyof Debrief>(key: K, value: Debrief[K]) => onChange({ ...debrief, [key]: value });
 
   const updateQuestion = (index: number, patch: Partial<DebriefQuestion>) =>
@@ -36,6 +39,8 @@ const DebriefSection: React.FC<DebriefSectionProps> = ({ debrief, onChange }) =>
 
   return (
     <div className="flex flex-col gap-6xl border-l-2 border-primary-light pl-4xl">
+      <VoiceDebrief onDraft={onVoiceDraft} />
+
       {/* Questions */}
       <div className="flex flex-col gap-2xl">
         <h3 className="text-sm font-semibold text-charcoal-gray">Questions you were asked</h3>
@@ -77,7 +82,7 @@ const DebriefSection: React.FC<DebriefSectionProps> = ({ debrief, onChange }) =>
         <Rating label="Overall feeling" value={debrief.overall_feeling} onChange={(n) => set('overall_feeling', n)} />
       </div>
 
-      <AiDataNotice what="your debrief, with the job's description" />
+      <AiDataNotice what="your debrief (and any voice recording you make), with the job's description" />
     </div>
   );
 };

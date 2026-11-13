@@ -69,6 +69,7 @@ export const usage = (plan: Usage["plan"] = "free", overrides: Partial<Usage> = 
   priority: plan === "pro_plus",
   analyses: quota(tier(plan).analyses_per_24h!, 1, { fair_use: plan === "pro_plus" }),
   prep_plans: quota(tier(plan).prep_plans_per_24h!, 0),
+  voice_debriefs: quota(plan === "free" ? 3 : plan === "pro" ? 15 : 40, 0),
   ...overrides,
 });
 

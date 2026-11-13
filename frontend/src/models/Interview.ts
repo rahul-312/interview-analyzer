@@ -31,6 +31,9 @@ export interface Debrief {
   updated_at?: string;
 }
 
+/** A debrief written up from a voice recording, before the user checks and saves it. */
+export type DebriefDraft = Omit<Debrief, "updated_at">;
+
 export interface Weakness {
   topic: string;
   severity: Severity;

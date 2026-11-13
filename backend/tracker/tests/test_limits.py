@@ -86,9 +86,11 @@ def test_free_plan_gets_two_analyses_then_round_is_saved_without_one(api, applic
 def test_usage_is_reported_on_me(api, application, run_jobs):
     fresh = {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None, "fair_use": False}
     fresh_plans = {"limit": 1, "used": 0, "remaining": 1, "next_available_at": None, "fair_use": False}
+    fresh_voice = {"limit": 3, "used": 0, "remaining": 3, "next_available_at": None, "fair_use": False}
     assert api.get("/api/auth/me/").data["usage"] == {
         "plan": "free", "plan_name": "Free", "ai_enabled": True, "ai_free_tier": True, "training_notice": True,
         "ai_model": "Flash", "priority": False, "analyses": fresh, "prep_plans": fresh_plans,
+        "voice_debriefs": fresh_voice,
     }
 
     log_round(api, application, run_jobs)

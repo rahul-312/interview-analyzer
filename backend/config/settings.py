@@ -145,12 +145,33 @@ PLAN_PREP_PLANS_PER_24H = {
     "pro_plus": int(os.environ.get("PRO_PLUS_PREP_PLANS_PER_24H", "15")),
 }
 
+# Debriefs filled in by voice in any rolling 24 hours, by plan. Audio is the costliest input, and on a
+# free-tier key every user shares one daily quota with analyses, so Free gets only a few.
+PLAN_VOICE_DEBRIEFS_PER_24H = {
+    "free": int(os.environ.get("FREE_VOICE_DEBRIEFS_PER_24H", "3")),
+    "pro": int(os.environ.get("PRO_VOICE_DEBRIEFS_PER_24H", "15")),
+    "pro_plus": int(os.environ.get("PRO_PLUS_VOICE_DEBRIEFS_PER_24H", "40")),
+}
+
 # Failed analyses and prep plans that already cost an API call (timeouts, cut-off or unreadable replies, our
 # own errors) are given back, up to this many per user in 24 hours. Past it they count, so
 # nobody can retry an expensive failure for free. Failures that cost nothing are always refunded.
 BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
 
 # AI: without a key, the rule-based analyzer is used.
+# Largest voice-debrief upload accepted, checked against the request's Content-Length before any of it
+# is read. It's the size before encoding: Gemini's 20 MB request limit applies after base64, which
+# adds a third, so keep this under 15,000,000. The app's recorder (Opus, ~32 kbit/s) makes about
+# 2.5 MB in its 10 minutes; Safari may ignore the bitrate and make up to about 10 MB. Cap request
+# bodies at the proxy too (nginx: client_max_body_size 15m).
+VOICE_DEBRIEF_MAX_BYTES = int(os.environ.get("VOICE_DEBRIEF_MAX_BYTES") or 14_000_000)
+# How long a voice debrief waits for Gemini. It runs inside the web request, so the app server's
+# worker timeout and the proxy's read timeout must both be longer (e.g. gunicorn --timeout 75,
+# nginx proxy_read_timeout 75s): otherwise the worker is stopped first and the user gets a bare 502.
+# The call is then given back only while under the billed-refund cap, and not at all if the worker
+# is killed outright (SIGKILL) before the refund runs. Gunicorn's default of 30 seconds is too short.
+VOICE_DEBRIEF_TIMEOUT_SECONDS = int(os.environ.get("VOICE_DEBRIEF_TIMEOUT_SECONDS") or 50)
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 # The better model Pro Plus jobs use. Blank: Pro Plus uses GEMINI_MODEL too.

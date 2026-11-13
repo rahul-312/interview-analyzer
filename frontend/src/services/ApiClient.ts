@@ -82,13 +82,15 @@ export default class ApiClient {
   private send(path: string, { method = "GET", body, auth = true, signal }: RequestOptions) {
     // The browser's time zone, so the server's "today" (e.g. applying to a saved job) is the user's day.
     const headers: Record<string, string> = { "X-Timezone": Intl.DateTimeFormat().resolvedOptions().timeZone };
-    if (body !== undefined) headers["Content-Type"] = "application/json";
+    // FormData (file uploads) sets its own multipart Content-Type, boundary included.
+    const isForm = typeof FormData !== "undefined" && body instanceof FormData;
+    if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
     if (auth && this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
 
     return fetch(`${this.baseUrl}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
       signal,
     });
   }

@@ -37,6 +37,26 @@ extension share one version number.
   first. Run `migrate`; with a Celery broker, a worker finishes upgrades, and
   `reconcile_subscriptions` retries any left unfinished.
 
+### Voice debriefs
+- "Fill in by voice" on the debrief form: record a spoken recap of the round
+  (up to 10 minutes) and Gemini writes it up into questions, answers, topics,
+  confidence and notes. The draft is merged into the form, keeping anything
+  already typed, for the user to check before saving. Shown only when AI is on
+  for the user's plan.
+- New endpoint `POST /api/rounds/debrief-from-voice/` (multipart `audio`).
+  It saves nothing. The AI call runs in the request with no retry waits and a
+  timeout of `VOICE_DEBRIEF_TIMEOUT_SECONDS` (default 50), so the app server
+  and proxy timeouts must be longer: gunicorn's default of 30 is too short
+  (see "Going live" in BILLING.md). Requests without a Content-Length are
+  refused. A recording with nothing usable in it is given back.
+- Voice debriefs have their own per-plan limit per rolling 24 hours (3, 15,
+  40; `FREE_/PRO_/PRO_PLUS_VOICE_DEBRIEFS_PER_24H`), counted like analyses and
+  shown in `usage.voice_debriefs`. Failures that cost nothing are given back.
+- Recordings are checked by their bytes, not the type the browser claims.
+  Uploads over `VOICE_DEBRIEF_MAX_BYTES` (default 14,000,000) are refused from
+  the request's Content-Length, before the body is read; also cap request
+  bodies at the proxy (nginx `client_max_body_size 15m`).
+
 ### Changed
 - `/` is now a public home page. Logged-in users still go straight to their
   applications, and the logo on the login and register pages links to it.
@@ -62,6 +82,8 @@ Users whose profile was set to Pro in the admin are affected on deploy:
   warns about this (`billing.W001`).
 - Free users get 1 prep plan per 24 hours instead of 2. Set
   `FREE_PREP_PLANS_PER_24H=2` to keep the old limit.
+
+For voice debriefs, run `migrate` (it adds the voice kind to usage runs).
 
 ## [1.0.0] - 2026-10-29
 

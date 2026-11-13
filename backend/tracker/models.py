@@ -231,7 +231,8 @@ class RoundAnalysis(models.Model):
 
 class AnalysisRun(models.Model):
     """
-    One paid AI job started for a user: a round analysis or a prep plan. This is the usage
+    One paid AI job started for a user: a round analysis, a prep plan, or a debrief written up from
+    a voice recording (which has no round or plan: it only fills the form). This is the usage
     record: it counts against their plan's limit for that kind unless refunded, whether it was
     started from the web app or the browser extension.
     """
@@ -239,6 +240,7 @@ class AnalysisRun(models.Model):
     class Kind(models.TextChoices):
         ANALYSIS = "analysis", "Round analysis"
         PREP_PLAN = "prep_plan", "Prep plan"
+        VOICE = "voice", "Voice debrief"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="analysis_runs")
     kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.ANALYSIS)
