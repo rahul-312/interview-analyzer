@@ -255,6 +255,20 @@ def test_voice_unexpected_error_is_given_back(with_ai, user):
     assert counted() == 0
 
 
+def test_voice_killed_worker_is_given_back(api, with_ai):
+    # gunicorn's worker timeout exits the worker through SystemExit, which isn't an Exception.
+    with mock.patch.object(ai, "debrief_from_audio", side_effect=SystemExit(1)), pytest.raises(SystemExit):
+        _post(api)
+    assert counted() == 0
+
+
+def test_voice_failed_refund_keeps_the_original_error(api, with_ai):
+    with mock.patch.object(ai, "debrief_from_audio", side_effect=KeyError("the real bug")), \
+            mock.patch("tracker.views.refund_run", side_effect=RuntimeError("database down")), \
+            pytest.raises(KeyError, match="the real bug"):
+        _post(api)
+
+
 def test_voice_uses_the_plan_it_was_counted_against(api, gemini):
     from billing import entitlements
 

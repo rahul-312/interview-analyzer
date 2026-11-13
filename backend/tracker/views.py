@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
@@ -207,6 +209,8 @@ class RoundAnalyzeView(APIView):
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
 
 
+logger = logging.getLogger(__name__)
+
 # Room for the multipart boundaries and headers around the recording itself.
 MULTIPART_OVERHEAD = 64 * 1024
 
@@ -279,9 +283,14 @@ class DebriefFromVoiceView(APIView):
             # Timed out or an unreadable reply: may have been billed, so given back within the cap.
             refund_run(run.id, billed=True)
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-        except Exception:
-            # Our own bug: not the user's doing, so given back within the cap, then reported as a 500.
-            refund_run(run.id, billed=True)
+        except BaseException:
+            # Our own bug, or the worker being stopped (gunicorn's timeout exits through SystemExit):
+            # not the user's doing, so given back within the cap. A failed refund (say, the database
+            # is down) is logged, and the original error is the one that propagates.
+            try:
+                refund_run(run.id, billed=True)
+            except Exception:
+                logger.exception("Couldn't give back voice debrief run %s", run.id)
             raise
         if not draft["questions"] and not any(
             draft[k] for k in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")
