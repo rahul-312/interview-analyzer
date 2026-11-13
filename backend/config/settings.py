@@ -32,6 +32,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves collected static files (the admin's CSS and JS) when DEBUG is off.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -85,6 +87,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# Where `manage.py collectstatic` puts static files for WhiteNoise to serve in production.
+STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
@@ -106,6 +110,11 @@ REST_FRAMEWORK = {
     # can't dodge the sign-up limit by sending a made-up header.
     "NUM_PROXIES": int(os.environ.get("NUM_PROXIES") or 0),
 }
+
+# Behind a proxy that terminates TLS, trust its X-Forwarded-Proto so Django knows the request was
+# HTTPS (is_secure, absolute URLs). Only then: without a proxy, a client could send the header itself.
+if REST_FRAMEWORK["NUM_PROXIES"] > 0:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
