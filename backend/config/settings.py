@@ -3,12 +3,22 @@ from datetime import timedelta
 from pathlib import Path
 
 from corsheaders.defaults import default_headers
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from kombu import Queue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-# override=True: backend/.env wins over variables already set in the terminal (even empty ones).
-load_dotenv(BASE_DIR / ".env", override=True)
+# backend/.env fills in only variables that are unset or empty. A real value set in the environment
+# (systemd, Docker, the hosting platform) wins, so DEBUG=0 there can't be undone by a copied .env;
+# an empty variable left over in a terminal doesn't hide the .env value.
+# When debugging locally, two things follow from this:
+# - A variable still exported in your terminal (say DEBUG or DB_NAME from another project) beats
+#   .env. Check `env` if a setting isn't what .env says.
+# - Setting a variable to empty can't switch a .env value off for one run (GEMINI_API_KEY= ... still
+#   uses the key from .env). Comment the line out in .env. For flags, set an explicit value such as
+#   DEBUG=0.
+for _key, _value in dotenv_values(BASE_DIR / ".env").items():
+    if _value is not None and not os.environ.get(_key):
+        os.environ[_key] = _value
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-insecure-key-change-me")
 DEBUG = os.environ.get("DEBUG", "1") == "1"
@@ -32,6 +42,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves collected static files (the admin's CSS and JS) when DEBUG is off.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -85,6 +97,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# Where `manage.py collectstatic` puts static files for WhiteNoise to serve in production.
+STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
@@ -106,6 +120,17 @@ REST_FRAMEWORK = {
     # can't dodge the sign-up limit by sending a made-up header.
     "NUM_PROXIES": int(os.environ.get("NUM_PROXIES") or 0),
 }
+
+# Behind a proxy that terminates TLS, trust its X-Forwarded-Proto so Django knows the request was
+# HTTPS (is_secure, absolute URLs). Only then: without a proxy, a client could send the header itself.
+if REST_FRAMEWORK["NUM_PROXIES"] > 0:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# The API uses JWTs, so cookies only matter for the admin: in production, send them over HTTPS only.
+# So with DEBUG=0 over plain http://localhost, the browser drops these cookies and the admin login
+# fails with a CSRF error. Test the admin locally with DEBUG=1, or over HTTPS.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
