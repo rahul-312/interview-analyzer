@@ -10,6 +10,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # backend/.env fills in only variables that are unset or empty. A real value set in the environment
 # (systemd, Docker, the hosting platform) wins, so DEBUG=0 there can't be undone by a copied .env;
 # an empty variable left over in a terminal doesn't hide the .env value.
+# When debugging locally, two things follow from this:
+# - A variable still exported in your terminal (say DEBUG or DB_NAME from another project) beats
+#   .env. Check `env` if a setting isn't what .env says.
+# - Setting a variable to empty can't switch a .env value off for one run (GEMINI_API_KEY= ... still
+#   uses the key from .env). Comment the line out in .env, or set a non-empty value instead.
 for _key, _value in dotenv_values(BASE_DIR / ".env").items():
     if _value is not None and not os.environ.get(_key):
         os.environ[_key] = _value
@@ -121,6 +126,8 @@ if REST_FRAMEWORK["NUM_PROXIES"] > 0:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # The API uses JWTs, so cookies only matter for the admin: in production, send them over HTTPS only.
+# So with DEBUG=0 over plain http://localhost, the browser drops these cookies and the admin login
+# fails with a CSRF error. Test the admin locally with DEBUG=1, or over HTTPS.
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
