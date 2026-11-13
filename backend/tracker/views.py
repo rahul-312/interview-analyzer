@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from billing import entitlements
+from billing import entitlements, tiers
 
 from . import ai, insights
 from .models import Application, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
@@ -225,20 +225,23 @@ class DebriefFromVoiceView(APIView):
             {"detail": "That recording is too large to send. Try a shorter one."},
             status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
         )
+        no_ai = Response(
+            {"detail": "Filling a debrief by voice needs AI, which isn't on for your plan."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
         # Before touching request.FILES, which would read (and write to disk) the whole body first.
+        # A body without a length (chunked) can't be checked up front, so it isn't accepted.
         try:
-            length = int(request.META.get("CONTENT_LENGTH") or 0)
+            length = int(request.META.get("CONTENT_LENGTH") or "")
         except ValueError:
-            length = 0
+            return Response(
+                {"detail": "Send the recording with a Content-Length."}, status=status.HTTP_411_LENGTH_REQUIRED
+            )
         if length > settings.VOICE_DEBRIEF_MAX_BYTES + MULTIPART_OVERHEAD:
             return too_long
 
-        route = entitlements.ai_route(entitlements.for_user(request.user))
-        if route is None:
-            return Response(
-                {"detail": "Filling a debrief by voice needs AI, which isn't on for your plan."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        if entitlements.ai_route(entitlements.for_user(request.user)) is None:
+            return no_ai
         audio = request.FILES.get("audio")
         if audio is None or audio.size == 0:
             return Response({"detail": "Send a recording as `audio`."}, status=status.HTTP_400_BAD_REQUEST)
@@ -255,6 +258,11 @@ class DebriefFromVoiceView(APIView):
         result, run = reserve_voice(request.user)
         if result == LIMITED:
             return Response(limit_details(request.user, VOICE), status=status.HTTP_429_TOO_MANY_REQUESTS)
+        # The key and model for the plan the run was counted against, so the two can't differ.
+        route = entitlements.ai_route(tiers.get_tier(run.tier))
+        if route is None:
+            refund_run(run.id, billed=False)
+            return no_ai
 
         try:
             draft = ai.debrief_from_audio(data, mime_type, route)
@@ -271,11 +279,20 @@ class DebriefFromVoiceView(APIView):
             # Timed out or an unreadable reply: may have been billed, so given back within the cap.
             refund_run(run.id, billed=True)
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        except Exception:
+            # Our own bug: not the user's doing, so given back within the cap, then reported as a 500.
+            refund_run(run.id, billed=True)
+            raise
         if not draft["questions"] and not any(
             draft[k] for k in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")
         ):
+            # Usually a muted mic or the wrong input device: given back within the cap, so a few
+            # silent recordings can't use up a small daily allowance.
+            refunded = refund_run(run.id, billed=True)
+            note = "" if refunded else " This one still counted towards your daily voice debriefs."
             return Response(
-                {"detail": "Couldn't make out a debrief in that recording. Try again, a little closer to the mic."},
+                {"detail": "Couldn't make out a debrief in that recording. Check your microphone and "
+                           "try again, a little closer to it." + note},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
         return Response(draft)

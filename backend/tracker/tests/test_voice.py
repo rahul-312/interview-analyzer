@@ -100,12 +100,13 @@ def test_voice_fills_a_draft_debrief(api, gemini):
 
 def test_voice_call_has_a_short_timeout_and_no_retries(api, with_ai, settings):
     settings.AI_RETRY_DELAYS = (1, 3)
+    settings.VOICE_DEBRIEF_TIMEOUT_SECONDS = 25
     with mock.patch.object(ai, "get_client", return_value=_client(raises=errors.ServerError(
         503, {"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}},
     ))) as get_client, mock.patch.object(ai.time, "sleep") as sleep:
         res = _post(api)
     assert res.status_code == 503
-    assert get_client.call_args.args[2] == ai.VOICE_TIMEOUT_SECONDS
+    assert get_client.call_args.args[2] == 25
     sleep.assert_not_called()
 
 
@@ -133,6 +134,8 @@ def test_voice_checks_the_bytes_not_the_claimed_type(api, with_ai):
     (b"ID3\x04\x00", "audio/mpeg"),
     (b"\xff\xfb\x90\x00", "audio/mpeg"),
     (b"\xff\xf1\x50\x80", "audio/aac"),
+    (b"\x00\x00\x00\x18ftypheic", None),
+    (b"\x00\x00\x00\x1cftypavif", None),
     (b"<html>", None),
     (b"", None),
 ])
@@ -214,8 +217,49 @@ def test_voice_malformed_reply_is_a_502_not_a_500(api, gemini, reply):
     assert counted() == 0  # billed, but given back within the cap
 
 
-def test_voice_with_nothing_usable_says_so(api, gemini):
-    empty = {k: "" for k in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")}
-    empty.update(questions=[], overall_feeling=0)
-    gemini(empty)
-    assert _post(api).status_code == 422
+EMPTY = {
+    "questions": [], "went_well": "", "went_badly": "", "interviewer_cues": "", "recruiter_feedback": "",
+    "overall_feeling": 0,
+}
+
+
+def test_voice_with_nothing_usable_says_so_and_is_given_back(api, gemini):
+    gemini(EMPTY)
+    res = _post(api)
+    assert res.status_code == 422
+    assert "still counted" not in res.data["detail"]
+    assert counted() == 0
+
+
+def test_voice_with_nothing_usable_says_when_it_counted(api, gemini, settings):
+    settings.BILLED_REFUNDS_PER_24H = 0
+    gemini(EMPTY)
+    res = _post(api)
+    assert "still counted" in res.data["detail"]
+    assert counted() == 1
+
+
+def test_voice_needs_a_content_length(api, with_ai):
+    res = _post(api, CONTENT_LENGTH="")
+    assert res.status_code == 411
+
+
+def test_voice_unexpected_error_is_given_back(with_ai, user):
+    from rest_framework.test import APIClient
+
+    client = APIClient(raise_request_exception=False)
+    client.force_authenticate(user)
+    with mock.patch.object(ai, "debrief_from_audio", side_effect=KeyError("bug")):
+        res = _post(client)
+    assert res.status_code == 500
+    assert counted() == 0
+
+
+def test_voice_uses_the_plan_it_was_counted_against(api, gemini):
+    from billing import entitlements
+
+    gemini(REPLY)
+    with mock.patch.object(entitlements, "ai_route", wraps=entitlements.ai_route) as route:
+        assert _post(api).status_code == 200
+    # The last lookup, whose key and model the call uses, is for the tier the run was counted on.
+    assert route.call_args_list[-1].args[0].code == AnalysisRun.objects.get().tier

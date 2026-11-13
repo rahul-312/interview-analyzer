@@ -692,13 +692,12 @@ VOICE_SCHEMA = {
     "additionalProperties": False,
 }
 
-# A voice debrief is written up inside the web request, so it gives up well before a reverse proxy
-# would (nginx's default is 60 seconds) and never sleeps between retries.
-VOICE_TIMEOUT_SECONDS = 50
-
-
 class UnreadableAudio(NotCharged):
     """Gemini couldn't take the recording (a format it doesn't read). Nothing was billed."""
+
+
+# ISO-BMFF major brands of still images (HEIC, HEIF, AVIF), which share MP4's container.
+IMAGE_BRANDS = {b"heic", b"heix", b"hevc", b"heim", b"heis", b"mif1", b"msf1", b"avif", b"avis"}
 
 
 def sniff_audio(head):
@@ -711,7 +710,8 @@ def sniff_audio(head):
     if head.startswith(b"OggS"):
         return "audio/ogg"  # Firefox
     if head[4:8] == b"ftyp":
-        return "audio/mp4"  # Safari, and .m4a files
+        # Safari, and .m4a files. The same container holds HEIC/AVIF images, which aren't audio.
+        return None if head[8:12] in IMAGE_BRANDS else "audio/mp4"
     if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
         return "audio/wav"
     if head.startswith(b"FORM") and head[8:12] in (b"AIFF", b"AIFC"):
@@ -749,7 +749,9 @@ def debrief_from_audio(audio, mime_type, route, billing=None):
     ]
     try:
         result = call_gemini(
-            VOICE_SYSTEM, contents, VOICE_SCHEMA, billing, route, timeout=VOICE_TIMEOUT_SECONDS, retry=False
+            # Inside the web request: give up before the app server or proxy would, and never sleep.
+            VOICE_SYSTEM, contents, VOICE_SCHEMA, billing, route,
+            timeout=settings.VOICE_DEBRIEF_TIMEOUT_SECONDS, retry=False,
         )
     except CutOff as exc:
         raise CutOff("The recording was too long to write up. Try a shorter one.") from exc

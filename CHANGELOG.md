@@ -44,8 +44,11 @@ extension share one version number.
   already typed, for the user to check before saving. Shown only when AI is on
   for the user's plan.
 - New endpoint `POST /api/rounds/debrief-from-voice/` (multipart `audio`).
-  It saves nothing. The AI call runs in the request with a 50-second timeout
-  and no retry waits.
+  It saves nothing. The AI call runs in the request with no retry waits and a
+  timeout of `VOICE_DEBRIEF_TIMEOUT_SECONDS` (default 50), so the app server
+  and proxy timeouts must be longer: gunicorn's default of 30 is too short
+  (see "Going live" in BILLING.md). Requests without a Content-Length are
+  refused. A recording with nothing usable in it is given back.
 - Voice debriefs have their own per-plan limit per rolling 24 hours (3, 15,
   40; `FREE_/PRO_/PRO_PLUS_VOICE_DEBRIEFS_PER_24H`), counted like analyses and
   shown in `usage.voice_debriefs`. Failures that cost nothing are given back.
