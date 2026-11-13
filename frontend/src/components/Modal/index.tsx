@@ -9,12 +9,14 @@ interface ModalProps {
   onClose: () => void;
   children: React.ReactNode;
   wide?: boolean;
+  /** Can't be closed (X, Escape or backdrop) while true, e.g. while a save is in flight. */
+  locked?: boolean;
 }
 
-/** Overlay with a panel. Closes on Escape or a backdrop click. A bottom sheet on mobile. */
-const Modal: React.FC<ModalProps> = ({ title, onClose, children, wide = false }) => {
+/** Overlay with a panel. Closes on Escape or a backdrop click, unless locked. A bottom sheet on mobile. */
+const Modal: React.FC<ModalProps> = ({ title, onClose, children, wide = false, locked = false }) => {
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const handleKey = (e: KeyboardEvent) => e.key === 'Escape' && !locked && onClose();
     document.addEventListener('keydown', handleKey);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -22,12 +24,12 @@ const Modal: React.FC<ModalProps> = ({ title, onClose, children, wide = false })
       document.removeEventListener('keydown', handleKey);
       document.body.style.overflow = overflow;
     };
-  }, [onClose]);
+  }, [onClose, locked]);
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-overlay md:items-center md:p-4xl"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+      onMouseDown={(e) => e.target === e.currentTarget && !locked && onClose()}
     >
       <div
         role="dialog"
@@ -43,7 +45,9 @@ const Modal: React.FC<ModalProps> = ({ title, onClose, children, wide = false })
           <Button
             onClick={onClose}
             aria-label="Close"
-            className="rounded-lg p-sm text-light-silver hover:bg-smoke-white hover:text-dark-gray"
+            disabled={locked}
+            title={locked ? 'Wait for this to finish' : undefined}
+            className="rounded-lg p-sm text-light-silver hover:bg-smoke-white hover:text-dark-gray disabled:hover:bg-transparent disabled:hover:text-light-silver"
           >
             <X size={20} />
           </Button>

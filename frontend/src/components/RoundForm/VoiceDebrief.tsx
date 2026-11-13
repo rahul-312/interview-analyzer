@@ -34,6 +34,8 @@ interface VoiceDebriefProps {
    * has gone (the debrief section was hidden while the draft was written up), so the draft isn't lost.
    */
   onDraft: (draft: DebriefDraft) => void;
+  /** True while a recording is being written up. Like onDraft, called even if this component has gone. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 /**
@@ -41,7 +43,7 @@ interface VoiceDebriefProps {
  * (Gemini writes it up), and hands back a draft debrief. Hidden when the plan has no AI or the
  * browser can't record. Each recording counts against the plan's daily voice-debrief limit.
  */
-const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
+const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft, onBusyChange }) => {
   const { usage, reloadUsage } = useUsage();
   const [supported, setSupported] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -88,6 +90,7 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
       return;
     }
     setPhase('working');
+    onBusyChange?.(true);
     try {
       const draft = await roundService.debriefFromVoice(audio);
       onDraft(draft);
@@ -96,6 +99,7 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
       if (mounted.current) setError(errorText(err));
     } finally {
       if (mounted.current) setPhase('idle');
+      onBusyChange?.(false);
       reloadUsage(); // the call counted (or was given back): show what's left
     }
   };
@@ -168,47 +172,70 @@ const VoiceDebrief: React.FC<VoiceDebriefProps> = ({ onDraft }) => {
   const usedUp = quota?.remaining === 0 && phase === 'idle';
 
   return (
-    <div className="flex flex-col gap-lg rounded-lg border border-primary-light bg-page-bg p-2xl">
-      <div className="flex flex-wrap items-center justify-between gap-lg">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-charcoal-gray">Rather talk it through?</p>
-          <p className="text-xs text-medium-gray">
-            {usedUp
-              ? "You've used all your voice debriefs for the last 24 hours. You can still type it in below."
-              : <>Describe the questions, how you answered, and how it went. We&apos;ll fill in the form for you to check.</>}
-            {!usedUp && quota?.remaining != null && ` ${quota.remaining} left today.`}
-          </p>
+    <div className="flex flex-col gap-lg rounded-2xl border border-primary-border bg-page-bg p-4xl shadow-sm sm:p-6xl">
+      <div className="flex flex-col gap-4xl md:flex-row md:items-center">
+        {/* Icon + copy */}
+        <div className="flex min-w-0 flex-1 items-start gap-4xl">
+          <div
+            aria-hidden="true"
+            className="flex h-16xl w-16xl shrink-0 items-center justify-center rounded-xl bg-primary-light text-primary sm:h-20xl sm:w-20xl"
+          >
+            <Mic size={22} />
+          </div>
+          <div className="flex min-w-0 flex-col gap-sm">
+            <p className="text-base font-semibold text-ink sm:text-lg">Rather talk it through?</p>
+            <p className="text-sm text-medium-gray">
+              {usedUp
+                ? "You've used all your voice debriefs for the last 24 hours. You can still type it in below."
+                : <>Describe the questions, how you answered, and how it went. We&apos;ll fill in the form for you to check.</>}
+            </p>
+            {!usedUp && quota?.remaining != null && (
+              <span className="mt-sm w-fit rounded-full bg-primary-light px-2xl py-xs text-xs font-medium text-primary-dark">
+                {quota.remaining} left today
+              </span>
+            )}
+          </div>
         </div>
 
-        {(phase === 'idle' || phase === 'starting') && !usedUp && (
-          <Button variant="secondary" onClick={start} loading={phase === 'starting'}>
-            {phase === 'idle' && <Mic size={16} aria-hidden="true" />}
-            {filled ? 'Record more' : 'Fill in by voice'}
-          </Button>
-        )}
+        {/* Actions */}
+        {!usedUp && (
+          <div className="flex flex-wrap items-center gap-lg border-t border-light-gray pt-4xl md:border-l md:border-t-0 md:pl-6xl md:pt-0">
+            {(phase === 'idle' || phase === 'starting') && (
+              <Button variant="primary" onClick={start} loading={phase === 'starting'}>
+                {phase === 'idle' && <Mic size={16} aria-hidden="true" />}
+                {filled ? 'Record more' : 'Fill in by voice'}
+              </Button>
+            )}
 
-        {phase === 'recording' && (
-          <div className="flex items-center gap-lg">
-            <span role="status" className="flex items-center gap-md text-sm font-medium text-crimson-red">
-              <span aria-hidden="true" className="h-[0.6em] w-[0.6em] animate-pulse rounded-full bg-crimson-red" />
-              Recording {clock(seconds)}
-              <span className="sr-only">, up to {MAX_SECONDS / 60} minutes</span>
-            </span>
-            <Button variant="link" onClick={() => stop(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={() => stop(true)}>
-              <Square size={14} aria-hidden="true" />
-              Done
-            </Button>
+            {phase === 'recording' && (
+              <>
+                <span
+                  role="status"
+                  className="flex items-center gap-lg rounded-full bg-rose-light px-4xl py-lg text-sm font-medium text-crimson-red"
+                >
+                  <span aria-hidden="true" className="h-2xl w-2xl animate-pulse rounded-full bg-crimson-red" />
+                  Recording
+                  <span aria-hidden="true" className="h-4xl w-px bg-crimson-red/30" />
+                  <span className="tabular-nums">{clock(seconds)}</span>
+                  <span className="sr-only">, up to {MAX_SECONDS / 60} minutes</span>
+                </span>
+                <Button variant="secondary" onClick={() => stop(false)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={() => stop(true)}>
+                  <Square size={14} aria-hidden="true" />
+                  Done
+                </Button>
+              </>
+            )}
+
+            {phase === 'working' && (
+              <span role="status" className="flex items-center gap-md text-sm text-dark-gray">
+                <Spinner className="text-primary" />
+                Writing up your debrief…
+              </span>
+            )}
           </div>
-        )}
-
-        {phase === 'working' && (
-          <span role="status" className="flex items-center gap-md text-sm text-dark-gray">
-            <Spinner className="text-primary" />
-            Writing up your debrief…
-          </span>
         )}
       </div>
 
