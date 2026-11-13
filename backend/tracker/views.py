@@ -35,6 +35,8 @@ from .usage import (
     reserve_voice,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def queue_analysis(rnd, user):
     """
@@ -208,8 +210,6 @@ class RoundAnalyzeView(APIView):
             return Response(limit_details(request.user), status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
 
-
-logger = logging.getLogger(__name__)
 
 # Room for the multipart boundaries and headers around the recording itself.
 MULTIPART_OVERHEAD = 64 * 1024

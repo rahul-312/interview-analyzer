@@ -167,8 +167,9 @@ BILLED_REFUNDS_PER_24H = int(os.environ.get("BILLED_REFUNDS_PER_24H", "3"))
 VOICE_DEBRIEF_MAX_BYTES = int(os.environ.get("VOICE_DEBRIEF_MAX_BYTES") or 14_000_000)
 # How long a voice debrief waits for Gemini. It runs inside the web request, so the app server's
 # worker timeout and the proxy's read timeout must both be longer (e.g. gunicorn --timeout 75,
-# nginx proxy_read_timeout 75s): otherwise the worker is killed first, the user gets a bare 502,
-# and the call isn't given back. Gunicorn's default of 30 seconds is too short.
+# nginx proxy_read_timeout 75s): otherwise the worker is stopped first and the user gets a bare 502.
+# The call is then given back only while under the billed-refund cap, and not at all if the worker
+# is killed outright (SIGKILL) before the refund runs. Gunicorn's default of 30 seconds is too short.
 VOICE_DEBRIEF_TIMEOUT_SECONDS = int(os.environ.get("VOICE_DEBRIEF_TIMEOUT_SECONDS") or 50)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
