@@ -3,12 +3,16 @@ from datetime import timedelta
 from pathlib import Path
 
 from corsheaders.defaults import default_headers
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from kombu import Queue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-# override=True: backend/.env wins over variables already set in the terminal (even empty ones).
-load_dotenv(BASE_DIR / ".env", override=True)
+# backend/.env fills in only variables that are unset or empty. A real value set in the environment
+# (systemd, Docker, the hosting platform) wins, so DEBUG=0 there can't be undone by a copied .env;
+# an empty variable left over in a terminal doesn't hide the .env value.
+for _key, _value in dotenv_values(BASE_DIR / ".env").items():
+    if _value is not None and not os.environ.get(_key):
+        os.environ[_key] = _value
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-insecure-key-change-me")
 DEBUG = os.environ.get("DEBUG", "1") == "1"
@@ -115,6 +119,10 @@ REST_FRAMEWORK = {
 # HTTPS (is_secure, absolute URLs). Only then: without a proxy, a client could send the header itself.
 if REST_FRAMEWORK["NUM_PROXIES"] > 0:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# The API uses JWTs, so cookies only matter for the admin: in production, send them over HTTPS only.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),

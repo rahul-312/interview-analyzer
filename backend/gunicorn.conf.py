@@ -6,10 +6,16 @@ Voice debriefs call Gemini inside the request for up to VOICE_DEBRIEF_TIMEOUT_SE
 default), so:
 - Workers are threaded (gthread). With plain sync workers each voice debrief holds a whole
   worker, and a few at once would stall every other request, logins and webhooks included.
-- The worker timeout is longer than the voice timeout: gunicorn's default of 30 seconds would
-  kill the worker first. Keep nginx's proxy_read_timeout at least as long (see deploy/nginx.conf).
-- The graceful timeout on a restart is the same, so a deploy lets a voice debrief that's still
+- Gemini's own timeout is what ends a slow voice debrief. With gthread, `timeout` only restarts a
+  worker whose main loop is stuck; it doesn't stop a slow request in a thread. It's kept above the
+  voice timeout anyway, so it can't cut one short if the worker class is changed to sync.
+- The graceful timeout on a restart matches it, so a deploy lets a voice debrief that's still
   running finish (or fail and be refunded) instead of killing it outright, which skips the refund.
+- Keep nginx's proxy_read_timeout at least as long (see deploy/nginx.conf).
+
+Database connections: each thread keeps its own (CONN_MAX_AGE), so a server opens up to
+workers x threads of them (24 by default), plus the Celery workers'. Keep the total across all
+servers under Postgres's max_connections (100 by default).
 """
 import os
 
