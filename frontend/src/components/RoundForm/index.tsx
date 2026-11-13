@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Button from '../ui/Button';
 import { ErrorMessage } from '../ui/Feedback';
-import { Field, Input, Select } from '../ui/FormControls';
+import Dropdown, { fieldButton } from '../ui/Dropdown';
+import { Field, Input } from '../ui/FormControls';
 import DebriefSection, { emptyQuestion } from './DebriefSection';
 import { outcomeOptions, roundTypeOptions } from '@/config/options';
 import { useApi } from '@/hooks/useApi';
@@ -20,6 +21,8 @@ interface RoundFormProps {
   withDebrief?: boolean;
   onSaved: (round: RoundSaveResult) => void;
   onCancel?: () => void;
+  /** Told when a save or a voice write-up starts and finishes, so the dialog can't be closed mid-way. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 const emptyDebrief: Debrief = {
@@ -42,7 +45,7 @@ const initialDebrief = (round?: InterviewRound): Debrief => {
  * Logs or edits an interview round. The "This round is done" checkbox reveals the debrief.
  * Without `applicationId` or `round`, an application picker is shown.
  */
-const RoundForm: React.FC<RoundFormProps> = ({ applicationId, round, withDebrief = false, onSaved, onCancel }) => {
+const RoundForm: React.FC<RoundFormProps> = ({ applicationId, round, withDebrief = false, onSaved, onCancel, onBusyChange }) => {
   const needsPicker = !applicationId && !round;
   const { data: applications } = useApi(needsPicker ? 'applications' : null, () => applicationService.list());
 
@@ -55,9 +58,16 @@ const RoundForm: React.FC<RoundFormProps> = ({ applicationId, round, withDebrief
   const [debrief, setDebrief] = useState<Debrief>(() => initialDebrief(round));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+
+  useEffect(() => onBusyChange?.(busy || voiceBusy), [busy, voiceBusy, onBusyChange]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (application === '') {
+      setError('Choose an application.');
+      return;
+    }
     setBusy(true);
     setError('');
 
@@ -94,32 +104,35 @@ const RoundForm: React.FC<RoundFormProps> = ({ applicationId, round, withDebrief
       {/* Application picker */}
       {needsPicker && (
         <Field id="application" label="Application">
-          <Select
+          <Dropdown
             id="application"
+            label="Application"
             required
-            value={application}
-            onChange={(e) => setApplication(e.target.value ? Number(e.target.value) : '')}
-          >
-            <option value="">Choose an application…</option>
-            {applications?.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.company} · {a.role}
-              </option>
-            ))}
-          </Select>
+            stretch
+            buttonClassName={fieldButton}
+            placeholder={applications ? 'Choose an application…' : 'Loading applications…'}
+            value={String(application)}
+            options={(applications ?? []).map((a) => ({ value: String(a.id), label: `${a.company} · ${a.role}` }))}
+            onChange={(v) => {
+              setApplication(Number(v));
+              setError('');
+            }}
+          />
         </Field>
       )}
 
       {/* Round details */}
       <div className="grid gap-4xl md:grid-cols-2">
         <Field id="round_type" label="Round type">
-          <Select id="round_type" value={roundType} onChange={(e) => setRoundType(e.target.value as RoundType)}>
-            {roundTypeOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
+          <Dropdown
+            id="round_type"
+            label="Round type"
+            stretch
+            buttonClassName={fieldButton}
+            value={roundType}
+            options={roundTypeOptions}
+            onChange={setRoundType}
+          />
         </Field>
         <Field id="scheduled_at" label="Date and time">
           <Input
@@ -134,13 +147,15 @@ const RoundForm: React.FC<RoundFormProps> = ({ applicationId, round, withDebrief
           <Input id="interviewer" placeholder="Optional" value={interviewer} onChange={(e) => setInterviewer(e.target.value)} />
         </Field>
         <Field id="outcome" label="Outcome">
-          <Select id="outcome" value={outcome} onChange={(e) => setOutcome(e.target.value as Outcome)}>
-            {outcomeOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
+          <Dropdown
+            id="outcome"
+            label="Outcome"
+            stretch
+            buttonClassName={fieldButton}
+            value={outcome}
+            options={outcomeOptions}
+            onChange={setOutcome}
+          />
         </Field>
       </div>
 
@@ -161,6 +176,7 @@ const RoundForm: React.FC<RoundFormProps> = ({ applicationId, round, withDebrief
           onChange={setDebrief}
           // Functional update: the draft arrives after the request, so merge into the latest form state.
           onVoiceDraft={(draft) => setDebrief((current) => mergeDraft(current, draft))}
+          onVoiceBusyChange={setVoiceBusy}
         />
       )}
 
@@ -169,11 +185,11 @@ const RoundForm: React.FC<RoundFormProps> = ({ applicationId, round, withDebrief
       {/* Actions */}
       <div className="flex justify-end gap-lg pt-sm">
         {onCancel && (
-          <Button variant="secondary" onClick={onCancel}>
+          <Button variant="secondary" onClick={onCancel} disabled={busy || voiceBusy}>
             Cancel
           </Button>
         )}
-        <Button type="submit" variant="primary" disabled={busy}>
+        <Button type="submit" variant="primary" disabled={busy || voiceBusy}>
           {busy ? 'Saving…' : done ? 'Save and analyse' : round ? 'Save changes' : 'Log round'}
         </Button>
       </div>

@@ -44,7 +44,7 @@ const StatusPicker: React.FC<{ app: Application; onChange: (status: AppStatus) =
     align="left"
     icon={<span className="size-lg rounded-full bg-current" />}
     optionIcon={(status) => <StatusDot status={status} />}
-    buttonClassName={`rounded-full px-2xl py-md ${statusStyles[app.status]}`}
+    buttonClassName={`rounded-full px-2xl py-md font-medium ${statusStyles[app.status]}`}
   />
 );
 

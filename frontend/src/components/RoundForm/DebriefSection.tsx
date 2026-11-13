@@ -16,6 +16,7 @@ interface DebriefSectionProps {
   onChange: (debrief: Debrief) => void;
   /** A debrief written up from a voice recording, to merge into the form. */
   onVoiceDraft: (draft: DebriefDraft) => void;
+  onVoiceBusyChange?: (busy: boolean) => void;
 }
 
 type TextKey = 'went_well' | 'went_badly' | 'interviewer_cues' | 'recruiter_feedback';
@@ -28,7 +29,7 @@ const textFields: { key: TextKey; label: string; rows: number; placeholder?: str
 ];
 
 /** The debrief: a list of questions, then notes on how it went. */
-const DebriefSection: React.FC<DebriefSectionProps> = ({ debrief, onChange, onVoiceDraft }) => {
+const DebriefSection: React.FC<DebriefSectionProps> = ({ debrief, onChange, onVoiceDraft, onVoiceBusyChange }) => {
   const set = <K extends keyof Debrief>(key: K, value: Debrief[K]) => onChange({ ...debrief, [key]: value });
 
   const updateQuestion = (index: number, patch: Partial<DebriefQuestion>) =>
@@ -39,7 +40,7 @@ const DebriefSection: React.FC<DebriefSectionProps> = ({ debrief, onChange, onVo
 
   return (
     <div className="flex flex-col gap-6xl border-l-2 border-primary-light pl-4xl">
-      <VoiceDebrief onDraft={onVoiceDraft} />
+      <VoiceDebrief onDraft={onVoiceDraft} onBusyChange={onVoiceBusyChange} />
 
       {/* Questions */}
       <div className="flex flex-col gap-2xl">
