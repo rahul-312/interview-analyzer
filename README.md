@@ -7,6 +7,8 @@ Track job applications, debrief each interview round, get an analysis of what we
 
 There are three plans: Free, Pro and Pro Plus. Paid plans are billed through Razorpay subscriptions, and every limit is enforced by the backend. See [BILLING.md](BILLING.md) for the plans, the policies, Razorpay setup and deployment.
 
+To host it on free tiers (Vercel, Render and Neon), see [DEPLOY.md](DEPLOY.md).
+
 ## Run it locally
 
 You need Python 3.12+, Node 20+ and PostgreSQL. Create an empty database (for example `interview-analyzer`), then put its details in `backend/.env` (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`). You don't need Redis or an API key at first: jobs run inline and a rule-based analyzer is used.
