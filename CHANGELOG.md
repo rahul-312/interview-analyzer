@@ -7,6 +7,14 @@ extension share one version number.
 
 ## [Unreleased]
 
+### Deployment
+- The database can be set with one `DATABASE_URL` (as Neon, Render and
+  Vercel provide it) in place of the `DB_*` settings. On a pooled URL,
+  server-side cursors are turned off, as a transaction-mode pooler requires.
+- The Render build runs migrations over `DATABASE_URL_UNPOOLED`, Neon's
+  direct connection.
+- Neon project config (`neon.ts`) for the Neon CLI.
+
 ## [1.1.0] - 2026-11-16
 
 ### Plans and billing

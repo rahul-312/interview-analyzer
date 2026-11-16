@@ -6,6 +6,8 @@ from corsheaders.defaults import default_headers
 from dotenv import dotenv_values
 from kombu import Queue
 
+from config import database
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 # backend/.env fills in only variables that are unset or empty. A real value set in the environment
 # (systemd, Docker, the hosting platform) wins, so DEBUG=0 there can't be undone by a copied .env;
@@ -86,6 +88,11 @@ DATABASES = {
         "OPTIONS": {"sslmode": os.environ.get("DB_SSLMODE") or "prefer"},
     }
 }
+# A connection URL (Neon's pooled DATABASE_URL in production) replaces the DB_* settings above.
+# Only the environment and backend/.env are read: the DATABASE_URL that `neon env pull` writes to the
+# repo root's .env.local doesn't reach Django, so local development stays on the local database.
+if os.environ.get("DATABASE_URL"):
+    DATABASES["default"] = database.from_url(os.environ["DATABASE_URL"])
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
