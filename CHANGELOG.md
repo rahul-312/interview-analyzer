@@ -7,6 +7,8 @@ extension share one version number.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-16
+
 ### Plans and billing
 - Three plans: Free, Pro (₹199/month or ₹1,699/year) and Pro Plus (₹499/month
   or ₹3,999/year), billed as Razorpay subscriptions.
@@ -57,9 +59,28 @@ extension share one version number.
   the request's Content-Length, before the body is read; also cap request
   bodies at the proxy (nginx `client_max_body_size 15m`).
 
+### Prep plans
+- Each prep plan lists the top 5 resources to study. AI-suggested links are
+  kept only on trusted sites; URLs with backslashes, whitespace, invisible
+  characters or an unusual host are rejected.
+
+### Interface
+- New logo, favicon and purple theme.
+- The sidebar collapses to an icon rail, with tooltips.
+- Custom dropdowns for sorting applications and picking a status.
+- The round form is restyled, and its dialog stays open while saving or
+  analysing.
+- When the session expires, the user is signed out cleanly.
+
+### Security
+- Every sign-up attempt is rate-limited per IP, and `manage.py check` warns
+  when `NUM_PROXIES` is missing. Hitting the limit shows a real wait time.
+
 ### Deployment
 - Free-tier hosting: the frontend on Vercel, the API on Render (a
-  `render.yaml` Blueprint) and Postgres on Neon. See DEPLOY.md.
+  `render.yaml` Blueprint), Postgres on Neon and Redis on Upstash. See
+  DEPLOY.md.
+- CI runs the backend and frontend tests on every push and pull request.
 - `DB_SSLMODE` sets the Postgres SSL mode. Hosted databases need `require`;
   the default, `prefer`, keeps local setups working.
 - `SECURE_SSL_REDIRECT` and `SECURE_HSTS_SECONDS` turn on the HTTPS redirect
@@ -152,4 +173,6 @@ spots into a day-by-day prep plan.
 - Tests for the backend (pytest) and the extension (Node test runner with
   jsdom).
 
+[Unreleased]: https://github.com/rahul-312/interview-analyzer/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/rahul-312/interview-analyzer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/rahul-312/interview-analyzer/releases/tag/v1.0.0
