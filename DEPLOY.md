@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | Frontend (Next.js) | [Vercel](https://vercel.com) Hobby | Personal, non-commercial use only |
 | API (Django) | [Render](https://render.com) free web service | 512 MB; sleeps after 15 min idle, ~1 min to wake |
-| Database | [Neon](https://neon.tech) free Postgres | 0.5 GB, doesn't expire |
+| Database | [Neon](https://neon.tech) free Postgres | 1 GB; scales to zero when idle, doesn't expire |
 | Redis (rate limits) | [Upstash](https://upstash.com) free Redis | Needed with `VERTEX_API_KEY`; optional otherwise |
 | Celery | Not needed | Jobs run inline when `CELERY_BROKER_URL` is blank |
 
@@ -12,8 +12,12 @@ Render's own free Postgres is deleted after 30 days, so the database goes on Neo
 
 ## 1. Database (Neon)
 
-1. Create a project. Pick the region closest to the Render region you'll use (e.g. both in Singapore or both in Frankfurt).
-2. On the dashboard, open **Connect** and note the host, database, user and password. Use the direct connection, not the pooled (`-pooler`) one: Django keeps its own connections (`CONN_MAX_AGE`).
+1. Create a project (Postgres 16). Pick the region closest to the Render region you'll use (e.g. both in Singapore or both in Frankfurt).
+2. Get its two connection strings, either with the Neon CLI from the repo root (`neon init`, then `neon env pull`, which writes them to `.env.local`) or from **Connect** in the console, once with pooling on and once off:
+   - `DATABASE_URL`: pooled (`-pooler` in the host). The app's queries use it.
+   - `DATABASE_URL_UNPOOLED`: direct. Migrations use it, since the pooler runs in transaction mode.
+
+Django reads `DATABASE_URL` when it's set, in place of the `DB_*` settings. It turns off server-side cursors on a pooled URL, as a transaction-mode pooler requires. The `.env.local` at the repo root isn't read by Django, so local development keeps using `backend/.env`.
 
 ## 2. Redis (Upstash), for the rate limits
 
@@ -28,18 +32,21 @@ Create a free Redis database in Upstash, close to the Render region, and copy it
 3. Fill in the values it asks for:
    - `ALLOWED_HOSTS`: the service's host, e.g. `interview-analyzer-api.onrender.com` (Render shows it once created; you can set it after the first deploy).
    - `CORS_ALLOWED_ORIGINS`: the Vercel URL from step 4, e.g. `https://interview-analyzer.vercel.app` (no trailing slash). Fill it in once you have it.
-   - `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`: from Neon.
+   - `DATABASE_URL`, `DATABASE_URL_UNPOOLED`: from Neon.
    - `CACHE_URL`: the Upstash URL from step 2, or blank.
    - `GEMINI_API_KEY` / `VERTEX_API_KEY`: optional; with neither, the rule-based analyzer is used. For a paid Gemini key, also change `GEMINI_FREE_TIER` to `false` in the service's Environment tab.
-4. Deploy. The build runs `collectstatic` and `migrate`.
+4. Deploy. The build runs `collectstatic`, then `migrate` over `DATABASE_URL_UNPOOLED`.
 5. Check `https://<service>.onrender.com/admin/` loads.
 
-Create an admin user from your own machine, pointed at Neon (the free tier has no shell):
+Create an admin user from your own machine, pointed at Neon (the free tier has no shell). In PowerShell, from `backend/`, with the direct URL:
 
-```sh
-cd backend
-DB_HOST=... DB_NAME=... DB_USER=... DB_PASSWORD=... DB_PORT=5432 DB_SSLMODE=require python manage.py createsuperuser
+```powershell
+$env:DATABASE_URL = "<DATABASE_URL_UNPOOLED>"
+.venv\Scripts\python.exe manage.py createsuperuser
+Remove-Item Env:DATABASE_URL   # or later commands in this terminal also use Neon
 ```
+
+If that fails with `failed to resolve host ... neon.tech`, your network's DNS server is refusing Neon's hostnames (some ISP routers do). Switch the computer's DNS to 1.1.1.1 or 8.8.8.8 and try again. Render and Vercel aren't affected.
 
 ## 4. Frontend (Vercel)
 
