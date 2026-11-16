@@ -81,6 +81,9 @@ DATABASES = {
         "HOST": os.environ.get("DB_HOST", "localhost"),
         "PORT": os.environ.get("DB_PORT", "5433"),
         "CONN_MAX_AGE": 60,
+        # Hosted Postgres (Neon, Supabase, Render) needs DB_SSLMODE=require. libpq's default, prefer,
+        # also works locally where the server has no SSL.
+        "OPTIONS": {"sslmode": os.environ.get("DB_SSLMODE") or "prefer"},
     }
 }
 
@@ -125,6 +128,12 @@ REST_FRAMEWORK = {
 # HTTPS (is_secure, absolute URLs). Only then: without a proxy, a client could send the header itself.
 if REST_FRAMEWORK["NUM_PROXIES"] > 0:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# For a server reached only over HTTPS (e.g. Render): redirect plain HTTP, and tell browsers to use HTTPS
+# for this many seconds. Off by default, since they'd break a plain-http setup. Behind a TLS proxy the
+# redirect needs NUM_PROXIES set too: otherwise every request looks like plain HTTP and redirects forever.
+SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "").lower() in ("true", "1", "yes")
+SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS") or 0)
 
 # The API uses JWTs, so cookies only matter for the admin: in production, send them over HTTPS only.
 # So with DEBUG=0 over plain http://localhost, the browser drops these cookies and the admin login

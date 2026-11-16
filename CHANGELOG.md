@@ -57,6 +57,14 @@ extension share one version number.
   the request's Content-Length, before the body is read; also cap request
   bodies at the proxy (nginx `client_max_body_size 15m`).
 
+### Deployment
+- Free-tier hosting: the frontend on Vercel, the API on Render (a
+  `render.yaml` Blueprint) and Postgres on Neon. See DEPLOY.md.
+- `DB_SSLMODE` sets the Postgres SSL mode. Hosted databases need `require`;
+  the default, `prefer`, keeps local setups working.
+- `SECURE_SSL_REDIRECT` and `SECURE_HSTS_SECONDS` turn on the HTTPS redirect
+  and HSTS for an API served only over HTTPS. Both are off by default.
+
 ### Changed
 - `/` is now a public home page. Logged-in users still go straight to their
   applications, and the logo on the login and register pages links to it.
