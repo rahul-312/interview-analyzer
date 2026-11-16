@@ -333,6 +333,13 @@ def test_prep_plan_targets_weak_spots_and_ends_with_review(api, application, run
     assert tasks[-1].title == "Light review and mock run-through"
     assert tasks[-1].date == plan.interview_date - timedelta(days=1)
 
+    # Five resources to prepare from, led by the weak spot (SQL), then the round (system design).
+    assert len(plan.resources) == 5
+    assert plan.resources[0]["url"] == "https://sqlbolt.com"
+    assert any("system-design-primer" in r["url"] for r in plan.resources)
+    assert len({r["url"] for r in plan.resources}) == 5
+    assert api.get(f"/api/prep-plans/{plan.id}/").data["resources"] == plan.resources
+
     # Ticking a task done is the only writable field.
     task = tasks[0]
     res = api.patch(f"/api/prep-tasks/{task.id}/", {"done": True, "title": "hacked"}, format="json")

@@ -25,11 +25,15 @@ const AuthForm: React.FC<AuthFormProps> = ({ mode }) => {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const isLogin = mode === 'login';
+  // Someone picking a plan goes back to pricing. Only this page: `next` comes from the address bar.
+  const toPricing = router.query.next === '/pricing';
+  const plan = typeof router.query.plan === 'string' && /^[a-z_]+$/.test(router.query.plan) ? router.query.plan : undefined;
+  const next = !toPricing ? '/applications' : plan ? `/pricing?plan=${plan}` : '/pricing';
 
   // Already logged in: skip the form
   useEffect(() => {
-    if (ready && user) router.replace('/applications');
-  }, [ready, user, router]);
+    if (ready && user) router.replace(next);
+  }, [ready, user, next, router]);
 
   const setField = (field: keyof typeof emptyForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -41,7 +45,7 @@ const AuthForm: React.FC<AuthFormProps> = ({ mode }) => {
     try {
       if (isLogin) await login(form.username, form.password);
       else await register(form);
-      router.replace('/applications');
+      router.replace(next);
     } catch (err) {
       setError(isLogin ? 'Wrong username or password.' : errorText(err));
     } finally {
@@ -50,8 +54,8 @@ const AuthForm: React.FC<AuthFormProps> = ({ mode }) => {
   };
 
   return (
-    <section className="flex min-h-screen flex-col items-center justify-center gap-8xl px-4xl">
-      <Logo />
+    <main className="flex min-h-screen flex-col items-center justify-center gap-8xl px-4xl">
+      <Logo href="/" />
       <Card className="w-full max-w-auth-card">
         <form onSubmit={handleSubmit} className="flex flex-col gap-4xl">
           {/* Heading */}
@@ -92,13 +96,13 @@ const AuthForm: React.FC<AuthFormProps> = ({ mode }) => {
 
           <p className="text-center text-sm text-medium-gray">
             {isLogin ? 'New here? ' : 'Already have an account? '}
-            <Link href={isLogin ? '/register' : '/login'} className="font-medium text-primary hover:underline">
+            <Link href={{ pathname: isLogin ? '/register' : '/login', query: toPricing ? { next: '/pricing', ...(plan && { plan }) } : {} }} className="font-medium text-primary hover:underline">
               {isLogin ? 'Create an account' : 'Log in'}
             </Link>
           </p>
         </form>
       </Card>
-    </section>
+    </main>
   );
 };
 

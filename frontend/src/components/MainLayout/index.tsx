@@ -6,10 +6,11 @@ import { Plus } from 'lucide-react';
 import Navbar from '../Navbar';
 import Sidebar from '../Navbar/Sidebar';
 import Button from '../ui/Button';
-import { publicRoutes } from '@/config/navItems';
+import { openRoutes, publicRoutes } from '@/config/navItems';
 import { useAuth } from '@/context/AuthContext';
 import { DialogsProvider } from '@/context/DialogsContext';
 import { useAddApplication } from '@/hooks/useAddApplication';
+import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
 interface LayoutProps {
   children: ReactNode;
@@ -22,7 +23,7 @@ const AddApplicationFab = () => {
     <Button
       onClick={addApplication}
       aria-label="Add application"
-      className="fixed right-6xl bottom-6xl z-40 flex h-fab w-fab items-center justify-center rounded-2xl bg-primary text-white shadow-lg hover:bg-primary-dark md:hidden"
+      className="fixed right-6xl bottom-6xl z-40 flex h-fab w-fab items-center justify-center rounded-2xl bg-brand text-white shadow-lg hover:bg-brand-dark md:hidden"
     >
       <Plus size={28} />
     </Button>
@@ -33,7 +34,9 @@ const MainLayout = ({ children }: LayoutProps) => {
   const router = useRouter();
   const { user, ready } = useAuth();
   const [isScrolled, setIsScrolled] = useState(false);
+  const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebarCollapsed();
   const isPublic = publicRoutes.includes(router.pathname);
+  const isOpen = openRoutes.includes(router.pathname);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -46,11 +49,11 @@ const MainLayout = ({ children }: LayoutProps) => {
 
   // Send logged-out users to the login page
   useEffect(() => {
-    if (ready && !user && !isPublic) router.replace('/login');
-  }, [ready, user, isPublic, router]);
+    if (ready && !user && !isPublic && !isOpen) router.replace('/login');
+  }, [ready, user, isPublic, isOpen, router]);
 
-  // Login and register render without the navbar
-  if (isPublic) return <main>{children}</main>;
+  // Public pages render without the navbar, and have their own <main>
+  if (isPublic || (isOpen && !user)) return <>{children}</>;
 
   if (!ready || !user) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-medium-gray">Loading…</div>;
@@ -58,8 +61,12 @@ const MainLayout = ({ children }: LayoutProps) => {
 
   return (
     <DialogsProvider>
-      <div className="min-h-screen pb-20xl md:pl-sidebar">
-        <Sidebar />
+      <div
+        className={`min-h-screen pb-20xl transition-[padding] duration-300 ease-in-out motion-reduce:transition-none ${
+          sidebarCollapsed ? 'md:pl-sidebar-collapsed' : 'md:pl-sidebar'
+        }`}
+      >
+        <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
 
         {/* Top bar */}
         <div

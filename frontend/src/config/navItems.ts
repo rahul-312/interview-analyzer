@@ -9,4 +9,7 @@ export const navItems: NavItem[] = [
 ];
 
 /** Routes that render without the navbar and don't need a login. */
-export const publicRoutes = ["/login", "/register"];
+export const publicRoutes = ["/", "/login", "/register"];
+
+/** Routes anyone can see: inside the app when logged in, without the navbar when not. */
+export const openRoutes = ["/pricing"];

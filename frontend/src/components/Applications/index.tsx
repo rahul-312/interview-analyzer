@@ -2,12 +2,13 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
-import { ArrowUpDown, ChevronDown, LayoutGrid, List } from 'lucide-react';
+import { ArrowUpDown, LayoutGrid, List } from 'lucide-react';
 import ApplicationList, { type ListView } from './ApplicationList';
 import StatCards from './StatCards';
 import StatusFilters from './StatusFilters';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
+import Dropdown from '../ui/Dropdown';
 import { ErrorMessage, Loading } from '../ui/Feedback';
 import PageHeader from '../ui/PageHeader';
 import { statusOptions } from '@/config/options';
@@ -121,22 +122,7 @@ const Applications = () => {
           </div>
 
           {/* Sort */}
-          <label className="glass relative flex items-center rounded-xl text-sm font-medium text-charcoal-gray">
-            <ArrowUpDown size={16} className="pointer-events-none absolute left-2xl" />
-            <select
-              aria-label="Sort applications"
-              value={sort}
-              onChange={(e) => setSort(e.target.value as SortKey)}
-              className="cursor-pointer appearance-none rounded-xl bg-transparent py-xl pr-16xl pl-16xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-border"
-            >
-              {sortOptions.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={14} className="pointer-events-none absolute right-2xl" />
-          </label>
+          <Dropdown label="Sort applications" icon={<ArrowUpDown size={16} />} value={sort} options={sortOptions} onChange={setSort} />
         </div>
       </div>
 

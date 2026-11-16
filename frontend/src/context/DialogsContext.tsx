@@ -48,6 +48,8 @@ export const DialogsProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [refreshKey, setRefreshKey] = useState(0);
   const [addApp, setAddApp] = useState<AddApplicationOptions | null>(null);
   const [roundForm, setRoundForm] = useState<RoundFormOptions | null>(null);
+  // A save or voice write-up is in flight: closing now would hide its result (or its error)
+  const [roundFormBusy, setRoundFormBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const { refreshUser } = useAuth();
 
@@ -63,7 +65,10 @@ export const DialogsProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
   const openAddApplication = useCallback((options: AddApplicationOptions = {}) => setAddApp(options), []);
-  const openRoundForm = useCallback((options: RoundFormOptions = {}) => setRoundForm(options), []);
+  const openRoundForm = useCallback((options: RoundFormOptions = {}) => {
+    setRoundFormBusy(false);
+    setRoundForm(options);
+  }, []);
   const closeAddApp = useCallback(() => setAddApp(null), []);
   const closeRoundForm = useCallback(() => setRoundForm(null), []);
 
@@ -97,12 +102,13 @@ export const DialogsProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         {/* Log or edit a round */}
         {roundForm && (
-          <Modal wide title={roundFormTitle(roundForm)} onClose={closeRoundForm}>
+          <Modal wide title={roundFormTitle(roundForm)} onClose={closeRoundForm} locked={roundFormBusy}>
             <RoundForm
               applicationId={roundForm.applicationId}
               round={roundForm.round}
               withDebrief={roundForm.withDebrief}
               onCancel={closeRoundForm}
+              onBusyChange={setRoundFormBusy}
               onSaved={(round) => {
                 setRoundForm(null);
                 bump();

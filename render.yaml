@@ -1,0 +1,59 @@
+# Render Blueprint for the API (free web service). The frontend goes on Vercel and the database on
+# Neon: see DEPLOY.md. Values marked sync: false are asked for when the Blueprint is created.
+services:
+  - type: web
+    name: interview-analyzer-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    # Free instances have no pre-deploy command or shell, so migrations run in the build.
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput
+    # gunicorn.conf.py (threads, 75 s timeouts) is read from backend/; Render gives the port in $PORT.
+    startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.5"
+      - key: DEBUG
+        value: "0"
+      - key: SECRET_KEY
+        generateValue: true
+      # The free instance has 512 MB: 2 workers x 4 threads fits, and opens at most 8 DB connections.
+      - key: GUNICORN_WORKERS
+        value: "2"
+      - key: GUNICORN_THREADS
+        value: "4"
+      # Render's proxy sits in front of gunicorn.
+      - key: NUM_PROXIES
+        value: "1"
+      # Render serves only HTTPS. Raise HSTS (e.g. to 31536000) once everything works.
+      - key: SECURE_SSL_REDIRECT
+        value: "true"
+      - key: SECURE_HSTS_SECONDS
+        value: "3600"
+      # A shared cache for the rate limits, e.g. an Upstash free Redis: rediss://default:<password>@<host>:6379
+      # Needed with VERTEX_API_KEY (billed): without it each worker counts sign-ups on its own.
+      - key: CACHE_URL
+        sync: false
+      - key: ALLOWED_HOSTS
+        sync: false # e.g. interview-analyzer-api.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false # e.g. https://interview-analyzer.vercel.app
+      - key: DB_HOST
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_PORT
+        value: "5432"
+      - key: DB_SSLMODE
+        value: require
+      # AI keys, all optional: with none, the rule-based analyzer is used. See README "Redis and Gemini".
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_FREE_TIER
+        value: "true"
+      - key: VERTEX_API_KEY
+        sync: false

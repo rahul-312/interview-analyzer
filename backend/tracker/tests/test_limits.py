@@ -84,16 +84,20 @@ def test_free_plan_gets_two_analyses_then_round_is_saved_without_one(api, applic
 
 
 def test_usage_is_reported_on_me(api, application, run_jobs):
-    fresh = {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None}
+    fresh = {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None, "fair_use": False}
+    fresh_plans = {"limit": 1, "used": 0, "remaining": 1, "next_available_at": None, "fair_use": False}
+    fresh_voice = {"limit": 3, "used": 0, "remaining": 3, "next_available_at": None, "fair_use": False}
     assert api.get("/api/auth/me/").data["usage"] == {
-        "plan": "free", "ai_enabled": True, "ai_free_tier": True, "analyses": fresh, "prep_plans": fresh
+        "plan": "free", "plan_name": "Free", "ai_enabled": True, "ai_free_tier": True, "training_notice": True,
+        "ai_model": "Flash", "priority": False, "analyses": fresh, "prep_plans": fresh_plans,
+        "voice_debriefs": fresh_voice,
     }
 
     log_round(api, application, run_jobs)
     usage = api.get("/api/auth/me/").data["usage"]
     assert usage["analyses"]["used"] == 1 and usage["analyses"]["remaining"] == 1
     assert usage["analyses"]["next_available_at"] is not None
-    assert usage["prep_plans"] == fresh  # counted separately
+    assert usage["prep_plans"] == fresh_plans  # counted separately
 
 
 def test_analyses_free_up_after_24_hours(api, application, run_jobs):
@@ -104,11 +108,13 @@ def test_analyses_free_up_after_24_hours(api, application, run_jobs):
     assert not log_round(api, application, run_jobs, "Q3").data["analysis_limited"]
 
 
-def test_pro_plan_is_unlimited(api, application, run_jobs, user):
+def test_pro_plan_gets_its_own_limit(api, application, run_jobs, user, settings):
+    settings.GEMINI_FREE_TIER = False  # paid plans only use a paid-tier key
     Profile.objects.update_or_create(user=user, defaults={"plan": Profile.Plan.PRO})
     for i in range(4):
         assert not log_round(api, application, run_jobs, f"Q{i}").data["analysis_limited"]
-    assert api.get("/api/auth/me/").data["usage"]["analyses"]["remaining"] is None
+    analyses = api.get("/api/auth/me/").data["usage"]["analyses"]
+    assert analyses["limit"] == 15 and analyses["remaining"] == 11
 
 
 def test_failed_analysis_is_refunded(api, application, run_jobs):
@@ -243,17 +249,18 @@ def test_unbilled_refunds_are_not_capped(api, application, run_jobs, with_ai, se
     assert counted_runs() == 0
 
 
-@pytest.mark.parametrize("outcome", [
-    httpx.ConnectError("down", request=_REQ),
-    _api_error(429, "RESOURCE_EXHAUSTED"),
-    _api_error(503, "UNAVAILABLE"),
+@pytest.mark.parametrize("outcome,message", [
+    (httpx.ConnectError("down", request=_REQ), "couldn't reach the AI service"),
+    (_api_error(429, "RESOURCE_EXHAUSTED"), "busy right now"),
+    (_api_error(503, "UNAVAILABLE"), "busy right now"),
 ], ids=["connection", "429", "503"])
-def test_unbilled_failures_are_refunded(api, application, run_jobs, with_ai, outcome):
+def test_unbilled_failures_are_refunded(api, application, run_jobs, with_ai, outcome, message):
     with mock.patch.object(ai, "get_client", return_value=_fake_client(outcome)):
         res = log_round(api, application, run_jobs)
     analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
     assert analysis.status == JobStatus.FAILED
-    assert "unavailable" in analysis.error
+    # Plain words for the user; the exception's class name is only in the log
+    assert message in analysis.error and "ConnectError" not in analysis.error
     assert counted_runs() == 0
 
 
@@ -322,6 +329,87 @@ def test_profile_is_created_at_sign_up():
     assert Profile.objects.get(user_id=res.data["id"]).plan == "free"
 
 
+@pytest.fixture
+def signup_limits(settings):
+    from django.core.cache import cache
+    from rest_framework.throttling import SimpleRateThrottle
+
+    # Keep the other rates: a throttle without one raises ImproperlyConfigured
+    rates = {**SimpleRateThrottle.THROTTLE_RATES, "signup": "2/hour", "signup_attempt": "1000/min"}
+    settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 0}  # whatever the local .env says
+    cache.clear()
+    # DRF reads the rates once at import, so patch them on the class
+    with mock.patch.object(SimpleRateThrottle, "THROTTLE_RATES", rates):
+        yield rates
+    cache.clear()
+
+
+def sign_up(username, password="a-strong-pass-123", **headers):
+    return post_sign_up(username, password, **headers).status_code
+
+
+def post_sign_up(username, password="a-strong-pass-123", **headers):
+    from rest_framework.test import APIClient
+
+    return APIClient().post("/api/auth/register/", {"username": username, "password": password}, format="json", **headers)
+
+
+def test_sign_ups_are_throttled_per_ip(signup_limits):
+    assert [sign_up(f"user{i}") for i in range(2)] == [201, 201]
+    res = post_sign_up("user2")
+    assert res.status_code == 429
+    assert res.data["detail"] == "Too many sign-ups from this network. Try again in an hour."
+    assert res["Retry-After"]
+
+
+@pytest.mark.parametrize("wait, when", [
+    (30, "a minute"), (600, "10 minutes"), (3599, "an hour"), (86_000, "24 hours"),
+])
+def test_the_sign_up_limit_message_rounds_the_wait(wait, when):
+    from rest_framework.exceptions import Throttled
+
+    from accounts.views import RegisterView
+
+    with pytest.raises(Throttled) as exc:
+        RegisterView().throttled(None, wait)
+    assert exc.value.detail == f"Too many sign-ups from this network. Try again in {when}."
+
+
+def test_the_wait_is_known_even_when_over_the_limit():
+    from accounts.throttles import SignupThrottle
+
+    throttle = SignupThrottle()
+    throttle.duration, throttle.num_requests, throttle.now = 3600, 2, 1000.0
+    throttle.history = [990.0, 900.0, 800.0]  # three counted: simultaneous requests slipped past
+    assert throttle.wait() == 3500.0  # 900 has to expire too, not just 800
+
+
+def test_a_made_up_forwarded_for_header_doesnt_dodge_the_sign_up_limit(signup_limits):
+    codes = [sign_up(f"user{i}", HTTP_X_FORWARDED_FOR=f"203.0.113.{i}") for i in range(3)]
+    assert codes == [201, 201, 429]
+
+
+def test_rejected_sign_ups_dont_use_up_the_limit(signup_limits):
+    assert sign_up("taken") == 201
+    assert [sign_up("taken"), sign_up("weak", password="1")] == [400, 400]
+    assert sign_up("second") == 201
+    assert sign_up("third") == 429
+
+
+def test_every_sign_up_attempt_has_a_looser_limit(signup_limits):
+    signup_limits["signup_attempt"] = "3/min"
+    assert [sign_up("taken"), sign_up("taken"), sign_up("taken"), sign_up("fresh")] == [201, 400, 400, 429]
+
+
+def test_a_forwarded_for_header_with_no_proxies_set_is_logged_once(signup_limits, caplog):
+    from accounts import throttles
+
+    with mock.patch.object(throttles, "_warned_about_proxies", False):
+        sign_up("user0", HTTP_X_FORWARDED_FOR="203.0.113.1")
+        sign_up("user1", HTTP_X_FORWARDED_FOR="203.0.113.2")
+    assert sum("NUM_PROXIES" in r.message for r in caplog.records) == 1
+
+
 def test_me_does_not_write(api, user):
     Profile.objects.filter(user=user).delete()
     assert api.get("/api/auth/me/").data["usage"]["plan"] == "free"
@@ -335,7 +423,7 @@ def test_me_does_not_write(api, user):
 def test_debrief_edited_while_running_saves_result_as_stale(api, application, run_jobs):
     real_analyze = ai.analyze_round
 
-    def edit_during_run(context, billing=None):
+    def edit_during_run(context, billing=None, route=None):
         # The user saves a new debrief while the AI call is in flight.
         Debrief.objects.filter(round__application=application).update(
             went_badly="edited mid-run", updated_at=timezone.now() + timedelta(seconds=1)
@@ -368,7 +456,7 @@ def test_replaced_running_job_is_discarded_and_keeps_its_charge(api, application
     round_id = _round_with_queued_analysis(api, application)
     old_run = AnalysisRun.objects.get(refunded=False)
 
-    def replaced_mid_run(context, billing=None):
+    def replaced_mid_run(context, billing=None, route=None):
         # While this job is in the AI call, it gets treated as stuck and a new analysis starts.
         RoundAnalysis.objects.filter(round_id=round_id).update(started_at=timezone.now() - timedelta(minutes=20))
         assert api.post(f"/api/rounds/{round_id}/analyze/").status_code == 202
@@ -514,17 +602,19 @@ def make_plan(api, application, run_jobs=None):
         return api.post("/api/prep-plans/", body, format="json")
 
 
-def test_free_plan_gets_two_prep_plans_then_none_is_created(api, application, run_jobs):
-    assert make_plan(api, application, run_jobs).status_code == 201
+def test_free_plan_gets_one_prep_plan_then_none_is_created(api, application, run_jobs):
     assert make_plan(api, application, run_jobs).status_code == 201
 
     res = make_plan(api, application, run_jobs)
     assert res.status_code == 429
-    assert "2 prep plans" in res.data["detail"]
-    assert PrepPlan.objects.count() == 2  # no empty plan left behind
+    assert "1 prep plans" in res.data["detail"]
+    assert res.data["code"] == "usage_limit" and res.data["feature"] == "ai_prep_plan"
+    assert res.data["limit"] == 1 and res.data["used"] == 1 and res.data["reset_at"]
+    assert PrepPlan.objects.count() == 1  # no empty plan left behind
 
 
-def test_regenerate_counts_and_is_limited(api, application, run_jobs):
+def test_regenerate_counts_and_is_limited(api, application, run_jobs, settings):
+    settings.PLAN_PREP_PLANS_PER_24H = {**settings.PLAN_PREP_PLANS_PER_24H, "free": 2}
     plan = make_plan(api, application, run_jobs).data
     assert PrepPlan.objects.get(id=plan["id"]).status == JobStatus.DONE
     with run_jobs():
@@ -538,7 +628,7 @@ def test_analyses_and_prep_plans_are_counted_separately(api, application, run_jo
     log_round(api, application, run_jobs, "Q2")  # analyses used up
     assert make_plan(api, application, run_jobs).status_code == 201
     usage = api.get("/api/auth/me/").data["usage"]
-    assert usage["analyses"]["remaining"] == 0 and usage["prep_plans"]["remaining"] == 1
+    assert usage["analyses"]["remaining"] == 0 and usage["prep_plans"]["used"] == 1
 
 
 def test_regenerate_while_generating_is_rejected(api, application):
@@ -716,6 +806,37 @@ def test_daily_quota_is_not_retried_and_says_so(api, application, run_jobs, with
     assert len(calls) == 1
     analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
     assert "daily limit" in analysis.error and analysis.refunded is True
+
+
+@pytest.mark.parametrize("vertex,expected", [(False, "free daily limit"), (True, "The AI's daily limit")])
+def test_daily_limit_only_says_free_off_vertex(api, application, run_jobs, settings, vertex, expected):
+    # Vertex is billed, so its daily quota isn't a "free" one
+    settings.GEMINI_API_KEY, settings.VERTEX_API_KEY = ("", "vertex-key") if vertex else ("test-key", "")
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_out_of_daily_quota())):
+        res = log_round(api, application, run_jobs)
+    assert expected in RoundAnalysis.objects.get(round_id=res.data["id"]).error
+
+
+@pytest.mark.parametrize("code,status", [(408, "REQUEST_TIMEOUT"), (413, "PAYLOAD_TOO_LARGE"), (422, "UNPROCESSABLE")])
+def test_other_rejections_dont_say_busy(api, application, run_jobs, with_ai, settings, code, status):
+    # Not retried, and waiting won't fix them, so "busy right now" would mislead
+    settings.AI_RETRY_DELAYS = (1, 3)
+    client, calls = _sequence_client(_api_error(code, status))
+    with mock.patch.object(ai, "get_client", return_value=client):
+        res = log_round(api, application, run_jobs)
+    assert len(calls) == 1
+    analysis = RoundAnalysis.objects.get(round_id=res.data["id"])
+    assert "couldn't handle this request" in analysis.error and "busy" not in analysis.error
+    assert analysis.refunded is True
+
+
+def test_setup_mistakes_on_vertex_point_at_the_vertex_key(api, application, run_jobs, settings, caplog):
+    settings.VERTEX_API_KEY = "vertex-key"
+    with mock.patch.object(ai, "get_client", return_value=_fake_client(_api_error(404, "NOT_FOUND"))), \
+            caplog.at_level("ERROR", logger="tracker.ai"):
+        res = log_round(api, application, run_jobs)
+    assert "isn't set up correctly" in RoundAnalysis.objects.get(round_id=res.data["id"]).error
+    assert "VERTEX_API_KEY" in caplog.text and "GEMINI_PAID_API_KEY" not in caplog.text
 
 
 @pytest.mark.parametrize("code,status", [(404, "NOT_FOUND"), (400, "INVALID_ARGUMENT"), (403, "PERMISSION_DENIED")])

@@ -15,7 +15,9 @@ const MyApp: React.FC<AppProps> = ({ Component, pageProps }) => {
           name="description"
           content="Track job applications, debrief interviews, and turn your weak spots into a prep plan."
         />
-        <link rel="icon" type="image/svg+xml" href="/assets/favicon/favicon.svg" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32.png" />
+        <link rel="icon" type="image/png" sizes="192x192" href="/assets/favicon/favicon-192.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon/apple-touch-icon.png" />
       </Head>
 
       <AuthProvider>

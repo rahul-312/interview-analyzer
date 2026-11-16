@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { RegisterInput, User } from '@/models/Auth';
-import { authService } from '@/services/AuthService';
+import { authService, SessionCheckTimeout } from '@/services/AuthService';
 
 interface AuthState {
   user: User | null;
@@ -33,11 +33,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     authService
-      .me()
+      .restore()
       .then(setUser)
-      .catch(() => authService.logout())
+      .catch((err) => {
+        // A slow server isn't a reason to lose the session: the next visit can still use it
+        if (!(err instanceof SessionCheckTimeout)) authService.logout();
+      })
       .finally(() => setReady(true));
   }, []);
+
+  // Clear the user before leaving for /login: Back can restore this page from the browser's cache, even for
+  // whoever logs in next. The mark keeps public pages from showing on the way out.
+  const clearUserToLeave = useCallback(() => {
+    document.documentElement.dataset.leaving = '1';
+    setUser(null);
+  }, []);
+
+  useEffect(() => authService.onSessionExpired(clearUserToLeave), [clearUserToLeave]);
+
+  // A page Back restored may be out of date: the session can have changed in this tab or another one
+  useEffect(() => {
+    const onRestored = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      delete document.documentElement.dataset.leaving;
+      const hasToken = authService.hasToken();
+      if (user && !hasToken) window.location.replace('/login');
+      if (!user && hasToken) window.location.reload();
+    };
+    window.addEventListener('pageshow', onRestored);
+    return () => window.removeEventListener('pageshow', onRestored);
+  }, [user]);
 
   const refreshUser = useCallback(async () => {
     if (!authService.hasToken()) return;
@@ -73,9 +98,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = useCallback(() => {
     authService.logout();
-    setUser(null);
+    clearUserToLeave();
     window.location.href = '/login';
-  }, []);
+  }, [clearUserToLeave]);
 
   // Stable value: consumers only re-render when the user or ready state actually changes
   const value = useMemo(

@@ -1,0 +1,73 @@
+import type {
+  CheckoutConfig,
+  CheckoutResponse,
+  CurrentSubscription,
+  Payment,
+  PlansResponse,
+  UpgradeQuote,
+} from "@/models/Billing";
+import type { Usage } from "@/models/Auth";
+import ApiClient, { apiClient } from "./ApiClient";
+
+export default class BillingService {
+  private client: ApiClient;
+
+  constructor(client: ApiClient) {
+    this.client = client;
+  }
+
+  plans() {
+    return this.client.get<PlansResponse>("/subscriptions/plans/");
+  }
+
+  /** The plans for logged-out pages and prerendering: sends no token, so an expired one can't get in the way. */
+  publicPlans() {
+    return this.client.request<PlansResponse>("/subscriptions/plans/", { auth: false, signal: AbortSignal.timeout(5000) });
+  }
+
+  current() {
+    return this.client.get<CurrentSubscription>("/subscriptions/current/");
+  }
+
+  usage() {
+    return this.client.get<Usage>("/subscriptions/usage/");
+  }
+
+  payments() {
+    return this.client.get<Payment[]>("/subscriptions/payments/");
+  }
+
+  /** Creates the Razorpay subscription for a plan code; the price comes from the server. */
+  checkout(plan: string) {
+    return this.client.post<CheckoutConfig>("/subscriptions/checkout/", { plan });
+  }
+
+  verify(response: CheckoutResponse) {
+    return this.client.post<CurrentSubscription>("/subscriptions/verify/", response);
+  }
+
+  upgradeQuote(plan: string) {
+    return this.client.get<UpgradeQuote>(`/subscriptions/upgrade-quote/?plan=${encodeURIComponent(plan)}`);
+  }
+
+  /** An upgrade that replaces the subscription returns change "checkout" and its Checkout config. */
+  changePlan(plan: string) {
+    return this.client.post<CurrentSubscription>("/subscriptions/change-plan/", { plan });
+  }
+
+  /** `expectRefund`: the user was offered a refund, so the server refuses (409) rather than cancel without one. */
+  cancel(atPeriodEnd: boolean, expectRefund = false) {
+    return this.client.post<CurrentSubscription>("/subscriptions/cancel/", { at_period_end: atPeriodEnd, expect_refund: expectRefund });
+  }
+
+  /** Cancels the subscription bought to start when the current one ends. Nothing was charged for it yet. */
+  cancelUpcoming() {
+    return this.client.post<CurrentSubscription>("/subscriptions/cancel/", { upcoming: true });
+  }
+
+  resume() {
+    return this.client.post<CurrentSubscription>("/subscriptions/resume/");
+  }
+}
+
+export const billingService = new BillingService(apiClient);

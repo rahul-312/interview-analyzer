@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -5,6 +8,8 @@ from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from billing import entitlements, tiers
 
 from . import ai, insights
 from .models import Application, InterviewRound, JobStatus, PrepPlan, PrepTask, RoundAnalysis
@@ -20,11 +25,17 @@ from .usage import (
     LIMITED,
     PREP_PLAN,
     QUEUED,
+    VOICE,
+    limit_details,
     limit_message,
     mark_stale,
+    refund_run,
     reserve_analysis,
     reserve_prep_plan,
+    reserve_voice,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def queue_analysis(rnd, user):
@@ -34,7 +45,7 @@ def queue_analysis(rnd, user):
     """
     result, run = reserve_analysis(user, rnd)
     if result == QUEUED:
-        queue(analyze_round_task, rnd.id, run.id)
+        queue(analyze_round_task, rnd.id, run.id, priority=run.priority)
     return result
 
 
@@ -45,7 +56,7 @@ def queue_plan(plan, user):
     """
     result, run = reserve_prep_plan(user, plan)
     if result == QUEUED:
-        queue(generate_plan_task, plan.id, run.id)
+        queue(generate_plan_task, plan.id, run.id, priority=run.priority)
     return result
 
 
@@ -196,8 +207,104 @@ class RoundAnalyzeView(APIView):
         if result == BUSY:
             return Response({"detail": "This round is already being analysed."}, status=status.HTTP_409_CONFLICT)
         if result == LIMITED:
-            return Response({"detail": limit_message(request.user)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(limit_details(request.user), status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
+
+
+# Room for the multipart boundaries and headers around the recording itself.
+MULTIPART_OVERHEAD = 64 * 1024
+
+
+class DebriefFromVoiceView(APIView):
+    """
+    Turns a spoken recap (multipart field `audio`) into a draft debrief for the form. Nothing is
+    saved; the user checks the draft and saves the round as usual. Needs AI on the user's plan,
+    and counts against the plan's voice-debrief limit unless it fails for a reason that isn't
+    theirs. The AI call runs inside the request, with a short timeout and no retry waits.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        too_long = Response(
+            {"detail": "That recording is too large to send. Try a shorter one."},
+            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        )
+        no_ai = Response(
+            {"detail": "Filling a debrief by voice needs AI, which isn't on for your plan."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+        # Before touching request.FILES, which would read (and write to disk) the whole body first.
+        # A body without a length (chunked) can't be checked up front, so it isn't accepted.
+        try:
+            length = int(request.META.get("CONTENT_LENGTH") or "")
+        except ValueError:
+            return Response(
+                {"detail": "Send the recording with a Content-Length."}, status=status.HTTP_411_LENGTH_REQUIRED
+            )
+        if length > settings.VOICE_DEBRIEF_MAX_BYTES + MULTIPART_OVERHEAD:
+            return too_long
+
+        if entitlements.ai_route(entitlements.for_user(request.user)) is None:
+            return no_ai
+        audio = request.FILES.get("audio")
+        if audio is None or audio.size == 0:
+            return Response({"detail": "Send a recording as `audio`."}, status=status.HTTP_400_BAD_REQUEST)
+        if audio.size > settings.VOICE_DEBRIEF_MAX_BYTES:
+            return too_long
+        data = audio.read()
+        mime_type = ai.sniff_audio(data[:16])
+        if mime_type is None:
+            return Response(
+                {"detail": "That doesn't look like an audio recording. Try recording again."},
+                status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            )
+
+        result, run = reserve_voice(request.user)
+        if result == LIMITED:
+            return Response(limit_details(request.user, VOICE), status=status.HTTP_429_TOO_MANY_REQUESTS)
+        # The key and model for the plan the run was counted against, so the two can't differ.
+        route = entitlements.ai_route(tiers.get_tier(run.tier))
+        if route is None:
+            refund_run(run.id, billed=False)
+            return no_ai
+
+        try:
+            draft = ai.debrief_from_audio(data, mime_type, route)
+        except ai.UserCaused as exc:
+            # Refused or cut off because of what was said: counts, like an analysis would.
+            return Response({"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        except ai.UnreadableAudio as exc:
+            refund_run(run.id, billed=False)
+            return Response({"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        except ai.NotCharged as exc:
+            refund_run(run.id, billed=False)
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except RuntimeError as exc:
+            # Timed out or an unreadable reply: may have been billed, so given back within the cap.
+            refund_run(run.id, billed=True)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        except BaseException:
+            # Our own bug, or the worker being stopped (gunicorn's timeout exits through SystemExit):
+            # not the user's doing, so given back within the cap. A failed refund (say, the database
+            # is down) is logged, and the original error is the one that propagates.
+            try:
+                refund_run(run.id, billed=True)
+            except Exception:
+                logger.exception("Couldn't give back voice debrief run %s", run.id)
+            raise
+        if not draft["questions"] and not any(
+            draft[k] for k in ("went_well", "went_badly", "interviewer_cues", "recruiter_feedback")
+        ):
+            # Usually a muted mic or the wrong input device: given back within the cap, so a few
+            # silent recordings can't use up a small daily allowance.
+            refunded = refund_run(run.id, billed=True)
+            note = "" if refunded else " This one still counted towards your daily voice debriefs."
+            return Response(
+                {"detail": "Couldn't make out a debrief in that recording. Check your microphone and "
+                           "try again, a little closer to it." + note},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        return Response(draft)
 
 
 # ---------------------------------------------------------------------------
@@ -225,10 +332,10 @@ class PrepPlanListCreateView(PrepPlanQuerysetMixin, generics.ListCreateAPIView):
         with transaction.atomic():
             plan = serializer.save(user=request.user)
             if queue_plan(plan, request.user) == LIMITED:
-                message = limit_message(request.user, PREP_PLAN)
+                details = limit_details(request.user, PREP_PLAN)
                 # At the limit: don't keep an empty plan that can never be generated.
                 transaction.set_rollback(True)
-                return Response({"detail": message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+                return Response(details, status=status.HTTP_429_TOO_MANY_REQUESTS)
         plan = self.get_queryset().get(pk=plan.pk)
         return Response(self.get_serializer(plan).data, status=status.HTTP_201_CREATED)
 
@@ -249,7 +356,7 @@ class PrepPlanRegenerateView(APIView):
         if result == BUSY:
             return Response({"detail": "This plan is already being generated."}, status=status.HTTP_409_CONFLICT)
         if result == LIMITED:
-            return Response({"detail": limit_message(request.user, PREP_PLAN)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            return Response(limit_details(request.user, PREP_PLAN), status=status.HTTP_429_TOO_MANY_REQUESTS)
         return Response({"detail": "Plan regeneration queued."}, status=status.HTTP_202_ACCEPTED)
 
 
@@ -279,5 +386,6 @@ class InsightsView(APIView):
             "analysed_rounds": RoundAnalysis.objects.filter(
                 round__application__user=user, status=JobStatus.DONE
             ).count(),
-            "ai_enabled": ai.ai_enabled(),
+            # Whether this user's plan gets Gemini, as usage() reports it.
+            "ai_enabled": entitlements.ai_route(entitlements.for_user(user)) is not None,
         })

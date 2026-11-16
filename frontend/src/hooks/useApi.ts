@@ -6,7 +6,8 @@ import { errorText } from '@/utils/errorText';
 
 /**
  * Loads data with `fetcher`. Refetches when `key` or the shared refresh key changes,
- * skips loading while `key` is null, and polls every 2 seconds while `pollWhile(data)` is true.
+ * skips loading while `key` is null, and polls while `pollWhile(data)` is true: every 2 seconds at
+ * first, slowing to every 10, since AI jobs can run for minutes.
  */
 export function useApi<T>(key: string | null, fetcher: () => Promise<T>, pollWhile?: (data: T) => boolean) {
   const { key: refreshKey } = useRefresh();
@@ -32,6 +33,7 @@ export function useApi<T>(key: string | null, fetcher: () => Promise<T>, pollWhi
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let polls = 0;
 
     const load = async () => {
       try {
@@ -39,7 +41,7 @@ export function useApi<T>(key: string | null, fetcher: () => Promise<T>, pollWhi
         if (cancelled) return;
         setData(result);
         setError(null);
-        if (pollRef.current?.(result)) timer = setTimeout(load, 2000);
+        if (pollRef.current?.(result)) timer = setTimeout(load, Math.min(2000 * 1.5 ** polls++, 10000));
       } catch (err) {
         if (!cancelled) setError(errorText(err));
       } finally {
