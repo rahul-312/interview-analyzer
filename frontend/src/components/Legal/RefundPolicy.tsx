@@ -26,24 +26,24 @@ const RefundPolicy: React.FC<BillingDays> = ({ refundDays = legal.refundDays, gr
     </Section>
 
     {refundDays > 0 ? (
-    <Section title={`3. ${refundDays}-day money-back guarantee`}>
-      <List>
-        <li>
-          If you cancel within {refundDays} days of a new subscription’s first payment, choosing{' '}
-          <strong className="font-medium text-ink">Cancel now</strong>, we refund everything you paid for that
-          subscription in full, and your paid access ends straight away.
-        </li>
-        <li>
-          It applies once per account. Any earlier refund on your account uses it up, except a refund of unused days
-          after an upgrade.
-        </li>
-        <li>It counts from the first payment, so renewals don’t qualify.</li>
-        <li>
-          Choosing to cancel at the end of the period instead means you keep your plan until then, and the money-back
-          refund no longer applies.
-        </li>
-      </List>
-    </Section>
+      <Section title={`3. ${refundDays}-day money-back guarantee`}>
+        <List>
+          <li>
+            If you cancel within {refundDays} days of a new subscription’s first payment, choosing{' '}
+            <strong className="font-medium text-ink">Cancel now</strong>, we refund everything you paid for that
+            subscription in full, and your paid access ends straight away.
+          </li>
+          <li>
+            It applies once per account. Any earlier refund on your account uses it up, except a refund of unused days
+            after an upgrade.
+          </li>
+          <li>It counts from the first payment, so renewals don’t qualify.</li>
+          <li>
+            Choosing to cancel at the end of the period instead means you keep your plan until then, and the money-back
+            refund no longer applies.
+          </li>
+        </List>
+      </Section>
     ) : (
       <Section title="3. No money-back period">
         <p>Payments aren’t refunded when you cancel, except as described below.</p>
