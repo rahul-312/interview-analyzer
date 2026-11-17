@@ -7,6 +7,23 @@ extension share one version number.
 
 ## [Unreleased]
 
+### Legal pages
+- Contact us, Terms & Conditions, Privacy Policy, Cancellation & Refund
+  Policy, and Shipping & Delivery Policy pages, as Razorpay asks for before
+  turning on live payments. Anyone can read them without an account;
+  logged-in users see them inside the app.
+- The public footer links to all of them, and the plan notes on the pricing
+  page link to the refund policy.
+- The business details they show come from `NEXT_PUBLIC_LEGAL_NAME`,
+  `NEXT_PUBLIC_LEGAL_EMAIL`, `NEXT_PUBLIC_LEGAL_PHONE` and
+  `NEXT_PUBLIC_LEGAL_ADDRESS` (see `frontend/.env.example`), not the repo. Keep
+  them identical to the Razorpay account. A production build fails if any is
+  missing. The courts named in the Terms can be set with
+  `NEXT_PUBLIC_LEGAL_JURISDICTION` (default Hyderabad).
+- The refund policy and terms take the money-back and grace days from the
+  plans API, so they always match `BILLING_REFUND_DAYS` and
+  `BILLING_GRACE_DAYS`.
+
 ### Deployment
 - The database can be set with one `DATABASE_URL` (as Neon, Render and
   Vercel provide it) in place of the `DB_*` settings. On a pooled URL,
@@ -14,6 +31,21 @@ extension share one version number.
 - The Render build runs migrations over `DATABASE_URL_UNPOOLED`, Neon's
   direct connection.
 - Neon project config (`neon.ts`) for the Neon CLI.
+
+### Email
+- Outgoing email over SMTP, set with `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`
+  or `EMAIL_USE_SSL` (on by default for port 465), `EMAIL_HOST_USER`,
+  `EMAIL_HOST_PASSWORD` and `DEFAULT_FROM_EMAIL`, with Gmail and an app
+  password as the documented setup. Without `EMAIL_HOST` nothing is sent; in
+  debug, emails are printed to the console.
+- Sending gives up after `EMAIL_TIMEOUT` seconds (default 3), since emails go
+  out while a request or webhook is answered.
+- `manage.py check` warns when `BILLING_EMAILS` is on with no mail server, or
+  with its login left blank (`billing.W003`).
+- The Render Blueprint is now on the Starter plan, because the free plan blocks
+  outgoing SMTP, and turns billing emails on. Add `EMAIL_HOST_USER` and
+  `EMAIL_HOST_PASSWORD` in Render's Environment tab. Migrations now run as the
+  pre-deploy command, so a failed build no longer leaves them applied.
 
 ## [1.1.0] - 2026-11-16
 

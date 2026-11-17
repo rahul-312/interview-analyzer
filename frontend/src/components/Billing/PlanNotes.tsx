@@ -1,4 +1,5 @@
 import React from 'react';
+import Link from 'next/link';
 import type { TierWithPrices } from '@/models/Billing';
 import { fairUseNote } from '@/utils/billing';
 
@@ -23,7 +24,10 @@ const PlanNotes: React.FC<{ tiers: TierWithPrices[]; refundDays: number }> = ({ 
         {refundDays > 0 &&
           `${refundDays}-day money-back guarantee: cancel within ${refundDays} days of a new subscription's first payment for a full refund, once per account. `}
         After that, cancelling stops renewals and you keep your plan until the end of the period you paid for; that
-        period isn&apos;t refunded.
+        period isn&apos;t refunded.{' '}
+        <Link href="/refund-policy" className="underline hover:text-ink">
+          Cancellation &amp; Refund Policy
+        </Link>
       </p>
     </div>
   );
