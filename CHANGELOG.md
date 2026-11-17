@@ -14,8 +14,11 @@ extension share one version number.
   logged-in users see them inside the app.
 - The public footer links to all of them, and the plan notes on the pricing
   page link to the refund policy.
-- The business details they show (name, email, phone, address) are in
-  `frontend/src/config/legal.ts`. Keep them identical to the Razorpay account.
+- The business details they show come from `NEXT_PUBLIC_LEGAL_NAME`,
+  `NEXT_PUBLIC_LEGAL_EMAIL`, `NEXT_PUBLIC_LEGAL_PHONE` and
+  `NEXT_PUBLIC_LEGAL_ADDRESS` (see `frontend/.env.example`), not the repo. Keep
+  them identical to the Razorpay account. A production build on Vercel fails
+  if any is missing.
 - The refund policy and terms take the money-back and grace days from the
   plans API, so they always match `BILLING_REFUND_DAYS` and
   `BILLING_GRACE_DAYS`.

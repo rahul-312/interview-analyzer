@@ -54,7 +54,9 @@ describe("legal pages", () => {
     expect(screen.queryByRole("link", { name: "Sign up" })).toBeNull();
   });
 
-  it("Contact lists the business, email, phone and address", () => {
+  it("Contact lists the business, email, phone and address from the environment", () => {
+    expect(legal.email).toBe("support@example.com");
+    expect(legal.phoneHref).toBe("tel:+919000000000");
     render(<Contact />);
     expect(screen.getAllByRole("link", { name: legal.email })[0].getAttribute("href")).toBe(`mailto:${legal.email}`);
     expect(screen.getByRole("link", { name: legal.phone }).getAttribute("href")).toBe(legal.phoneHref);
