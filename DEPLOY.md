@@ -3,7 +3,7 @@
 | Part | Host | Free tier |
 | --- | --- | --- |
 | Frontend (Next.js) | [Vercel](https://vercel.com) Hobby | Personal, non-commercial use only |
-| API (Django) | [Render](https://render.com) Starter web service ($7/month) | 512 MB; always on. The free plan works too, but blocks outgoing email and sleeps after 15 min idle |
+| API (Django) | [Render](https://render.com) Starter web service ($7/month) | 512 MB; always on. The free plan also works, with `BILLING_EMAILS=false` (it blocks outgoing email) and migrations moved into the build command (it has no pre-deploy command); it sleeps after 15 min idle |
 | Database | [Neon](https://neon.tech) free Postgres | 1 GB; scales to zero when idle, doesn't expire |
 | Redis (rate limits) | [Upstash](https://upstash.com) free Redis | Needed with `VERTEX_API_KEY`; optional otherwise |
 | Celery | Not needed | Jobs run inline when `CELERY_BROKER_URL` is blank |
@@ -36,10 +36,10 @@ Create a free Redis database in Upstash, close to the Render region, and copy it
    - `CACHE_URL`: the Upstash URL from step 2, or blank.
    - `GEMINI_API_KEY` / `VERTEX_API_KEY`: optional; with neither, the rule-based analyzer is used. For a paid Gemini key, also change `GEMINI_FREE_TIER` to `false` in the service's Environment tab.
    - `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`: the Gmail address and an app password (see "Email" below).
-4. Deploy. The build runs `collectstatic`, then `migrate` over `DATABASE_URL_UNPOOLED`.
+4. Deploy. The build runs `collectstatic`, then the pre-deploy command runs `migrate` over `DATABASE_URL_UNPOOLED`.
 5. Check `https://<service>.onrender.com/admin/` loads.
 
-Create an admin user from your own machine, pointed at Neon (the free tier has no shell). In PowerShell, from `backend/`, with the direct URL:
+Create an admin user with `python manage.py createsuperuser` in the service's Shell, or (on the free plan, which has no shell) from your own machine, pointed at Neon. In PowerShell, from `backend/`, with the direct URL:
 
 ```powershell
 $env:DATABASE_URL = "<DATABASE_URL_UNPOOLED>"
@@ -58,7 +58,7 @@ The API sends email through Gmail SMTP: billing emails (`BILLING_EMAILS`) and an
 3. On Render, set `EMAIL_HOST_USER` to the Gmail address and `EMAIL_HOST_PASSWORD` to the app password. Never use the account's own password.
 4. Check it from the service's Shell: `python manage.py sendtestemail you@example.com`.
 
-Render's free plan blocks outgoing traffic on ports 25, 465 and 587, so sending only works on Starter or above. Gmail allows about 500 emails a day, and mail comes from the Gmail address. Without `EMAIL_HOST`, nothing is sent, and `manage.py check` warns if billing emails are on (`billing.W003`).
+Render's free plan blocks outgoing traffic on ports 25, 465 and 587, so sending only works on Starter or above. Gmail allows about 500 emails a day, and mail comes from the Gmail address. Without `EMAIL_HOST`, nothing is sent, and `manage.py check` warns if billing emails are on without a mail server or its login (`billing.W003`). Port 465 (SSL) works as well as 587 (STARTTLS).
 
 ## 4. Frontend (Vercel)
 

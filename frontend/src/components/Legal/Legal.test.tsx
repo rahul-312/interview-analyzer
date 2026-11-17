@@ -62,11 +62,21 @@ describe("legal pages", () => {
     expect(screen.getAllByText(legal.operator).length).toBeGreaterThan(0);
   });
 
-  it("the refund policy states the money-back window and grace period the server uses", () => {
-    render(<RefundPolicy />);
-    expect(screen.getByRole("heading", { name: `3. ${legal.refundDays}-day money-back guarantee` })).toBeTruthy();
+  it("the refund policy states the money-back window and grace period it's given by the server", () => {
+    render(<RefundPolicy refundDays={14} graceDays={5} />);
+    expect(screen.getByRole("heading", { name: "3. 14-day money-back guarantee" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "4. Cancelling after 14 days" })).toBeTruthy();
     expect(screen.getByText(/once per account/)).toBeTruthy();
-    expect(screen.getByText(new RegExp(`keep your plan for ${legal.graceDays} days`))).toBeTruthy();
+    expect(screen.getByText(/keep your plan for 5 days/)).toBeTruthy();
+  });
+
+  it("with the money-back window turned off, the policies don't promise one", () => {
+    render(<RefundPolicy refundDays={0} />);
+    expect(screen.getByRole("heading", { name: "3. No money-back period" })).toBeTruthy();
+    expect(screen.queryByText(/money-back guarantee/)).toBeNull();
+    cleanup();
+    render(<Terms refundDays={0} />);
+    expect(screen.queryByText(/money-back/)).toBeNull();
   });
 
   it("the terms set the minimum age and governing courts", () => {

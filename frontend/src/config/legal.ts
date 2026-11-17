@@ -14,7 +14,10 @@ export const legal = {
   jurisdiction: 'Hyderabad, Telangana, India',
   minimumAge: 18,
   lastUpdated: '17 November 2026',
-  /** These match the server's defaults (BILLING_REFUND_DAYS, BILLING_GRACE_DAYS). Change both together. */
+  /**
+   * The server's defaults (BILLING_REFUND_DAYS, BILLING_GRACE_DAYS). The refund policy and terms read the real
+   * values from the plans API when they're built; these are only used if it can't be reached then.
+   */
   refundDays: 7,
   graceDays: 3,
 };

@@ -2,7 +2,14 @@ import React from 'react';
 import LegalPage, { Email, List, Section } from './LegalPage';
 import { legal } from '@/config/legal';
 
-const RefundPolicy: React.FC = () => (
+export interface BillingDays {
+  /** The money-back window (BILLING_REFUND_DAYS); 0 means there isn't one. */
+  refundDays?: number;
+  /** Paid access kept after a failed renewal (BILLING_GRACE_DAYS). */
+  graceDays?: number;
+}
+
+const RefundPolicy: React.FC<BillingDays> = ({ refundDays = legal.refundDays, graceDays = legal.graceDays }) => (
   <LegalPage
     title="Cancellation & Refund Policy"
     intro="How cancelling, refunds, upgrades and failed payments work for Pro and Pro Plus."
@@ -18,10 +25,11 @@ const RefundPolicy: React.FC = () => (
       </p>
     </Section>
 
-    <Section title={`3. ${legal.refundDays}-day money-back guarantee`}>
+    {refundDays > 0 ? (
+    <Section title={`3. ${refundDays}-day money-back guarantee`}>
       <List>
         <li>
-          If you cancel within {legal.refundDays} days of a new subscription’s first payment, choosing{' '}
+          If you cancel within {refundDays} days of a new subscription’s first payment, choosing{' '}
           <strong className="font-medium text-ink">Cancel now</strong>, we refund everything you paid for that
           subscription in full, and your paid access ends straight away.
         </li>
@@ -36,8 +44,13 @@ const RefundPolicy: React.FC = () => (
         </li>
       </List>
     </Section>
+    ) : (
+      <Section title="3. No money-back period">
+        <p>Payments aren’t refunded when you cancel, except as described below.</p>
+      </Section>
+    )}
 
-    <Section title={`4. Cancelling after ${legal.refundDays} days`}>
+    <Section title={refundDays > 0 ? `4. Cancelling after ${refundDays} days` : '4. Cancelling'}>
       <List>
         <li>
           <strong className="font-medium text-ink">Cancel at period end</strong> (the default): no further payments are
@@ -68,7 +81,7 @@ const RefundPolicy: React.FC = () => (
 
     <Section title="6. Failed renewals">
       <p>
-        If a renewal payment fails, Razorpay retries it, and you keep your plan for {legal.graceDays} days after the
+        If a renewal payment fails, Razorpay retries it, and you keep your plan for {graceDays} days after the
         period ends. You can update your payment method from Plans &amp; billing. If payment still doesn’t go through,
         your account moves to the Free plan; your data is kept.
       </p>

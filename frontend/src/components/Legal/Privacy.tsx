@@ -62,7 +62,7 @@ const Privacy: React.FC = () => (
     <Section title="4. AI processing and training">
       <p>
         To analyse a round, build a prep plan or write up a voice debrief, the relevant debriefs or recording are sent
-        to Google’s Gemini API. Google processes them to return a result.
+        to Google’s Gemini models, through the Gemini API or Google Cloud’s Vertex AI. Google processes them to return a result.
       </p>
       <p>
         On the Free plan, we may use Gemini’s free tier. There, Google may use what’s sent to improve its products,
@@ -80,7 +80,7 @@ const Privacy: React.FC = () => (
     <Section title="5. Who we share it with">
       <p>Only with service providers that help us run the service, under their own privacy and security terms:</p>
       <List>
-        <li>Google (Gemini AI models)</li>
+        <li>Google (Gemini AI models, through the Gemini API or Vertex AI, and Gmail, which sends our emails)</li>
         <li>Razorpay (payments and subscriptions)</li>
         <li>Neon (database), Render (application servers), Vercel (website) and Upstash (caching and rate limiting)</li>
       </List>

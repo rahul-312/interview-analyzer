@@ -264,13 +264,18 @@ EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND") or (
     else "django.core.mail.backends.console.EmailBackend" if DEBUG
     else "django.core.mail.backends.dummy.EmailBackend"
 )
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT") or "587")
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-# Gmail shows app passwords in groups of four; the spaces aren't part of it.
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "").replace(" ", "")
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() in ("true", "1", "yes")
-# Emails are sent while a request or webhook is answered, so a slow server mustn't hold it up for long.
-EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "10"))
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+if EMAIL_HOST == "smtp.gmail.com":
+    # Gmail shows app passwords in groups of four; the spaces aren't part of it.
+    EMAIL_HOST_PASSWORD = EMAIL_HOST_PASSWORD.replace(" ", "")
+# Port 465 is TLS from the start (SSL); 587 upgrades with STARTTLS. Django refuses both at once.
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "true" if EMAIL_PORT == 465 else "false").lower() in ("true", "1", "yes")
+EMAIL_USE_TLS = not EMAIL_USE_SSL and os.environ.get("EMAIL_USE_TLS", "true").lower() in ("true", "1", "yes")
+# Emails are sent while a request or webhook is answered, and Razorpay waits about 5 seconds for a
+# webhook's reply, so a slow or unreachable mail server gives up quickly.
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT") or "3")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL") or (
     f"Interview Analyzer <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else "webmaster@localhost"
 )

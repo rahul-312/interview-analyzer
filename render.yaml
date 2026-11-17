@@ -6,9 +6,11 @@ services:
     runtime: python
     plan: starter
     rootDir: backend
-    # Free instances have no pre-deploy command or shell, so migrations run in the build, over Neon's
-    # direct (unpooled) connection: the pooler's transaction mode doesn't suit migrations.
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && DATABASE_URL="${DATABASE_URL_UNPOOLED:-$DATABASE_URL}" python manage.py migrate --noinput
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    # Migrations run before the new version takes over (so a failed build never leaves them applied), over
+    # Neon's direct (unpooled) connection: the pooler's transaction mode doesn't suit migrations. On the free
+    # plan, which has no pre-deploy command, append this to buildCommand instead.
+    preDeployCommand: DATABASE_URL="${DATABASE_URL_UNPOOLED:-$DATABASE_URL}" python manage.py migrate --noinput
     # gunicorn.conf.py (threads, 75 s timeouts) is read from backend/; Render gives the port in $PORT.
     startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT
     envVars:
@@ -18,7 +20,7 @@ services:
         value: "0"
       - key: SECRET_KEY
         generateValue: true
-      # The free instance has 512 MB: 2 workers x 4 threads fits, and opens at most 8 DB connections.
+      # Starter (like free) has 512 MB: 2 workers x 4 threads fits, and opens at most 8 DB connections.
       - key: GUNICORN_WORKERS
         value: "2"
       - key: GUNICORN_THREADS
@@ -60,5 +62,6 @@ services:
         sync: false
       - key: EMAIL_HOST_PASSWORD
         sync: false
+      # On the free plan, set this to false: sending fails there, and each billing email waits EMAIL_TIMEOUT first.
       - key: BILLING_EMAILS
         value: "true"

@@ -858,6 +858,12 @@ def test_check_warns_when_billing_emails_have_no_mail_server(settings):
     settings.EMAIL_HOST = ""
     assert [w.id for w in billing_emails_can_be_sent(None)] == ["billing.W003"]
     settings.EMAIL_HOST = "smtp.gmail.com"
+    settings.EMAIL_HOST_USER = ""
+    settings.EMAIL_HOST_PASSWORD = ""
+    # The login left blank: Gmail refuses every email
+    assert [w.id for w in billing_emails_can_be_sent(None)] == ["billing.W003"]
+    settings.EMAIL_HOST_USER = "me@gmail.com"
+    settings.EMAIL_HOST_PASSWORD = "app-password"
     assert billing_emails_can_be_sent(None) == []
     settings.EMAIL_HOST = ""
     settings.BILLING_EMAILS = False

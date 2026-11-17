@@ -40,10 +40,16 @@ def signup_limit_is_shared(app_configs, **kwargs):
 
 @checks.register(checks.Tags.compatibility)
 def billing_emails_can_be_sent(app_configs, **kwargs):
-    if not settings.BILLING_EMAILS or settings.EMAIL_HOST or settings.DEBUG:
+    if not settings.BILLING_EMAILS or settings.DEBUG:
         return []
-    return [checks.Warning(
-        "BILLING_EMAILS is on but EMAIL_HOST isn't set, so billing emails are dropped.",
-        hint="Set EMAIL_HOST, EMAIL_HOST_USER and EMAIL_HOST_PASSWORD (for Gmail: smtp.gmail.com and an app password).",
-        id="billing.W003",
-    )]
+    hint = "Set EMAIL_HOST, EMAIL_HOST_USER and EMAIL_HOST_PASSWORD (for Gmail: smtp.gmail.com and an app password)."
+    if not settings.EMAIL_HOST:
+        return [checks.Warning("BILLING_EMAILS is on but EMAIL_HOST isn't set, so billing emails are dropped.",
+                               hint=hint, id="billing.W003")]
+    if not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD:
+        return [checks.Warning(
+            "BILLING_EMAILS is on but EMAIL_HOST_USER or EMAIL_HOST_PASSWORD is blank, so the mail server will "
+            "likely refuse billing emails.",
+            hint=hint + " Ignore this for a server that sends without logging in.", id="billing.W003",
+        )]
+    return []

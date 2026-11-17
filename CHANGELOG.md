@@ -16,6 +16,9 @@ extension share one version number.
   page link to the refund policy.
 - The business details they show (name, email, phone, address) are in
   `frontend/src/config/legal.ts`. Keep them identical to the Razorpay account.
+- The refund policy and terms take the money-back and grace days from the
+  plans API, so they always match `BILLING_REFUND_DAYS` and
+  `BILLING_GRACE_DAYS`.
 
 ### Deployment
 - The database can be set with one `DATABASE_URL` (as Neon, Render and
@@ -26,17 +29,19 @@ extension share one version number.
 - Neon project config (`neon.ts`) for the Neon CLI.
 
 ### Email
-- Outgoing email over SMTP, set with `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`,
-  `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` and `DEFAULT_FROM_EMAIL`, with Gmail
-  and an app password as the documented setup. Without `EMAIL_HOST` nothing is
-  sent; in debug, emails are printed to the console.
-- Sending gives up after `EMAIL_TIMEOUT` seconds (default 10), since emails go
+- Outgoing email over SMTP, set with `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`
+  or `EMAIL_USE_SSL` (on by default for port 465), `EMAIL_HOST_USER`,
+  `EMAIL_HOST_PASSWORD` and `DEFAULT_FROM_EMAIL`, with Gmail and an app
+  password as the documented setup. Without `EMAIL_HOST` nothing is sent; in
+  debug, emails are printed to the console.
+- Sending gives up after `EMAIL_TIMEOUT` seconds (default 3), since emails go
   out while a request or webhook is answered.
-- `manage.py check` warns when `BILLING_EMAILS` is on with no mail server
-  (`billing.W003`).
+- `manage.py check` warns when `BILLING_EMAILS` is on with no mail server, or
+  with its login left blank (`billing.W003`).
 - The Render Blueprint is now on the Starter plan, because the free plan blocks
   outgoing SMTP, and turns billing emails on. Add `EMAIL_HOST_USER` and
-  `EMAIL_HOST_PASSWORD` in Render's Environment tab.
+  `EMAIL_HOST_PASSWORD` in Render's Environment tab. Migrations now run as the
+  pre-deploy command, so a failed build no longer leaves them applied.
 
 ## [1.1.0] - 2026-11-16
 

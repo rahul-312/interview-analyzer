@@ -5,7 +5,7 @@ import { legal } from '@/config/legal';
 
 const linkClass = 'font-medium text-primary hover:underline';
 
-const Terms: React.FC = () => (
+const Terms: React.FC<{ refundDays?: number }> = ({ refundDays = legal.refundDays }) => (
   <LegalPage
     title="Terms & Conditions"
     intro={`These terms apply to your use of ${legal.service}: the website, the app and the browser extension.`}
@@ -98,7 +98,7 @@ const Terms: React.FC = () => (
 
     <Section title="7. Cancellation and refunds">
       <p>
-        Cancellations, the {legal.refundDays}-day money-back guarantee, upgrades and failed payments are covered by our{' '}
+        Cancellations, {refundDays > 0 ? `the ${refundDays}-day money-back guarantee` : 'refunds'}, upgrades and failed payments are covered by our{' '}
         <Link href="/refund-policy" className={linkClass}>
           Cancellation &amp; Refund Policy
         </Link>
