@@ -254,3 +254,24 @@ BILLING_REFUND_DAYS = int(os.environ.get("BILLING_REFUND_DAYS", "7"))
 BILLING_CHECKOUT_REUSE_MINUTES = int(os.environ.get("BILLING_CHECKOUT_REUSE_MINUTES", "30"))
 # Send our own billing emails (activation, renewal, failed payment, cancellation) as well as Razorpay's.
 BILLING_EMAILS = os.environ.get("BILLING_EMAILS", "false").lower() in ("true", "1", "yes")
+
+# Outgoing email over SMTP. For Gmail: EMAIL_HOST=smtp.gmail.com, EMAIL_HOST_USER=<address> and
+# EMAIL_HOST_PASSWORD=<an app password>. Without EMAIL_HOST nothing is sent: emails are printed to the
+# console in debug and dropped otherwise (`manage.py check` warns when billing emails are on).
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND") or (
+    "django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST
+    else "django.core.mail.backends.console.EmailBackend" if DEBUG
+    else "django.core.mail.backends.dummy.EmailBackend"
+)
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+# Gmail shows app passwords in groups of four; the spaces aren't part of it.
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "").replace(" ", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() in ("true", "1", "yes")
+# Emails are sent while a request or webhook is answered, so a slow server mustn't hold it up for long.
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "10"))
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL") or (
+    f"Interview Analyzer <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else "webmaster@localhost"
+)
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
