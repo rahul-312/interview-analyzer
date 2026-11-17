@@ -64,7 +64,7 @@ Render's free plan blocks outgoing traffic on ports 25, 465 and 587, so sending 
 
 1. **Add New > Project**, import the repo, and set **Root Directory** to `frontend`. Vercel detects Next.js.
 2. Add the environment variable `NEXT_PUBLIC_API_URL` = `https://<service>.onrender.com/api` (and `NEXT_PUBLIC_EXTENSION_URL` if the extension is published).
-   Also add the contact details for the legal pages: `NEXT_PUBLIC_LEGAL_NAME`, `NEXT_PUBLIC_LEGAL_EMAIL`, `NEXT_PUBLIC_LEGAL_PHONE` and `NEXT_PUBLIC_LEGAL_ADDRESS` (see [frontend/.env.example](frontend/.env.example)). They must match the Razorpay account, and a production build fails without them.
+   Also add the contact details for the legal pages: `NEXT_PUBLIC_LEGAL_NAME`, `NEXT_PUBLIC_LEGAL_EMAIL`, `NEXT_PUBLIC_LEGAL_PHONE` and `NEXT_PUBLIC_LEGAL_ADDRESS` (see [frontend/.env.example](frontend/.env.example)). They must match the Razorpay account, and a production build fails without them, on any host.
 3. Deploy, then put the Vercel URL in the API's `CORS_ALLOWED_ORIGINS` on Render. Saving restarts the API.
 
 `NEXT_PUBLIC_*` values are built into the pages, so redeploy the frontend after changing them.

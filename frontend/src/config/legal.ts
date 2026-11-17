@@ -4,7 +4,7 @@
  *
  * The contact details come from NEXT_PUBLIC_LEGAL_* (frontend/.env.local, or the project's environment
  * variables on Vercel), so they aren't in the repo. They're built into the pages, so they're still public.
- * A production build on Vercel fails if any is missing (next.config.ts).
+ * A production build fails if any is missing (next.config.ts).
  */
 const phone = process.env.NEXT_PUBLIC_LEGAL_PHONE?.trim() ?? '';
 
@@ -16,8 +16,8 @@ export const legal = {
   phone,
   phoneHref: `tel:${phone.replace(/[^\d+]/g, '')}`,
   address: process.env.NEXT_PUBLIC_LEGAL_ADDRESS?.trim() ?? '',
-  /** Courts named in the Terms. */
-  jurisdiction: 'Hyderabad, Telangana, India',
+  /** Courts named in the Terms: the city of the registered address. */
+  jurisdiction: process.env.NEXT_PUBLIC_LEGAL_JURISDICTION?.trim() || 'Hyderabad, Telangana, India',
   minimumAge: 18,
   lastUpdated: '17 November 2026',
   /**

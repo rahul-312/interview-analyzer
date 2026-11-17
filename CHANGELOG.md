@@ -17,8 +17,9 @@ extension share one version number.
 - The business details they show come from `NEXT_PUBLIC_LEGAL_NAME`,
   `NEXT_PUBLIC_LEGAL_EMAIL`, `NEXT_PUBLIC_LEGAL_PHONE` and
   `NEXT_PUBLIC_LEGAL_ADDRESS` (see `frontend/.env.example`), not the repo. Keep
-  them identical to the Razorpay account. A production build on Vercel fails
-  if any is missing.
+  them identical to the Razorpay account. A production build fails if any is
+  missing. The courts named in the Terms can be set with
+  `NEXT_PUBLIC_LEGAL_JURISDICTION` (default Hyderabad).
 - The refund policy and terms take the money-back and grace days from the
   plans API, so they always match `BILLING_REFUND_DAYS` and
   `BILLING_GRACE_DAYS`.
