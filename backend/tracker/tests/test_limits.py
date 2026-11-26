@@ -162,6 +162,17 @@ def test_testers_are_stopped_at_the_tester_cap(api, application, run_jobs, user,
     res = api.post(f"/api/rounds/{res.data['id']}/analyze/")
     assert res.status_code == 429
     assert res.data["limit"] == 3 and res.data["used"] == 3 and res.data["reset_at"] is not None
+    # From the cap on, the app shows the real numbers, so its buttons agree with the 429.
+    analyses = api.get("/api/auth/me/").data["usage"]["analyses"]
+    assert analyses["limit"] == 3 and analyses["used"] == 3 and analyses["remaining"] == 0
+
+
+def test_the_tester_cap_is_never_below_the_plans_limit(api, application, run_jobs, user, settings):
+    settings.TESTER_JOBS_PER_24H = 1  # below Free's 2 analyses
+    make_tester(user)
+    assert not log_round(api, application, run_jobs, "Q1").data["analysis_limited"]
+    assert not log_round(api, application, run_jobs, "Q2").data["analysis_limited"]
+    assert log_round(api, application, run_jobs, "Q3").data["analysis_limited"] is True
 
 
 def test_a_tester_on_pro_plus_sees_fair_use(api, user, settings):

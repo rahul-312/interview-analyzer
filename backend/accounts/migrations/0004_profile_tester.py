@@ -13,6 +13,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='profile',
             name='tester',
-            field=models.BooleanField(default=False, help_text='No usage limits on AI jobs, and every limit shows as full (e.g. 2/2 analyses left). For people testing the app or recording demos.'),
+            field=models.BooleanField(default=False, help_text="Their plan's allowance always shows as full (e.g. 2/2 analyses left); only the high TESTER_JOBS_PER_24H cap applies. For people testing the app or recording demos. Superusers only."),
         ),
     ]

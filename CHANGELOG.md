@@ -12,9 +12,11 @@ extension share one version number.
   list's actions, or the profile's page). The app always shows a tester's plan
   allowance as full, for example 2/2 analyses left, for trying the app out and
   recording demos.
-- Testers still have a cap: `TESTER_JOBS_PER_24H` (default 100) of each kind
-  of AI job in any rolling 24 hours, so a leaked tester login can't run up the
-  AI bill. A tester who reaches it is told so, with the real numbers.
+- Testers still have a cap: `TESTER_JOBS_PER_24H` (default 25, never less
+  than the plan's own limit) of each kind of AI job in any rolling 24 hours,
+  so a leaked tester login can't run up the AI bill. Once a tester reaches it,
+  the app shows the real numbers. On a free-tier Gemini key, testers on Free
+  share its daily quota with every Free user (see `DEPLOY.md`).
 - Jobs run as a tester are marked on the run (filterable in the admin) and
   count only against the tester cap, so a user who stops being a tester starts
   from zero.

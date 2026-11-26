@@ -64,10 +64,14 @@ def plan_limit(tier, kind=ANALYSIS):
 
 
 def enforced_limit(tier, kind, tester):
-    """The limit actually enforced: the plan's, or for testers the tester cap (None when nothing is limited)."""
-    if not tester:
-        return plan_limit(tier, kind)
-    return None if entitlements.ai_route(tier) is None else settings.TESTER_JOBS_PER_24H
+    """
+    The limit actually enforced: the plan's, or for testers the tester cap, which is never less than
+    the plan's own limit (None when nothing is limited).
+    """
+    limit = plan_limit(tier, kind)
+    if not tester or entitlements.ai_route(tier) is None:
+        return limit
+    return max(settings.TESTER_JOBS_PER_24H, limit or 0)
 
 
 def _window_stats(user, kind, now, tester=False):
@@ -83,19 +87,19 @@ def is_tester(user):
 
 def _quota(user, tier, kind, now, tester=None, shown=True):
     """
-    What's left of this kind of job. Testers are shown their plan's allowance as full (`shown`),
-    except in a 429, where the real numbers explain why they were stopped.
+    What's left of this kind of job. Testers are shown their plan's allowance as full (`shown`)
+    until they reach the tester cap; from then on, and in a 429, they see the real numbers.
     """
     if tester is None:
         tester = is_tester(user)
-    if tester and shown:
+    limit = enforced_limit(tier, kind, tester)
+    stats = _window_stats(user, kind, now, tester)
+    if tester and shown and (limit is None or stats["used"] < limit):
         full = plan_limit(tier, kind)
         return {
             "limit": full, "used": 0, "remaining": full, "next_available_at": None,
             "fair_use": kind == ANALYSIS and tier.analyses_fair_use,
         }
-    limit = enforced_limit(tier, kind, tester)
-    stats = _window_stats(user, kind, now, tester)
     return {
         "limit": limit,
         "used": stats["used"],
