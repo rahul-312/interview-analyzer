@@ -64,7 +64,18 @@ def _window_stats(user, kind, now):
     ).aggregate(used=Count("id"), oldest=Min("created_at"))
 
 
-def _quota(user, tier, kind, now):
+def is_tester(user):
+    """Testers (Profile.tester, set in the admin) aren't limited, and every limit shows as full."""
+    return Profile.objects.filter(user=user, tester=True).exists()
+
+
+def _quota(user, tier, kind, now, tester=None):
+    if tester if tester is not None else is_tester(user):
+        full = {ANALYSIS: tier.analyses_per_24h, PREP_PLAN: tier.prep_plans_per_24h, VOICE: tier.voice_debriefs_per_24h}[kind]
+        return {
+            "limit": full, "used": 0, "remaining": full, "next_available_at": None,
+            "fair_use": kind == ANALYSIS and tier.analyses_fair_use,
+        }
     limit = plan_limit(tier, kind)
     stats = _window_stats(user, kind, now)
     return {
@@ -83,6 +94,7 @@ def usage(user):
     tier = entitlements.for_user(user)
     route = entitlements.ai_route(tier)
     now = timezone.now()
+    tester = is_tester(user)
     return {
         "plan": tier.code,
         "plan_name": tier.name,
@@ -94,9 +106,9 @@ def usage(user):
         "training_notice": tier.debriefs_may_train,
         "ai_model": tier.ai_model_label,
         "priority": tier.priority,
-        "analyses": _quota(user, tier, ANALYSIS, now),
-        "prep_plans": _quota(user, tier, PREP_PLAN, now),
-        "voice_debriefs": _quota(user, tier, VOICE, now),
+        "analyses": _quota(user, tier, ANALYSIS, now, tester),
+        "prep_plans": _quota(user, tier, PREP_PLAN, now, tester),
+        "voice_debriefs": _quota(user, tier, VOICE, now, tester),
     }
 
 
@@ -180,7 +192,7 @@ def _reserve(user, kind, lock_job, start_job, run_fields):
             return BUSY, None
 
         tier = entitlements.for_user(user, now)
-        limit = plan_limit(tier, kind)
+        limit = None if is_tester(user) else plan_limit(tier, kind)
         if limit is not None and _window_stats(user, kind, now)["used"] >= limit:
             return LIMITED, None
 

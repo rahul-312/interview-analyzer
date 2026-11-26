@@ -117,6 +117,25 @@ def test_pro_plan_gets_its_own_limit(api, application, run_jobs, user, settings)
     assert analyses["limit"] == 15 and analyses["remaining"] == 11
 
 
+def test_testers_are_not_limited_and_always_show_a_full_allowance(api, application, run_jobs, user):
+    get_profile(user)
+    Profile.objects.filter(user=user).update(tester=True)
+    for i in range(4):
+        assert not log_round(api, application, run_jobs, f"Q{i}").data["analysis_limited"]
+    assert AnalysisRun.objects.count() == 4
+
+    usage = api.get("/api/auth/me/").data["usage"]
+    assert usage["plan"] == "free"
+    assert usage["analyses"] == {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None, "fair_use": False}
+    assert usage["prep_plans"]["remaining"] == usage["prep_plans"]["limit"] == 1
+    assert usage["voice_debriefs"]["remaining"] == usage["voice_debriefs"]["limit"] == 3
+
+    # Unmarked, the runs they made count again.
+    Profile.objects.filter(user=user).update(tester=False)
+    analyses = api.get("/api/auth/me/").data["usage"]["analyses"]
+    assert analyses["used"] == 4 and analyses["remaining"] == 0
+
+
 def test_failed_analysis_is_refunded(api, application, run_jobs):
     with mock.patch("tracker.ai.analyze_round", side_effect=RuntimeError("API down")):
         res = log_round(api, application, run_jobs)
