@@ -74,6 +74,7 @@ Render's free plan blocks outgoing traffic on ports 25, 465 and 587, so sending 
 - **Cold starts (free plan only).** After 15 minutes without requests the API sleeps, and the next request takes about a minute. To avoid that, ping it every 10 minutes with a free monitor (e.g. UptimeRobot on `/admin/login/`). That keeps it awake about 730 hours a month, which fits Render's 750 free hours for one service.
 - **Commercial use.** Vercel Hobby doesn't allow commercial projects. Once paid plans are live through Razorpay, move to Vercel Pro, or host the frontend on Netlify's free plan, which allows commercial use.
 - **Gemini free tier.** It's fine for a personal deployment. See the README for the limits and data-use notes before opening it up.
+- **Tester accounts.** Each tester can run up to `TESTER_JOBS_PER_24H` (default 25) of each kind of AI job a day. On a free-tier key, testers on Free use the same daily quota as every Free user, so a busy tester can make everyone's analyses fail until it resets. Keep the cap low, and use fake data in demos: Free debriefs, testers' included, may be used for training.
 - **Billing.** Leave the Razorpay variables blank to keep buying off. To turn it on, follow BILLING.md, "Going live".
 - **Security headers.** `render.yaml` turns on the HTTPS redirect and a one-hour HSTS. Once everything works, raise `SECURE_HSTS_SECONDS` to `31536000`.
 - **The extension.** In its popup, set the server addresses to the Render API and Vercel URLs. It asks for permission for those https hosts.

@@ -261,6 +261,8 @@ class AnalysisRun(models.Model):
     model = models.CharField(max_length=60, blank=True)
     # Queued on the priority queue.
     priority = models.BooleanField(default=False)
+    # Started while the user was a tester (Profile.tester): counts only against the tester cap.
+    tester = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-created_at"]

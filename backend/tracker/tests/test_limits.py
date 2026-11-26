@@ -117,6 +117,97 @@ def test_pro_plan_gets_its_own_limit(api, application, run_jobs, user, settings)
     assert analyses["limit"] == 15 and analyses["remaining"] == 11
 
 
+def make_tester(user, value=True):
+    get_profile(user)
+    Profile.objects.filter(user=user).update(tester=value)
+
+
+def test_testers_always_see_a_full_allowance(api, application, run_jobs, user):
+    make_tester(user)
+    for i in range(4):
+        assert not log_round(api, application, run_jobs, f"Q{i}").data["analysis_limited"]
+    assert AnalysisRun.objects.filter(tester=True).count() == 4
+
+    usage = api.get("/api/auth/me/").data["usage"]
+    assert usage["plan"] == "free"
+    assert usage["analyses"] == {"limit": 2, "used": 0, "remaining": 2, "next_available_at": None, "fair_use": False}
+    assert usage["prep_plans"]["remaining"] == usage["prep_plans"]["limit"] == 1
+    assert usage["voice_debriefs"]["remaining"] == usage["voice_debriefs"]["limit"] == 3
+
+
+def test_runs_made_as_a_tester_dont_count_after(api, application, run_jobs, user):
+    make_tester(user)
+    for i in range(4):
+        log_round(api, application, run_jobs, f"Q{i}")
+    make_tester(user, False)
+
+    analyses = api.get("/api/auth/me/").data["usage"]["analyses"]
+    assert analyses["used"] == 0 and analyses["remaining"] == 2
+    assert not log_round(api, application, run_jobs, "Q5").data["analysis_limited"]
+
+
+def test_testers_are_stopped_at_the_tester_cap(api, application, run_jobs, user, settings):
+    settings.TESTER_JOBS_PER_24H = 3
+    make_tester(user)
+    # Runs from before they were a tester don't use up the cap.
+    log_round(api, application, run_jobs, "Before")
+    AnalysisRun.objects.update(tester=False)
+    for i in range(3):
+        assert not log_round(api, application, run_jobs, f"Q{i}").data["analysis_limited"]
+
+    res = log_round(api, application, run_jobs, "Q4")
+    assert res.data["analysis_limited"] is True
+    assert "3 analyses" in res.data["analysis_limit_message"] and "test account" in res.data["analysis_limit_message"]
+
+    res = api.post(f"/api/rounds/{res.data['id']}/analyze/")
+    assert res.status_code == 429
+    assert res.data["limit"] == 3 and res.data["used"] == 3 and res.data["reset_at"] is not None
+    # From the cap on, the app shows the real numbers, so its buttons agree with the 429.
+    analyses = api.get("/api/auth/me/").data["usage"]["analyses"]
+    assert analyses["limit"] == 3 and analyses["used"] == 3 and analyses["remaining"] == 0
+
+
+def test_the_tester_cap_is_never_below_the_plans_limit(api, application, run_jobs, user, settings):
+    settings.TESTER_JOBS_PER_24H = 1  # below Free's 2 analyses
+    make_tester(user)
+    assert not log_round(api, application, run_jobs, "Q1").data["analysis_limited"]
+    assert not log_round(api, application, run_jobs, "Q2").data["analysis_limited"]
+    assert log_round(api, application, run_jobs, "Q3").data["analysis_limited"] is True
+
+
+def test_a_tester_on_pro_plus_sees_fair_use(api, user, settings):
+    settings.GEMINI_FREE_TIER = False
+    Profile.objects.update_or_create(user=user, defaults={"plan": Profile.Plan.PRO_PLUS, "tester": True})
+    analyses = api.get("/api/auth/me/").data["usage"]["analyses"]
+    assert analyses["fair_use"] is True and analyses["remaining"] == analyses["limit"] == 50
+
+
+def test_a_tester_without_ai_sees_unlimited_like_everyone(api, user, settings):
+    settings.GEMINI_API_KEY = ""
+    make_tester(user)
+    usage = api.get("/api/auth/me/").data["usage"]
+    assert usage["ai_enabled"] is False
+    assert usage["analyses"]["limit"] is None and usage["analyses"]["remaining"] is None
+
+
+def test_only_superusers_can_change_tester(user, django_user_model):
+    from django.contrib.admin.sites import site
+    from django.test import RequestFactory
+
+    profile_admin = site._registry[Profile]
+    staff = django_user_model.objects.create_user("staff", is_staff=True)
+    boss = django_user_model.objects.create_superuser("boss")
+    request = RequestFactory().get("/")
+
+    request.user = staff
+    assert "tester" in profile_admin.get_readonly_fields(request)
+    assert "make_testers" not in profile_admin.get_actions(request)
+    request.user = boss
+    assert "tester" not in profile_admin.get_readonly_fields(request)
+    assert "make_testers" in profile_admin.get_actions(request)
+    assert "tester" not in profile_admin.list_editable
+
+
 def test_failed_analysis_is_refunded(api, application, run_jobs):
     with mock.patch("tracker.ai.analyze_round", side_effect=RuntimeError("API down")):
         res = log_round(api, application, run_jobs)

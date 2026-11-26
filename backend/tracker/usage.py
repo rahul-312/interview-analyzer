@@ -9,6 +9,11 @@ second request while one is queued or running gets BUSY and counts nothing.
 
 The plan, and so the limits, come from billing.entitlements, so the web app and the
 browser extension (which call the same endpoints) get the same limits.
+
+Testers (Profile.tester, set by a superuser in the admin) are for trying the app out and
+recording demos: the app always shows their plan's allowance as full, and only a high cap
+(settings.TESTER_JOBS_PER_24H per kind of job) applies. Their runs are marked `tester` and
+counted only against that cap, so a user who stops being a tester starts from zero.
 """
 from datetime import timedelta
 
@@ -58,15 +63,45 @@ def plan_limit(tier, kind=ANALYSIS):
     }[kind]
 
 
-def _window_stats(user, kind, now):
+def enforced_limit(tier, kind, tester):
+    """
+    The limit actually enforced (None when nothing is limited): the plan's, or for testers the tester
+    cap, raised to the plan's own limit when that's higher.
+    """
+    limit = plan_limit(tier, kind)
+    if not tester or entitlements.ai_route(tier) is None:
+        return limit
+    # On purpose, testers keep the cap even on a plan with no limit: it's what stops a leaked tester
+    # login from running up the AI bill or using up a shared free-tier key.
+    return max(settings.TESTER_JOBS_PER_24H, limit or 0)
+
+
+def _window_stats(user, kind, now, tester=False):
+    # Testers' runs only count against the tester cap, and other runs only against the plan's limit.
     return AnalysisRun.objects.filter(
-        user=user, kind=kind, refunded=False, free=False, created_at__gt=now - WINDOW
+        user=user, kind=kind, refunded=False, free=False, tester=tester, created_at__gt=now - WINDOW
     ).aggregate(used=Count("id"), oldest=Min("created_at"))
 
 
-def _quota(user, tier, kind, now):
-    limit = plan_limit(tier, kind)
-    stats = _window_stats(user, kind, now)
+def is_tester(user):
+    return Profile.objects.filter(user=user, tester=True).exists()
+
+
+def _quota(user, tier, kind, now, tester=None, shown=True):
+    """
+    What's left of this kind of job. Testers are shown their plan's allowance as full (`shown`)
+    until they reach the tester cap; from then on, and in a 429, they see the real numbers.
+    """
+    if tester is None:
+        tester = is_tester(user)
+    limit = enforced_limit(tier, kind, tester)
+    stats = _window_stats(user, kind, now, tester)
+    if tester and shown and (limit is None or stats["used"] < limit):
+        full = plan_limit(tier, kind)
+        return {
+            "limit": full, "used": 0, "remaining": full, "next_available_at": None,
+            "fair_use": kind == ANALYSIS and tier.analyses_fair_use,
+        }
     return {
         "limit": limit,
         "used": stats["used"],
@@ -83,6 +118,7 @@ def usage(user):
     tier = entitlements.for_user(user)
     route = entitlements.ai_route(tier)
     now = timezone.now()
+    tester = is_tester(user)
     return {
         "plan": tier.code,
         "plan_name": tier.name,
@@ -94,24 +130,28 @@ def usage(user):
         "training_notice": tier.debriefs_may_train,
         "ai_model": tier.ai_model_label,
         "priority": tier.priority,
-        "analyses": _quota(user, tier, ANALYSIS, now),
-        "prep_plans": _quota(user, tier, PREP_PLAN, now),
-        "voice_debriefs": _quota(user, tier, VOICE, now),
+        "analyses": _quota(user, tier, ANALYSIS, now, tester),
+        "prep_plans": _quota(user, tier, PREP_PLAN, now, tester),
+        "voice_debriefs": _quota(user, tier, VOICE, now, tester),
     }
 
 
-def limit_message(user, kind=ANALYSIS):
+def limit_message(user, kind=ANALYSIS, tester=None):
     tier = entitlements.for_user(user)
+    if tester is None:
+        tester = is_tester(user)
     noun, next_step, _ = _WORDING[kind]
-    return f"You've used all {plan_limit(tier, kind)} {noun} allowed in 24 hours on the {tier.name} plan. {next_step}"
+    where = "on a test account" if tester else f"on the {tier.name} plan"
+    return f"You've used all {enforced_limit(tier, kind, tester)} {noun} allowed in 24 hours {where}. {next_step}"
 
 
 def limit_details(user, kind=ANALYSIS):
     """The body of a 429 for this kind of job: the message, plus the numbers for the app to show."""
     tier = entitlements.for_user(user)
-    quota = _quota(user, tier, kind, timezone.now())
+    tester = is_tester(user)
+    quota = _quota(user, tier, kind, timezone.now(), tester, shown=False)
     return {
-        "detail": limit_message(user, kind),
+        "detail": limit_message(user, kind, tester),
         "code": "usage_limit",
         "feature": _WORDING[kind][2],
         "plan": tier.code,
@@ -175,18 +215,18 @@ def _reserve(user, kind, lock_job, start_job, run_fields):
     now = timezone.now()
     get_profile(user)  # make sure the row exists before locking it
     with transaction.atomic():
-        Profile.objects.select_for_update().get(user=user)
+        tester = Profile.objects.select_for_update().get(user=user).tester
         if _check_existing_job(lock_job(), now) == BUSY:
             return BUSY, None
 
         tier = entitlements.for_user(user, now)
-        limit = plan_limit(tier, kind)
-        if limit is not None and _window_stats(user, kind, now)["used"] >= limit:
+        limit = enforced_limit(tier, kind, tester)
+        if limit is not None and _window_stats(user, kind, now, tester)["used"] >= limit:
             return LIMITED, None
 
         route = entitlements.ai_route(tier)
         run = AnalysisRun.objects.create(
-            user=user, kind=kind, free=route is None, tier=tier.code,
+            user=user, kind=kind, free=route is None, tier=tier.code, tester=tester,
             model=route.model if route else "", priority=tier.priority, **run_fields,
         )
         start_job(run)
