@@ -194,6 +194,10 @@ PLAN_VOICE_DEBRIEFS_PER_24H = {
     "pro_plus": int(os.environ.get("PRO_PLUS_VOICE_DEBRIEFS_PER_24H", "40")),
 }
 
+# Testers (Profile.tester) see their plan's allowance as always full; this cap on each kind of job
+# in any rolling 24 hours is what's actually enforced, so a leaked tester login can't run up the AI bill.
+TESTER_JOBS_PER_24H = int(os.environ.get("TESTER_JOBS_PER_24H", "100"))
+
 # Failed analyses and prep plans that already cost an API call (timeouts, cut-off or unreadable replies, our
 # own errors) are given back, up to this many per user in 24 hours. Past it they count, so
 # nobody can retry an expensive failure for free. Failures that cost nothing are always refunded.

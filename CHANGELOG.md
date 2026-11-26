@@ -7,6 +7,18 @@ extension share one version number.
 
 ## [Unreleased]
 
+### Tester accounts
+- A superuser can mark a user as a **tester** in the admin (the Profiles
+  list's actions, or the profile's page). The app always shows a tester's plan
+  allowance as full, for example 2/2 analyses left, for trying the app out and
+  recording demos.
+- Testers still have a cap: `TESTER_JOBS_PER_24H` (default 100) of each kind
+  of AI job in any rolling 24 hours, so a leaked tester login can't run up the
+  AI bill. A tester who reaches it is told so, with the real numbers.
+- Jobs run as a tester are marked on the run (filterable in the admin) and
+  count only against the tester cap, so a user who stops being a tester starts
+  from zero.
+
 ### Legal pages
 - Contact us, Terms & Conditions, Privacy Policy, Cancellation & Refund
   Policy, and Shipping & Delivery Policy pages, as Razorpay asks for before
