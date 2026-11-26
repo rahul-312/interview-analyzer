@@ -54,6 +54,10 @@ services:
         value: "true"
       - key: VERTEX_API_KEY
         sync: false
+      # AI jobs of each kind a tester (marked in the admin) can run in 24 hours. On a free-tier key, testers on
+      # Free share its daily quota with every Free user, so keep it low. See DEPLOY.md "Tester accounts".
+      - key: TESTER_JOBS_PER_24H
+        value: "25"
       # Email over Gmail SMTP: the Gmail address and an app password (Google Account > Security > App passwords,
       # with 2-Step Verification on). The free plan blocks ports 465 and 587, so this needs Starter or above.
       - key: EMAIL_HOST

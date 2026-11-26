@@ -18,8 +18,9 @@ class Profile(models.Model):
     plan = models.CharField(max_length=10, choices=Plan.choices, default=Plan.FREE)
     tester = models.BooleanField(
         default=False,
-        help_text="Their plan's allowance always shows as full (e.g. 2/2 analyses left); only the high "
-        "TESTER_JOBS_PER_24H cap applies. For people testing the app or recording demos. Superusers only.",
+        help_text="Their plan's allowance shows as full (e.g. 2/2 analyses left) until they reach "
+        "TESTER_JOBS_PER_24H of a kind of job (or the plan's limit, if higher). For testing the app or "
+        "recording demos. Superusers only.",
     )
 
     def __str__(self):

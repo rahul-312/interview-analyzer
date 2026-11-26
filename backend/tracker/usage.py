@@ -65,12 +65,14 @@ def plan_limit(tier, kind=ANALYSIS):
 
 def enforced_limit(tier, kind, tester):
     """
-    The limit actually enforced: the plan's, or for testers the tester cap, which is never less than
-    the plan's own limit (None when nothing is limited).
+    The limit actually enforced (None when nothing is limited): the plan's, or for testers the tester
+    cap, raised to the plan's own limit when that's higher.
     """
     limit = plan_limit(tier, kind)
     if not tester or entitlements.ai_route(tier) is None:
         return limit
+    # On purpose, testers keep the cap even on a plan with no limit: it's what stops a leaked tester
+    # login from running up the AI bill or using up a shared free-tier key.
     return max(settings.TESTER_JOBS_PER_24H, limit or 0)
 
 
