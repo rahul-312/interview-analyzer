@@ -12,17 +12,27 @@ export interface PlanAction {
   busy?: boolean;
 }
 
+export type FeatureKey =
+  | 'analyses'
+  | 'prep_plans'
+  | 'ai_model'
+  | 'queue'
+  | 'training'
+  | 'fallback'
+  | 'usage'
+  | 'extension';
+
 /** What a plan includes, one row per feature, in the same order for every plan so they line up. */
-export function featureRows(tier: Tier): { label: string; value: string }[] {
+export function featureRows(tier: Tier): { key: FeatureKey; label: string; value: string }[] {
   return [
-    { label: 'AI round analyses', value: allowanceText(tier.analyses_per_24h, tier.analyses_fair_use) + (tier.analyses_fair_use ? '*' : '') },
-    { label: 'AI prep plans', value: allowanceText(tier.prep_plans_per_24h) },
-    { label: 'AI model', value: tier.ai_model },
-    { label: 'Queue', value: tier.priority_queue ? 'Priority' : 'Normal' },
-    { label: 'Debriefs used for training', value: tier.debriefs_used_for_training ? 'Yes, with notice' : 'No' },
-    { label: 'Rule-based fallback', value: tier.rule_based_fallback ? 'Included' : '—' },
-    { label: 'Usage tracking', value: tier.usage_tracking ? 'Included' : '—' },
-    { label: 'Browser extension', value: tier.browser_extension ? 'Included' : '—' },
+    { key: 'analyses', label: 'AI round analyses', value: allowanceText(tier.analyses_per_24h, tier.analyses_fair_use) + (tier.analyses_fair_use ? '*' : '') },
+    { key: 'prep_plans', label: 'AI prep plans', value: allowanceText(tier.prep_plans_per_24h) },
+    { key: 'ai_model', label: 'AI model', value: tier.ai_model },
+    { key: 'queue', label: 'Queue', value: tier.priority_queue ? 'Priority' : 'Normal' },
+    { key: 'training', label: 'Debriefs used for training', value: tier.debriefs_used_for_training ? 'Yes, with notice' : 'No' },
+    { key: 'fallback', label: 'Rule-based fallback', value: tier.rule_based_fallback ? 'Included' : '—' },
+    { key: 'usage', label: 'Usage tracking', value: tier.usage_tracking ? 'Included' : '—' },
+    { key: 'extension', label: 'Browser extension', value: tier.browser_extension ? 'Included' : '—' },
   ];
 }
 
@@ -93,7 +103,7 @@ const PlanColumn: React.FC<PlanColumnProps> = ({ tier, price, interval, highligh
 
       <dl className="flex flex-col gap-2xl text-sm">
         {featureRows(tier).map((row) => (
-          <div key={row.label} className="flex items-start gap-lg">
+          <div key={row.key} className="flex items-start gap-lg">
             <Check size={16} className="mt-xs shrink-0 text-primary" aria-hidden />
             <div className="flex flex-1 flex-wrap justify-between gap-x-lg">
               <dt className="text-medium-gray">{row.label}</dt>

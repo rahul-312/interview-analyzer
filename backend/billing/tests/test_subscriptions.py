@@ -134,6 +134,19 @@ def test_checkout_is_unavailable_without_razorpay_keys(api, plans, settings):
     assert api.get("/api/subscriptions/plans/").data["billing_enabled"] is False
 
 
+def test_no_action_is_offered_without_razorpay_keys(api, anon, plans, rzp, settings):
+    # A failed payment offers "pay" and "cancel", but every one of those calls is refused without keys.
+    sub_id = subscribe(api, anon, rzp)
+    entity = {**rzp.subscriptions[sub_id], "status": "pending"}
+    send_webhook(anon, "subscription.pending", subscription=entity,
+                 payment=payment_entity("pay_2", status="failed"), created_at=int(time.time()) + 1)
+    assert api.get("/api/subscriptions/current/").data["actions"]["pay"] is True
+    settings.RAZORPAY_KEY_ID = ""
+    data = api.get("/api/subscriptions/current/").data
+    assert data["billing_enabled"] is False
+    assert not any(data["actions"].values()), data["actions"]
+
+
 def test_verify_with_valid_signature_activates_from_razorpay_state(api, plans, rzp):
     sub_id = checkout(api)
     rzp.activate(sub_id)
