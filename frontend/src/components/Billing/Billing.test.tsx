@@ -43,7 +43,6 @@ describe("billing dashboard", () => {
     expect(screen.queryByText(/Billing changes are paused/)).toBeNull();
   });
 
-
   it("shows the plan, billing details, usage and payments", async () => {
     render(<Billing />);
     expect(screen.getByText("Loading…")).toBeTruthy();

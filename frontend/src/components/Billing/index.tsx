@@ -21,10 +21,10 @@ import { errorText } from '@/utils/errorText';
 
 type Message = { tone: 'success' | 'warn' | 'error'; text: string };
 
-/** Plans & billing: the current plan, usage, payments, and changing or cancelling the subscription. */
 /** Subscriptions Razorpay will never charge again. */
 const ENDED: SubscriptionStatus[] = ['cancelled', 'completed', 'expired'];
 
+/** Plans & billing: the current plan, usage, payments, and changing or cancelling the subscription. */
 const Billing = () => {
   const { refreshUser } = useAuth();
   const current = useApi('billing-current', () => billingService.current());
