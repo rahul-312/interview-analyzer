@@ -299,18 +299,18 @@ describe("pricing page", () => {
     expect(screen.queryByRole("button", { name: /Get|Upgrade/ })).toBeNull();
   });
 
-  it("still lets a user whose payment failed fix it when payments aren't set up", async () => {
+  it("shows former subscribers the coming-soon page too, since nothing can be bought or fixed", async () => {
     api.plans.mockResolvedValue(plansResponse({ billing_enabled: false }));
-    const failed = current("pro_monthly");
+    const ended = current("pro_monthly");
     api.current.mockResolvedValue(
       current(null, {
-        subscription: { ...failed.subscription!, gives_access: false },
-        actions: { ...failed.actions, pay: true },
+        billing_enabled: false,
+        subscription: { ...ended.subscription!, gives_access: false },
+        actions: { ...ended.actions, change_plan: false, cancel: false, cancel_at_period_end: false },
       }),
     );
     render(<Pricing />);
-    expect(await screen.findByRole("link", { name: "Fix payment" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Paid plans are on the way" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Paid plans are on the way" })).toBeTruthy();
   });
 
   it("keeps showing a paid user their plan when payments aren't set up, with nothing to buy", async () => {

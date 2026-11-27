@@ -49,6 +49,8 @@ def current_data(user):
     open_ = bool(sub and sub.status not in TERMINAL_STATUSES)
     comp = Profile.objects.filter(user=user).values_list("plan", flat=True).first() or "free"
     offer = services.refund_offer(user, sub) if open_ else None
+    # Every action calls a BillingActionView, which refuses all of them without Razorpay keys.
+    enabled = razorpay.enabled()
     return {
         "plan": tier_data(tier),
         # Where the plan comes from: a subscription, a complimentary plan set by an admin, or neither.
@@ -56,7 +58,7 @@ def current_data(user):
         else ("complimentary" if comp == tier.code and tier.paid else "free"),
         "subscription": SubscriptionSerializer(sub).data if sub else None,
         "upcoming": SubscriptionSerializer(upcoming).data if upcoming else None,
-        "actions": {
+        "actions": {k: enabled and v for k, v in {
             # The same rule checkout applies.
             "subscribe": paid_ai and services.checkout_blocker(user) is None,
             "change_plan": active and not sub.cancel_at_period_end,
@@ -65,7 +67,7 @@ def current_data(user):
             "cancel_at_period_end": active and not sub.cancel_at_period_end,
             "resume": bool(sub and sub.status == SubscriptionStatus.PAUSED),
             "pay": bool(sub and sub.status in (SubscriptionStatus.PENDING, SubscriptionStatus.HALTED) and sub.short_url),
-        },
+        }.items()},
         # What cancelling now would refund (the money-back window), or null.
         "refund": {
             "amount_paise": offer.amount_paise,
@@ -73,7 +75,7 @@ def current_data(user):
             "until": serializers.DateTimeField().to_representation(offer.until),
         } if offer else None,
         "refund_days": settings.BILLING_REFUND_DAYS,
-        "billing_enabled": razorpay.enabled(),
+        "billing_enabled": enabled,
         "usage": usage(user),
     }
 

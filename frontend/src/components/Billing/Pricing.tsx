@@ -195,9 +195,9 @@ const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
     return { label: 'Manage plan', href: '/billing' };
   };
 
-  // Without payments there's nothing to buy, so show what's coming instead of the plans. Anyone with a
-  // subscription (paid, complimentary, or one whose payment failed and needs fixing) still sees the plans.
-  if (!billing_enabled && me.plan.code === 'free' && !me.subscription) {
+  // Without payments there's nothing to buy or fix (the server offers no actions), so a Free user gets
+  // what's coming instead of the plans. A paid or complimentary user still sees the plans and their own.
+  if (!billing_enabled && me.plan.code === 'free') {
     return <ComingSoon tiers={tiers} action={{ label: 'Back to applications', href: '/applications' }} />;
   }
 
