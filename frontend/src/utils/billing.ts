@@ -46,21 +46,23 @@ export function quotaText(quota: Quota): string {
 export function subscriptionNotice(current: CurrentSubscription): { tone: "info" | "warn" | "error"; text: string } | null {
   const sub = current.subscription;
   if (!sub) return null;
+  // While payments are off there's no button to act on, so the notices only say what's happening.
+  const ask = (text: string) => (current.billing_enabled ? ` ${text}` : "");
   if (sub.status === "pending") {
     return {
       tone: "warn",
       text: `Your last payment failed and Razorpay is retrying it. You keep ${planLabel(sub.plan.tier)}${
         sub.access_until ? ` until ${formatDate(sub.access_until)}` : ""
-      } unless it goes through. Update your payment method to avoid losing access.`,
+      } unless it goes through.${ask("Update your payment method to avoid losing access.")}`,
     };
   }
   if (sub.status === "halted") {
-    return { tone: "error", text: "Payments for your plan failed several times, so paid features are paused. Pay now to restore them." };
+    return { tone: "error", text: `Payments for your plan failed several times, so paid features are paused.${ask("Pay now to restore them.")}` };
   }
   if (sub.status === "authenticated" && !current.upcoming) {
     return { tone: "info", text: "Your payment is being confirmed. Your plan will switch over in a minute or two." };
   }
-  if (sub.status === "paused") return { tone: "warn", text: "Your subscription is paused. Resume it to get paid features back." };
+  if (sub.status === "paused") return { tone: "warn", text: `Your subscription is paused.${ask("Resume it to get paid features back.")}` };
   if (sub.cancel_at_period_end && sub.access_until) {
     return { tone: "info", text: `Your plan is cancelled. You keep it until ${formatDate(sub.access_until)}, then move to Free.` };
   }

@@ -171,8 +171,9 @@ const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
     if ((sub && sub.plan.code === price?.code) || (sameTier && (tier.code === 'free' || me.source === 'complimentary'))) {
       return { label: 'Current plan', disabled: true };
     }
-    if (tier.code === 'free') return { label: 'Move to Free', href: '/billing' };
+    // Moving to Free means cancelling, which isn't possible while payments are off either.
     if (!billing_enabled) return { label: 'Coming soon', disabled: true };
+    if (tier.code === 'free') return { label: 'Move to Free', href: '/billing' };
     if (!price?.available) return { label: 'Not available yet', disabled: true };
     if (me.actions.change_plan) {
       const upgrade = RANK[tier.code] > RANK[changingFrom];

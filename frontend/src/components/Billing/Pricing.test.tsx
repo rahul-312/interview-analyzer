@@ -320,6 +320,8 @@ describe("pricing page", () => {
     await screen.findByRole("heading", { name: /Pro Plus/ });
     expect(within(card("Pro Plus")).getByRole("button", { name: "Coming soon" })).toHaveProperty("disabled", true);
     expect(screen.getByText(/New purchases and plan changes are coming soon/)).toBeTruthy();
+    expect(within(card("Free")).getByRole("button", { name: "Coming soon" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("link", { name: "Move to Free" })).toBeNull();
   });
 
   it("opens on the plan picked before signing up, and leaves buying to the user", async () => {

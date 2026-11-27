@@ -52,4 +52,15 @@ describe("subscriptionNotice", () => {
     );
     expect(cancelled?.text).toMatch(/cancelled.*keep it until/);
   });
+
+  it("doesn't ask for an action there's no button for while payments are off", () => {
+    for (const status of ["pending", "halted", "paused"] as const) {
+      const on = subscriptionNotice(current("pro_monthly", { subscription: subscription("pro_monthly", { status }) }));
+      const off = subscriptionNotice(
+        current("pro_monthly", { billing_enabled: false, subscription: subscription("pro_monthly", { status }) })
+      );
+      expect(on?.text).toMatch(/Update your payment|Pay now|Resume it/);
+      expect(off?.text).not.toMatch(/Update your payment|Pay now|Resume it/);
+    }
+  });
 });
