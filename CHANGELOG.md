@@ -7,6 +7,16 @@ extension share one version number.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-27
+
+### Pricing while payments aren't set up
+- Without Razorpay keys, the pricing page (public and in the app) shows the
+  plans as "coming soon" in place of the buy buttons.
+- Plans & billing offers no actions while payments are off, since none of
+  them could go through. A subscriber whose plan is still renewing is told
+  billing changes are paused and to email (or contact) us to cancel or update
+  their payment. Payment notices no longer ask for actions that aren't there.
+
 ### Tester accounts
 - A superuser can mark a user as a **tester** in the admin (the Profiles
   list's actions, or the profile's page). The app always shows a tester's plan
@@ -227,6 +237,7 @@ spots into a day-by-day prep plan.
 - Tests for the backend (pytest) and the extension (Node test runner with
   jsdom).
 
-[Unreleased]: https://github.com/rahul-312/interview-analyzer/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/rahul-312/interview-analyzer/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/rahul-312/interview-analyzer/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/rahul-312/interview-analyzer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/rahul-312/interview-analyzer/releases/tag/v1.0.0
