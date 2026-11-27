@@ -30,7 +30,8 @@ describe("PublicPricing", () => {
   it("doesn't offer paid plans when payments are off", async () => {
     api.publicPlans.mockResolvedValue(plansResponse({ billing_enabled: false }));
     render(<PublicPricing />);
-    expect(await screen.findByText(/Payments aren't set up/)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Paid plans are on the way" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Start free" }).getAttribute("href")).toBe("/register");
     expect(screen.queryByRole("link", { name: "Get Pro Plus" })).toBeNull();
   });
 

@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
+import ComingSoon from './ComingSoon';
 import IntervalToggle from './IntervalToggle';
-import Notice from './Notice';
 import PlanColumn, { type PlanAction } from './PlanColumn';
 import PlanNotes from './PlanNotes';
 import PublicPage from '../Home/PublicPage';
@@ -23,10 +23,19 @@ const PublicPricing: React.FC<{ initialPlans?: PlansResponse | null }> = ({ init
 
   const actionFor = (tier: TierWithPrices, price: Price | undefined): PlanAction => {
     if (tier.code === 'free') return { label: 'Get started', href: '/register' };
-    if (!plans?.billing_enabled) return { label: 'Payments unavailable', disabled: true };
     if (!price?.available) return { label: 'Not available yet', disabled: true };
     return { label: `Get ${tier.name}`, href: `/register?next=/pricing&plan=${price.code}` };
   };
+
+  if (plans && !plans.billing_enabled) {
+    return (
+      <PublicPage returnTo="/pricing">
+        <div className="py-12xl">
+          <ComingSoon tiers={plans.tiers} action={{ label: 'Start free', href: '/register' }} />
+        </div>
+      </PublicPage>
+    );
+  }
 
   return (
     <PublicPage returnTo="/pricing">
@@ -42,10 +51,6 @@ const PublicPricing: React.FC<{ initialPlans?: PlansResponse | null }> = ({ init
 
         {plans && (
           <>
-            {!plans.billing_enabled && (
-              <Notice tone="warn">Payments aren&apos;t set up on this server yet, so plans can&apos;t be bought.</Notice>
-            )}
-
             <div className="grid grid-cols-1 gap-6xl pt-2xl lg:grid-cols-3">
               {plans.tiers.map((tier) => {
                 const price = tier.prices.find((p) => p.interval === interval);

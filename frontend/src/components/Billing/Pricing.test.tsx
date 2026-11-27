@@ -291,11 +291,20 @@ describe("pricing page", () => {
     expect(api.changePlan).not.toHaveBeenCalled();
   });
 
-  it("can't be bought when payments aren't set up", async () => {
+  it("shows a coming-soon page instead of the plans when payments aren't set up", async () => {
     api.plans.mockResolvedValue(plansResponse({ billing_enabled: false }));
     render(<Pricing />);
+    expect(await screen.findByRole("heading", { name: "Paid plans are on the way" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to applications" }).getAttribute("href")).toBe("/applications");
+    expect(screen.queryByRole("button", { name: /Get|Upgrade/ })).toBeNull();
+  });
+
+  it("keeps showing a paid user their plan when payments aren't set up, with nothing to buy", async () => {
+    api.plans.mockResolvedValue(plansResponse({ billing_enabled: false }));
+    api.current.mockResolvedValue(current("pro_monthly"));
+    render(<Pricing />);
     await screen.findByRole("heading", { name: /Pro Plus/ });
-    expect(within(card("Pro")).getByRole("button", { name: "Payments unavailable" })).toHaveProperty("disabled", true);
+    expect(within(card("Pro Plus")).getByRole("button", { name: "Coming soon" })).toHaveProperty("disabled", true);
   });
 
   it("opens on the plan picked before signing up, and leaves buying to the user", async () => {

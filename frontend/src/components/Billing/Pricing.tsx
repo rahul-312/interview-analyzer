@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useState } from 'react';
+import ComingSoon from './ComingSoon';
 import CheckoutStatus from './CheckoutStatus';
 import IntervalToggle from './IntervalToggle';
 import Notice from './Notice';
@@ -171,7 +172,7 @@ const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
       return { label: 'Current plan', disabled: true };
     }
     if (tier.code === 'free') return { label: 'Move to Free', href: '/billing' };
-    if (!billing_enabled) return { label: 'Payments unavailable', disabled: true };
+    if (!billing_enabled) return { label: 'Coming soon', disabled: true };
     if (!price?.available) return { label: 'Not available yet', disabled: true };
     if (me.actions.change_plan) {
       const upgrade = RANK[tier.code] > RANK[changingFrom];
@@ -194,6 +195,12 @@ const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
     return { label: 'Manage plan', href: '/billing' };
   };
 
+  // Without payments there's nothing to buy, so show what's coming instead of the plans. A paid user
+  // (complimentary, or from before payments were switched off) still sees the plans and their own.
+  if (!billing_enabled && me.plan.code === 'free') {
+    return <ComingSoon tiers={tiers} action={{ label: 'Back to applications', href: '/applications' }} />;
+  }
+
   const chosenTier = tiers.find((t) => t.code === chosen?.tier);
   const chosenAction = chosenTier && actionFor(chosenTier, chosen);
 
@@ -212,7 +219,6 @@ const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
         </Notice>
       )}
       {changeResult && <Notice tone={changeResult.tone}>{changeResult.text}</Notice>}
-      {!billing_enabled && <Notice tone="warn">Payments aren&apos;t set up on this server yet, so plans can&apos;t be bought.</Notice>}
       {me.subscription && !me.subscription.gives_access && me.actions.pay && (
         <Notice tone="error" action={<Button variant="link" href="/billing">Fix payment</Button>}>
           Your last payment failed, so paid features are paused.
