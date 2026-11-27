@@ -12,4 +12,4 @@ export const navItems: NavItem[] = [
 export const publicRoutes = ["/", "/login", "/register"];
 
 /** Routes anyone can see: inside the app when logged in, without the navbar when not. */
-export const openRoutes = ["/pricing"];
+export const openRoutes = ["/pricing", "/contact", "/terms", "/privacy", "/refund-policy", "/shipping-policy"];

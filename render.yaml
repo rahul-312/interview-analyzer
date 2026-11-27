@@ -1,14 +1,16 @@
-# Render Blueprint for the API (free web service). The frontend goes on Vercel and the database on
+# Render Blueprint for the API (Starter web service: the free plan blocks outgoing email). The frontend goes on Vercel and the database on
 # Neon: see DEPLOY.md. Values marked sync: false are asked for when the Blueprint is created.
 services:
   - type: web
     name: interview-analyzer-api
     runtime: python
-    plan: free
+    plan: starter
     rootDir: backend
-    # Free instances have no pre-deploy command or shell, so migrations run in the build, over Neon's
-    # direct (unpooled) connection: the pooler's transaction mode doesn't suit migrations.
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && DATABASE_URL="${DATABASE_URL_UNPOOLED:-$DATABASE_URL}" python manage.py migrate --noinput
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    # Migrations run before the new version takes over (so a failed build never leaves them applied), over
+    # Neon's direct (unpooled) connection: the pooler's transaction mode doesn't suit migrations. On the free
+    # plan, which has no pre-deploy command, append this to buildCommand instead.
+    preDeployCommand: DATABASE_URL="${DATABASE_URL_UNPOOLED:-$DATABASE_URL}" python manage.py migrate --noinput
     # gunicorn.conf.py (threads, 75 s timeouts) is read from backend/; Render gives the port in $PORT.
     startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT
     envVars:
@@ -18,7 +20,7 @@ services:
         value: "0"
       - key: SECRET_KEY
         generateValue: true
-      # The free instance has 512 MB: 2 workers x 4 threads fits, and opens at most 8 DB connections.
+      # Starter (like free) has 512 MB: 2 workers x 4 threads fits, and opens at most 8 DB connections.
       - key: GUNICORN_WORKERS
         value: "2"
       - key: GUNICORN_THREADS
@@ -52,3 +54,18 @@ services:
         value: "true"
       - key: VERTEX_API_KEY
         sync: false
+      # AI jobs of each kind a tester (marked in the admin) can run in 24 hours. On a free-tier key, testers on
+      # Free share its daily quota with every Free user, so keep it low. See DEPLOY.md "Tester accounts".
+      - key: TESTER_JOBS_PER_24H
+        value: "25"
+      # Email over Gmail SMTP: the Gmail address and an app password (Google Account > Security > App passwords,
+      # with 2-Step Verification on). The free plan blocks ports 465 and 587, so this needs Starter or above.
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      # On the free plan, set this to false: sending fails there, and each billing email waits EMAIL_TIMEOUT first.
+      - key: BILLING_EMAILS
+        value: "true"

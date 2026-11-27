@@ -22,6 +22,27 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("billing dashboard", () => {
+  it("tells a subscriber how to cancel while payments are off and the buttons are hidden", async () => {
+    api.current.mockResolvedValue(
+      current("pro_monthly", {
+        billing_enabled: false,
+        actions: { subscribe: false, change_plan: false, cancel: false, cancel_at_period_end: false, cancel_upcoming: false, resume: false, pay: false },
+      })
+    );
+    render(<Billing />);
+    expect(await screen.findByText(/Billing changes are paused/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel subscription" })).toBeNull();
+  });
+
+  it("doesn't mention cancelling while payments are off once the subscription has ended", async () => {
+    api.current.mockResolvedValue(
+      current("pro_monthly", { billing_enabled: false, subscription: subscription("pro_monthly", { status: "cancelled" }) })
+    );
+    render(<Billing />);
+    await screen.findByRole("heading", { name: "Pro" });
+    expect(screen.queryByText(/Billing changes are paused/)).toBeNull();
+  });
+
   it("shows the plan, billing details, usage and payments", async () => {
     render(<Billing />);
     expect(screen.getByText("Loading…")).toBeTruthy();

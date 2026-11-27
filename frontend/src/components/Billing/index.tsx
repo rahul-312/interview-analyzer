@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import CancelDialog from './CancelDialog';
 import CancelUpcomingDialog from './CancelUpcomingDialog';
 import Notice from './Notice';
@@ -10,14 +11,18 @@ import UsageCard from './UsageCard';
 import Button from '../ui/Button';
 import { ErrorMessage, Loading } from '../ui/Feedback';
 import PageHeader from '../ui/PageHeader';
+import { legal } from '@/config/legal';
 import { useAuth } from '@/context/AuthContext';
 import { useApi } from '@/hooks/useApi';
-import type { CurrentSubscription } from '@/models/Billing';
+import type { CurrentSubscription, SubscriptionStatus } from '@/models/Billing';
 import { billingService } from '@/services/BillingService';
 import { formatPrice, subscriptionNotice } from '@/utils/billing';
 import { errorText } from '@/utils/errorText';
 
 type Message = { tone: 'success' | 'warn' | 'error'; text: string };
+
+/** Subscriptions Razorpay will never charge again. */
+const ENDED: SubscriptionStatus[] = ['cancelled', 'completed', 'expired'];
 
 /** Plans & billing: the current plan, usage, payments, and changing or cancelling the subscription. */
 const Billing = () => {
@@ -99,6 +104,11 @@ const Billing = () => {
   const sub = me.subscription;
   const notice = subscriptionNotice(me);
   const isPaid = me.plan.code !== 'free';
+  // Razorpay keeps renewing (or retrying) a subscription even while this server can't reach it, and the
+  // buttons to cancel or pay are hidden then, so say how to get it done.
+  const stillCharging =
+    !me.billing_enabled &&
+    ((sub && !ENDED.includes(sub.status) && !sub.cancel_at_period_end) || !!me.upcoming);
 
   return (
     <div className="flex flex-col gap-8xl">
@@ -128,6 +138,25 @@ const Billing = () => {
           }
         >
           {notice.text}
+        </Notice>
+      )}
+      {stillCharging && (
+        <Notice tone="info">
+          Billing changes are paused while we finish setting up payments, so you can&apos;t cancel or change your
+          plan here right now. To cancel or update your payment,{' '}
+          {legal.email ? (
+            <>
+              email us at{' '}
+              <a href={`mailto:${legal.email}`} className="font-medium underline">
+                {legal.email}
+              </a>
+            </>
+          ) : (
+            <Link href="/contact" className="font-medium underline">
+              contact us
+            </Link>
+          )}{' '}
+          and we&apos;ll do it for you.
         </Notice>
       )}
       {message && <Notice tone={message.tone}>{message.text}</Notice>}

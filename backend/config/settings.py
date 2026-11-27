@@ -194,6 +194,12 @@ PLAN_VOICE_DEBRIEFS_PER_24H = {
     "pro_plus": int(os.environ.get("PRO_PLUS_VOICE_DEBRIEFS_PER_24H", "40")),
 }
 
+# Testers (Profile.tester) see their plan's allowance as always full; this cap on each kind of job
+# in any rolling 24 hours is what's actually enforced (never less than the plan's own limit), so a leaked
+# tester login can't run up the AI bill. On a free-tier GEMINI_API_KEY, testers on Free share its daily
+# quota with every Free user, so keep this low there.
+TESTER_JOBS_PER_24H = int(os.environ.get("TESTER_JOBS_PER_24H") or "25")
+
 # Failed analyses and prep plans that already cost an API call (timeouts, cut-off or unreadable replies, our
 # own errors) are given back, up to this many per user in 24 hours. Past it they count, so
 # nobody can retry an expensive failure for free. Failures that cost nothing are always refunded.
@@ -254,3 +260,29 @@ BILLING_REFUND_DAYS = int(os.environ.get("BILLING_REFUND_DAYS", "7"))
 BILLING_CHECKOUT_REUSE_MINUTES = int(os.environ.get("BILLING_CHECKOUT_REUSE_MINUTES", "30"))
 # Send our own billing emails (activation, renewal, failed payment, cancellation) as well as Razorpay's.
 BILLING_EMAILS = os.environ.get("BILLING_EMAILS", "false").lower() in ("true", "1", "yes")
+
+# Outgoing email over SMTP. For Gmail: EMAIL_HOST=smtp.gmail.com, EMAIL_HOST_USER=<address> and
+# EMAIL_HOST_PASSWORD=<an app password>. Without EMAIL_HOST nothing is sent: emails are printed to the
+# console in debug and dropped otherwise (`manage.py check` warns when billing emails are on).
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND") or (
+    "django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST
+    else "django.core.mail.backends.console.EmailBackend" if DEBUG
+    else "django.core.mail.backends.dummy.EmailBackend"
+)
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT") or "587")
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+if EMAIL_HOST == "smtp.gmail.com":
+    # Gmail shows app passwords in groups of four; the spaces aren't part of it.
+    EMAIL_HOST_PASSWORD = EMAIL_HOST_PASSWORD.replace(" ", "")
+# Port 465 is TLS from the start (SSL); 587 upgrades with STARTTLS. Django refuses both at once.
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "true" if EMAIL_PORT == 465 else "false").lower() in ("true", "1", "yes")
+EMAIL_USE_TLS = not EMAIL_USE_SSL and os.environ.get("EMAIL_USE_TLS", "true").lower() in ("true", "1", "yes")
+# Emails are sent while a request or webhook is answered, and Razorpay waits about 5 seconds for a
+# webhook's reply, so a slow or unreachable mail server gives up quickly.
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT") or "3")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL") or (
+    f"Interview Analyzer <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else "webmaster@localhost"
+)
+SERVER_EMAIL = DEFAULT_FROM_EMAIL

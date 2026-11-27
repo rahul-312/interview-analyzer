@@ -291,11 +291,37 @@ describe("pricing page", () => {
     expect(api.changePlan).not.toHaveBeenCalled();
   });
 
-  it("can't be bought when payments aren't set up", async () => {
+  it("shows a coming-soon page instead of the plans when payments aren't set up", async () => {
     api.plans.mockResolvedValue(plansResponse({ billing_enabled: false }));
     render(<Pricing />);
+    expect(await screen.findByRole("heading", { name: "Paid plans are on the way" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to applications" }).getAttribute("href")).toBe("/applications");
+    expect(screen.queryByRole("button", { name: /Get|Upgrade/ })).toBeNull();
+  });
+
+  it("shows former subscribers the coming-soon page too, since nothing can be bought or fixed", async () => {
+    api.plans.mockResolvedValue(plansResponse({ billing_enabled: false }));
+    const ended = current("pro_monthly");
+    api.current.mockResolvedValue(
+      current(null, {
+        billing_enabled: false,
+        subscription: { ...ended.subscription!, gives_access: false },
+        actions: { ...ended.actions, change_plan: false, cancel: false, cancel_at_period_end: false },
+      }),
+    );
+    render(<Pricing />);
+    expect(await screen.findByRole("heading", { name: "Paid plans are on the way" })).toBeTruthy();
+  });
+
+  it("keeps showing a paid user their plan when payments aren't set up, with nothing to buy", async () => {
+    api.plans.mockResolvedValue(plansResponse({ billing_enabled: false }));
+    api.current.mockResolvedValue(current("pro_monthly"));
+    render(<Pricing />);
     await screen.findByRole("heading", { name: /Pro Plus/ });
-    expect(within(card("Pro")).getByRole("button", { name: "Payments unavailable" })).toHaveProperty("disabled", true);
+    expect(within(card("Pro Plus")).getByRole("button", { name: "Coming soon" })).toHaveProperty("disabled", true);
+    expect(screen.getByText(/New purchases and plan changes are coming soon/)).toBeTruthy();
+    expect(within(card("Free")).getByRole("button", { name: "Coming soon" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("link", { name: "Move to Free" })).toBeNull();
   });
 
   it("opens on the plan picked before signing up, and leaves buying to the user", async () => {

@@ -9,7 +9,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 
 from accounts.models import Profile
 from billing import entitlements, notifications, razorpay, services, webhooks
-from billing.checks import paid_plans_have_ai, signup_limit_is_shared
+from billing.checks import billing_emails_can_be_sent, paid_plans_have_ai, signup_limit_is_shared
 from billing.models import BillingLock, PaymentTransaction, SubscriptionPlan, SubscriptionStatus, UserSubscription, WebhookEvent
 
 from .conftest import DAY, KEY_SECRET, checkout_signature, payment_entity, send_webhook
@@ -132,6 +132,19 @@ def test_checkout_is_unavailable_without_razorpay_keys(api, plans, settings):
     res = api.post("/api/subscriptions/checkout/", {"plan": "pro_monthly"}, format="json")
     assert res.status_code == 503
     assert api.get("/api/subscriptions/plans/").data["billing_enabled"] is False
+
+
+def test_no_action_is_offered_without_razorpay_keys(api, anon, plans, rzp, settings):
+    # A failed payment offers "pay" and "cancel", but every one of those calls is refused without keys.
+    sub_id = subscribe(api, anon, rzp)
+    entity = {**rzp.subscriptions[sub_id], "status": "pending"}
+    send_webhook(anon, "subscription.pending", subscription=entity,
+                 payment=payment_entity("pay_2", status="failed"), created_at=int(time.time()) + 1)
+    assert api.get("/api/subscriptions/current/").data["actions"]["pay"] is True
+    settings.RAZORPAY_KEY_ID = ""
+    data = api.get("/api/subscriptions/current/").data
+    assert data["billing_enabled"] is False
+    assert not any(data["actions"].values()), data["actions"]
 
 
 def test_verify_with_valid_signature_activates_from_razorpay_state(api, plans, rzp):
@@ -850,6 +863,24 @@ def test_deploy_check_warns_when_the_signup_limit_isnt_shared(settings):
     settings.CACHE_URL = ""
     settings.DEBUG = True  # one dev server
     assert signup_limit_is_shared(None) == []
+
+
+def test_check_warns_when_billing_emails_have_no_mail_server(settings):
+    settings.DEBUG = False
+    settings.BILLING_EMAILS = True
+    settings.EMAIL_HOST = ""
+    assert [w.id for w in billing_emails_can_be_sent(None)] == ["billing.W003"]
+    settings.EMAIL_HOST = "smtp.gmail.com"
+    settings.EMAIL_HOST_USER = ""
+    settings.EMAIL_HOST_PASSWORD = ""
+    # The login left blank: Gmail refuses every email
+    assert [w.id for w in billing_emails_can_be_sent(None)] == ["billing.W003"]
+    settings.EMAIL_HOST_USER = "me@gmail.com"
+    settings.EMAIL_HOST_PASSWORD = "app-password"
+    assert billing_emails_can_be_sent(None) == []
+    settings.EMAIL_HOST = ""
+    settings.BILLING_EMAILS = False
+    assert billing_emails_can_be_sent(None) == []
 
 
 # ---------------------------------------------------------------------------

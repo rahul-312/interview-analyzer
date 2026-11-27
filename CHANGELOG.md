@@ -7,6 +7,47 @@ extension share one version number.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-27
+
+### Pricing while payments aren't set up
+- Without Razorpay keys, the pricing page (public and in the app) shows the
+  plans as "coming soon" in place of the buy buttons.
+- Plans & billing offers no actions while payments are off, since none of
+  them could go through. A subscriber whose plan is still renewing is told
+  billing changes are paused and to email (or contact) us to cancel or update
+  their payment. Payment notices no longer ask for actions that aren't there.
+
+### Tester accounts
+- A superuser can mark a user as a **tester** in the admin (the Profiles
+  list's actions, or the profile's page). The app always shows a tester's plan
+  allowance as full, for example 2/2 analyses left, for trying the app out and
+  recording demos.
+- Testers still have a cap: `TESTER_JOBS_PER_24H` (default 25, never less
+  than the plan's own limit) of each kind of AI job in any rolling 24 hours,
+  so a leaked tester login can't run up the AI bill. Once a tester reaches it,
+  the app shows the real numbers. On a free-tier Gemini key, testers on Free
+  share its daily quota with every Free user (see `DEPLOY.md`).
+- Jobs run as a tester are marked on the run (filterable in the admin) and
+  count only against the tester cap, so a user who stops being a tester starts
+  from zero.
+
+### Legal pages
+- Contact us, Terms & Conditions, Privacy Policy, Cancellation & Refund
+  Policy, and Shipping & Delivery Policy pages, as Razorpay asks for before
+  turning on live payments. Anyone can read them without an account;
+  logged-in users see them inside the app.
+- The public footer links to all of them, and the plan notes on the pricing
+  page link to the refund policy.
+- The business details they show come from `NEXT_PUBLIC_LEGAL_NAME`,
+  `NEXT_PUBLIC_LEGAL_EMAIL`, `NEXT_PUBLIC_LEGAL_PHONE` and
+  `NEXT_PUBLIC_LEGAL_ADDRESS` (see `frontend/.env.example`), not the repo. Keep
+  them identical to the Razorpay account. A production build fails if any is
+  missing. The courts named in the Terms can be set with
+  `NEXT_PUBLIC_LEGAL_JURISDICTION` (default Hyderabad).
+- The refund policy and terms take the money-back and grace days from the
+  plans API, so they always match `BILLING_REFUND_DAYS` and
+  `BILLING_GRACE_DAYS`.
+
 ### Deployment
 - The database can be set with one `DATABASE_URL` (as Neon, Render and
   Vercel provide it) in place of the `DB_*` settings. On a pooled URL,
@@ -14,6 +55,21 @@ extension share one version number.
 - The Render build runs migrations over `DATABASE_URL_UNPOOLED`, Neon's
   direct connection.
 - Neon project config (`neon.ts`) for the Neon CLI.
+
+### Email
+- Outgoing email over SMTP, set with `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`
+  or `EMAIL_USE_SSL` (on by default for port 465), `EMAIL_HOST_USER`,
+  `EMAIL_HOST_PASSWORD` and `DEFAULT_FROM_EMAIL`, with Gmail and an app
+  password as the documented setup. Without `EMAIL_HOST` nothing is sent; in
+  debug, emails are printed to the console.
+- Sending gives up after `EMAIL_TIMEOUT` seconds (default 3), since emails go
+  out while a request or webhook is answered.
+- `manage.py check` warns when `BILLING_EMAILS` is on with no mail server, or
+  with its login left blank (`billing.W003`).
+- The Render Blueprint is now on the Starter plan, because the free plan blocks
+  outgoing SMTP, and turns billing emails on. Add `EMAIL_HOST_USER` and
+  `EMAIL_HOST_PASSWORD` in Render's Environment tab. Migrations now run as the
+  pre-deploy command, so a failed build no longer leaves them applied.
 
 ## [1.1.0] - 2026-11-16
 
@@ -181,6 +237,7 @@ spots into a day-by-day prep plan.
 - Tests for the backend (pytest) and the extension (Node test runner with
   jsdom).
 
-[Unreleased]: https://github.com/rahul-312/interview-analyzer/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/rahul-312/interview-analyzer/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/rahul-312/interview-analyzer/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/rahul-312/interview-analyzer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/rahul-312/interview-analyzer/releases/tag/v1.0.0

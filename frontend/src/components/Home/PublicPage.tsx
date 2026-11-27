@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import Link from 'next/link';
 import Logo from '../Logo';
 import Button from '../ui/Button';
+import { legal, legalLinks } from '@/config/legal';
 import { useAuth } from '@/context/AuthContext';
 
 interface PublicPageProps {
@@ -46,8 +48,15 @@ const PublicPage: React.FC<PublicPageProps> = ({ children, returnTo }) => {
 
         <main className="flex-1">{children}</main>
 
-        <footer className="border-t border-light-gray py-8xl text-sm text-medium-gray">
-          © Interview Analyzer
+        <footer className="flex flex-col gap-2xl border-t border-light-gray py-8xl text-sm text-medium-gray md:flex-row md:items-center md:justify-between">
+          <span>© {legal.service}</span>
+          <nav aria-label="Legal" className="flex flex-wrap gap-x-6xl gap-y-lg">
+            {legalLinks.map((l) => (
+              <Link key={l.href} href={l.href} className="hover:text-ink hover:underline">
+                {l.label}
+              </Link>
+            ))}
+          </nav>
         </footer>
       </div>
     </>
