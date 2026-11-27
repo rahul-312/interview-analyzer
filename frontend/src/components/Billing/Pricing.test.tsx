@@ -299,12 +299,27 @@ describe("pricing page", () => {
     expect(screen.queryByRole("button", { name: /Get|Upgrade/ })).toBeNull();
   });
 
+  it("still lets a user whose payment failed fix it when payments aren't set up", async () => {
+    api.plans.mockResolvedValue(plansResponse({ billing_enabled: false }));
+    const failed = current("pro_monthly");
+    api.current.mockResolvedValue(
+      current(null, {
+        subscription: { ...failed.subscription!, gives_access: false },
+        actions: { ...failed.actions, pay: true },
+      }),
+    );
+    render(<Pricing />);
+    expect(await screen.findByRole("link", { name: "Fix payment" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Paid plans are on the way" })).toBeNull();
+  });
+
   it("keeps showing a paid user their plan when payments aren't set up, with nothing to buy", async () => {
     api.plans.mockResolvedValue(plansResponse({ billing_enabled: false }));
     api.current.mockResolvedValue(current("pro_monthly"));
     render(<Pricing />);
     await screen.findByRole("heading", { name: /Pro Plus/ });
     expect(within(card("Pro Plus")).getByRole("button", { name: "Coming soon" })).toHaveProperty("disabled", true);
+    expect(screen.getByText(/New purchases and plan changes are coming soon/)).toBeTruthy();
   });
 
   it("opens on the plan picked before signing up, and leaves buying to the user", async () => {

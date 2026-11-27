@@ -1,10 +1,25 @@
 import React from 'react';
 import { Check, Sparkles } from 'lucide-react';
 import Button from '../ui/Button';
-import { featureRows } from './PlanColumn';
+import { featureRows, type FeatureKey } from './PlanColumn';
 import type { Tier } from '@/models/Billing';
 
-const PREVIEW_ROWS = ['AI round analyses', 'AI prep plans', 'AI model', 'Debriefs used for training'];
+const PREVIEW_ROWS: FeatureKey[] = ['analyses', 'prep_plans', 'ai_model', 'training'];
+
+/** What a tier's preview card lists. The model row is left out when the server has no key for it, rather than naming the rule-based engine. */
+const previewRows = (tier: Tier) =>
+  featureRows(tier).filter((row) => PREVIEW_ROWS.includes(row.key) && (row.key !== 'ai_model' || tier.ai_available));
+
+const allows = (limit: number | null) => limit === null || limit > 0;
+
+/** What Free gives today, from the server's own Free tier, so it never promises AI the server can't run. */
+function freeText(free: Tier | undefined): string {
+  const ai = free?.ai_available
+    ? [allows(free.analyses_per_24h) && 'AI round analyses', allows(free.prep_plans_per_24h) && 'prep plans'].filter(Boolean)
+    : [];
+  const base = 'Until then, Free lets you track applications and debrief your rounds';
+  return ai.length ? `${base}, with ${ai.join(' and ')} included.` : `${base}.`;
+}
 
 interface ComingSoonProps {
   tiers: Tier[];
@@ -24,8 +39,7 @@ const ComingSoon: React.FC<ComingSoonProps> = ({ tiers, action }) => {
           Paid plans are on the way
         </h1>
         <p className="text-medium-gray">
-          We&apos;re finishing payments. Until then, everything on Free works today: track applications, debrief
-          rounds and get AI analyses and prep plans.
+          We&apos;re finishing payments. {freeText(tiers.find((t) => t.code === 'free'))}
         </p>
       </div>
 
@@ -44,17 +58,15 @@ const ComingSoon: React.FC<ComingSoonProps> = ({ tiers, action }) => {
                 </span>
               </h2>
               <dl className="flex flex-col gap-2xl text-sm">
-                {featureRows(tier)
-                  .filter((row) => PREVIEW_ROWS.includes(row.label))
-                  .map((row) => (
-                    <div key={row.label} className="flex items-start gap-lg">
-                      <Check size={16} className="mt-xs shrink-0 text-primary" aria-hidden />
-                      <div className="flex flex-1 flex-wrap justify-between gap-x-lg">
-                        <dt className="text-medium-gray">{row.label}</dt>
-                        <dd className="font-medium text-ink">{row.value}</dd>
-                      </div>
+                {previewRows(tier).map((row) => (
+                  <div key={row.key} className="flex items-start gap-lg">
+                    <Check size={16} className="mt-xs shrink-0 text-primary" aria-hidden />
+                    <div className="flex flex-1 flex-wrap justify-between gap-x-lg">
+                      <dt className="text-medium-gray">{row.label}</dt>
+                      <dd className="font-medium text-ink">{row.value}</dd>
                     </div>
-                  ))}
+                  </div>
+                ))}
               </dl>
             </div>
           ))}

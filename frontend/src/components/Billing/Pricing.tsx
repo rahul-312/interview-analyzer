@@ -195,9 +195,9 @@ const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
     return { label: 'Manage plan', href: '/billing' };
   };
 
-  // Without payments there's nothing to buy, so show what's coming instead of the plans. A paid user
-  // (complimentary, or from before payments were switched off) still sees the plans and their own.
-  if (!billing_enabled && me.plan.code === 'free') {
+  // Without payments there's nothing to buy, so show what's coming instead of the plans. Anyone with a
+  // subscription (paid, complimentary, or one whose payment failed and needs fixing) still sees the plans.
+  if (!billing_enabled && me.plan.code === 'free' && !me.subscription) {
     return <ComingSoon tiers={tiers} action={{ label: 'Back to applications', href: '/applications' }} />;
   }
 
@@ -219,6 +219,9 @@ const Pricing: React.FC<{ chosenPlan?: string }> = ({ chosenPlan }) => {
         </Notice>
       )}
       {changeResult && <Notice tone={changeResult.tone}>{changeResult.text}</Notice>}
+      {!billing_enabled && (
+        <Notice tone="info">New purchases and plan changes are coming soon. Your current plan isn&apos;t affected.</Notice>
+      )}
       {me.subscription && !me.subscription.gives_access && me.actions.pay && (
         <Notice tone="error" action={<Button variant="link" href="/billing">Fix payment</Button>}>
           Your last payment failed, so paid features are paused.
